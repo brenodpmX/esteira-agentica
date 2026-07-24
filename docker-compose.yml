@@ -21,6 +21,9 @@ services:
       - kiro-local:/home/pipe/.local/share/kiro-cli
     secrets:
       - ssh_key
+    # PID 1 = tini: repassa SIGTERM ao Python (shutdown limpo/rápido, sem
+    # escalar para SIGKILL/137) e reapa processos zumbis (issue #70)
+    init: true
     # Reinicia após crash ou reboot do host; para com docker compose stop (US-05)
     restart: unless-stopped
 
