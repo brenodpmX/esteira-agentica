@@ -7,6 +7,10 @@
 
 services:
   pipe:
+    # init: true NÃO é redeclarado aqui de propósito. O merge de composes herda
+    # o `init: true` do docker-compose.yml base (campo escalar preservado quando
+    # não sobrescrito), então tini/SIGTERM continuam ativos no modo efêmero.
+    # O override é mantido mínimo (só volumes), conforme os testes exigem.
     volumes:
       - /app/.pipe   # anônimo — fora do host; descartado com `docker compose down -v`
       - /app/repo    # anônimo — fora do host; descartado com `docker compose down -v`

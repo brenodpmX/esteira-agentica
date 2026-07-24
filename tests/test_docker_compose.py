@@ -1533,3 +1533,145 @@ class TestUS05AC03IntegracaoCompose:
         finally:
             import os as _os
             _os.unlink(fake_key)
+
+
+# ---------------------------------------------------------------------------
+# #70 — init: true (propagação de SIGTERM / shutdown limpo)
+# ---------------------------------------------------------------------------
+# Bug #70: com Python como PID 1 e sem init, o SIGTERM de `docker compose down`
+# era ignorado, o processo seguia no time.sleep, o grace period estourava e o
+# Docker escalava para SIGKILL → Exited (137). `init: true` coloca o tini como
+# PID 1: repassa o SIGTERM ao Python (que agora tem handler) e reapa zumbis.
+# ---------------------------------------------------------------------------
+
+
+class TestInitTrueSigterm:
+    """#70: o serviço 'pipe' deve declarar `init: true` para shutdown limpo.
+
+    Garante propagação de SIGTERM (tini como PID 1) e reaping de zumbis,
+    evitando o encerramento sujo com SIGKILL/Exited(137) observado no incidente.
+    """
+
+    def test_init_true_declarado(self, compose_text):
+        """O serviço pipe deve declarar `init: true`."""
+        assert re.search(r"init:\s*true", compose_text), (
+            "'init: true' ausente no docker-compose.yml. "
+            "#70: sem init, o Python roda como PID 1 e o SIGTERM de "
+            "`docker compose down` é ignorado, escalando para SIGKILL/137. "
+            "Adicionar 'init: true' no serviço pipe."
+        )
+
+    def test_init_true_no_servico_pipe(self, compose_text):
+        """`init: true` deve estar dentro do serviço 'pipe'."""
+        import yaml
+
+        try:
+            conteudo = yaml.safe_load(compose_text)
+        except Exception:
+            pytest.skip("YAML inválido — teste de posicionamento ignorado.")
+
+        services = conteudo.get("services", {})
+        assert "pipe" in services, (
+            "Serviço 'pipe' não encontrado — não é possível verificar init."
+        )
+        pipe_service = services["pipe"]
+        assert pipe_service.get("init") is True, (
+            f"'init' do serviço pipe é {pipe_service.get('init')!r} em vez de True. "
+            "#70: 'init: true' é obrigatório para propagação de SIGTERM e reaping."
+        )
+
+    def test_ephemeral_nao_redeclara_init(self, ephemeral_text):
+        """O override efêmero não deve redeclarar `init` (é herdado do base).
+
+        Mantém o override mínimo (só volumes) e evita divergência: o merge de
+        composes preserva o `init: true` do docker-compose.yml base.
+        """
+        import yaml
+
+        try:
+            conteudo = yaml.safe_load(ephemeral_text)
+        except Exception:
+            pytest.skip("YAML inválido — teste ignorado.")
+        pipe_service = (conteudo or {}).get("services", {}).get("pipe", {}) or {}
+        assert "init" not in pipe_service, (
+            "'init' redeclarado em compose.ephemeral.yml. "
+            "#70: o override deve ser mínimo (só volumes); `init: true` é herdado "
+            "do compose base via merge de composes."
+        )
+
+
+class TestInitTrueIntegracao:
+    """#70: validação de `init: true` via 'docker compose config' (com Docker)."""
+
+    def test_init_true_no_config_resolvido(self):
+        """docker compose config deve mostrar init: true no serviço pipe."""
+        if not _docker_disponivel():
+            pytest.skip("Docker daemon não disponível.")
+
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
+            f.write(b"fake-key")
+            fake_key = f.name
+
+        try:
+            env = dict(os.environ, SSH_KEY_FILE_HOST=fake_key)
+            result = subprocess.run(
+                ["docker", "compose", "-f", str(COMPOSE_FILE), "config"],
+                capture_output=True,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+            )
+            if result.returncode != 0:
+                pytest.skip(
+                    f"docker compose config falhou (exit {result.returncode}): {result.stderr}"
+                )
+            assert re.search(r"init:\s*true", result.stdout), (
+                "'init: true' ausente no output de 'docker compose config'. "
+                "#70: o Compose deve resolver init corretamente no serviço pipe."
+            )
+        finally:
+            import os as _os
+            _os.unlink(fake_key)
+
+    def test_init_true_persiste_com_override_ephemeral(self):
+        """init: true deve persistir (por herança) ao aplicar compose.ephemeral.yml."""
+        if not _docker_disponivel():
+            pytest.skip("Docker daemon não disponível.")
+        if not COMPOSE_EPHEMERAL.exists():
+            pytest.skip("compose.ephemeral.yml não encontrado.")
+
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
+            f.write(b"fake-key")
+            fake_key = f.name
+
+        try:
+            env = dict(os.environ, SSH_KEY_FILE_HOST=fake_key)
+            result = subprocess.run(
+                [
+                    "docker", "compose",
+                    "-f", str(COMPOSE_FILE),
+                    "-f", str(COMPOSE_EPHEMERAL),
+                    "config",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+            )
+            if result.returncode != 0:
+                pytest.skip(
+                    f"docker compose config com ephemeral falhou: {result.stderr}"
+                )
+            assert re.search(r"init:\s*true", result.stdout), (
+                "'init: true' perdida ao aplicar compose.ephemeral.yml. "
+                "#70: o merge de composes deve herdar init do compose base."
+            )
+        finally:
+            import os as _os
+            _os.unlink(fake_key)
