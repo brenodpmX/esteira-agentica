@@ -473,6 +473,44 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
+## Reconciliação de sub-issues propagadas entre boards (v1.6.0 — #98)
+
+O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o
+vínculo hierárquico é criado, mas esses itens propagados podem nascer sem valor
+no campo `Status`. Antes da correção, um `create-down` interpretava o item sem
+coluna como uma issue nova daquele board e materializava uma cópia local.
+
+A proteção é composta por camadas:
+
+1. **Primitiva hexagonal:** `BoardPort.remove_from_board` e o facade `Board`
+   expõem a remoção de item. `GitHubBoardAdapter.remove_from_board` resolve o
+   item no project e executa a mutation GraphQL `deleteProjectV2Item`.
+2. **Pós-hook do vínculo:** `_add_sub_issue` chama
+   `_remove_propagated_without_column`, que consulta todos os `projectItems` da
+   filha e remove somente os que não têm `Status`. Um item legítimo, já
+   posicionado em uma coluna, é preservado.
+3. **Guard de `create-down`:** `_apply_create_down` descarta uma issue sem coluna
+   quando ela tem parent ou o mesmo número já existe no estado conhecido de
+   outro board. Antes de retornar, tenta remover o item do project atual; não
+   cria body, history ou addcomment local.
+4. **Fallback para issue nova:** se a issue sem coluna não tiver evidência de
+   propagação, o `create-down` usa a primeira coluna do board. Na criação
+   remota, `create_issue` também usa a primeira opção de `Status` quando a
+   coluna solicitada não existe e emite warning.
+5. **Autocorreção de issue rastreada:** `detect_board_changes` considera coluna
+   vazia uma divergência. `_apply_change_down` reaplica no GitHub a coluna do
+   estado local e mantém os arquivos na coluna conhecida.
+
+Falhas ao consultar ou remover itens no pós-hook são registradas como warning e
+não interrompem a vinculação. A correção é preventiva: resíduos existentes
+antes do deploy não são varridos nem removidos automaticamente.
+
+Cobertura específica em `tests/test_sub_issue_propagation_fix.py`: os dois
+caminhos do guard de `create-down` (propagação descartada e issue nova com
+fallback local). As chamadas reais do adapter, a preservação do item legítimo e
+os fallbacks remotos permanecem no roteiro de integração manual em
+`doc/homologacao-98-sub-issues-propagadas.md`.
+
 ## Robustez e Segurança do Estado (v1.5.0 — Incidente "Issue Fantasma")
 
 Pacote de correções derivado do incidente "Issue Fantasma" (registro completo

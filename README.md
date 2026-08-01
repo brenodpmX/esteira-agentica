@@ -384,6 +384,33 @@ Validar credenciais e retornar JWT.
 /agent_level high
 ```
 
+### Sub-issues entre boards no GitHub Projects V2
+
+Ao vincular uma sub-issue a um parent presente em outro project, o GitHub pode
+propagar automaticamente a filha para o project do parent sem preencher o campo
+`Status`. A esteira trata esse item sem coluna como propagação técnica, não como
+uma nova tarefa daquele board:
+
+1. Depois de criar o vínculo, o adapter consulta os `projectItems` da sub-issue
+   e remove dos projects os itens cujo `Status` esteja vazio. Itens que já têm
+   coluna própria são preservados.
+2. Se um `create-down` sem coluna ainda chegar para uma issue com parent ou já
+   conhecida em outro board, a esteira remove o item do project e descarta o
+   evento, sem criar os três arquivos locais duplicados.
+3. Uma issue realmente nova, sem parent e desconhecida nos demais boards, usa
+   a primeira coluna configurada como fallback.
+4. Se uma issue já rastreada perder o `Status` remotamente, o sync detecta a
+   divergência e reaplica a coluna conhecida localmente.
+5. Se `create_issue` receber uma coluna que não existe nas opções do project,
+   usa a primeira opção configurada e registra um warning.
+
+Não é necessária alteração no `pipe.yml`. A correção também não remove resíduos
+criados antes de sua implantação; essa limpeza deve ser feita separadamente,
+com a esteira parada. Os logs relevantes usam as operações
+`remove_propagated_without_column`, `remove_from_board` e `create_issue`.
+
+Detalhes de release: [change #98](doc/changes/98-sub-issues-propagadas-entre-boards.md).
+
 ## Eventos de coluna (`on_in` / `on_out`)
 
 Cada coluna pode declarar arrays `on_in` (disparado ao entrar) e `on_out`

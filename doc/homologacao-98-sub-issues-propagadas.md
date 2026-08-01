@@ -30,6 +30,22 @@ e criava uma duplicata local (arquivos + snapshot). Agora:
 - Build da imagem Docker (`docker compose build`): sucesso.
 - Smoke test de import dos módulos alterados dentro do container: sucesso.
 
+### Cobertura específica da correção
+
+Os dois testes adicionados em `tests/test_sub_issue_propagation_fix.py` validam:
+
+- `create-down` com coluna vazia e issue conhecida em outro board: não cria
+  arquivos locais;
+- `create-down` com coluna vazia, sem parent e desconhecida em outros boards:
+  cria na primeira coluna local.
+
+Os seguintes cenários dependem do adapter/API do GitHub e devem ser confirmados
+no roteiro manual abaixo: remoção efetiva do item propagado via
+`deleteProjectV2Item`, preservação da sub-issue legítima com `Status`, fallback
+de `create_issue`, reaplicação da coluna no `change-down` e detecção de coluna
+vazia como divergência. Portanto, o resultado da suíte não substitui a
+homologação em um project de staging.
+
 ## Como subir o ambiente pré-produtivo para homologação
 
 ### Pré-requisitos no host de homologação
@@ -78,12 +94,13 @@ docker compose logs -f   # acompanhar em tempo real
 2. Vincular a task filha ao parent (`/parent #N` no body) e deixar a esteira sincronizar.
 3. No GitHub Projects V2, confirmar que o item da sub-issue **não aparece** sem `Status` no
    project do parent (a remoção automática deve ter ocorrido).
-4. Confirmar que **não** foram criados arquivos/snapshot duplicados da sub-issue no board do
-   parent.
+4. Confirmar que a sub-issue não aparece como tarefa executável no board do parent e que não
+   foi criado um segundo conjunto local de arquivos da issue nesse board.
 5. Confirmar que uma sub-issue legítima, já pertencente ao mesmo board do parent com coluna
    própria, **não** é removida pelo pós-hook (regressão).
-6. Verificar os logs (`docker compose logs -f` ou `logs/`) por eventuals warnings de fallback
-   de coluna.
+6. Verificar os logs (`docker compose logs -f` ou `logs/`) pelas operações
+   `remove_propagated_without_column`, `remove_from_board` e `create_issue`, investigando
+   warnings inesperados ou uso do fallback de coluna.
 
 ### Encerrar o ambiente
 
