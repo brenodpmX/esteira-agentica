@@ -1,7 +1,7 @@
 # Homologação — #98: Duplicação e ausência de coluna em sub-issues propagadas entre boards
 
 Branch: `hotfix98-98-corrigir_duplicacao_e_ausencia_de_coluna_em_sub_issues_propagadas_entre_boards_github_projects_v2`
-Commit: `8319752`
+Commit: `01f9e83` (inclui correção pós code review do PR #103 — ver seção "Histórico de revisão")
 
 ## O que foi corrigido
 
@@ -10,9 +10,11 @@ o GitHub propaga automaticamente o item para todos os projects do parent, sem `S
 definido. Antes desta correção, a esteira interpretava a ausência de coluna como "issue nova"
 e criava uma duplicata local (arquivos + snapshot). Agora:
 
-1. Após vincular uma sub-issue (`_add_sub_issue`), a esteira consulta os projects do item e
-   remove (`remove_from_board` / mutation `deleteProjectV2Item`) qualquer propagação com
-   `Status` vazio — preservando itens legítimos que já tenham coluna própria no mesmo board.
+1. Após vincular uma sub-issue (`_add_sub_issue`), a esteira consulta via **GraphQL**
+   (`projectItems{nodes{id project{id} fieldValues...}}`, mesmo padrão de
+   `_belongs_to_board`/`get_issue`) os projects do item e remove (`remove_from_board` /
+   mutation `deleteProjectV2Item`) qualquer propagação com `Status` vazio — preservando
+   itens legítimos que já tenham coluna própria no mesmo board.
 2. Se ainda assim chegar um evento de coluna vazia no `_apply_create_down` e a issue já
    pertencer a outro board (tem `parent` ou já existe em outro snapshot), o evento é
    descartado (chama `remove_from_board`, não cria arquivo local).
@@ -23,28 +25,60 @@ e criava uma duplicata local (arquivos + snapshot). Agora:
 **Fora de escopo** (não faz parte desta homologação): limpeza do resíduo já existente
 (#84/#85/#86 duplicados no project `story`) — é operação manual, com a esteira parada.
 
+## Histórico de revisão
+
+O PR #103 foi **reprovado** em code review (Bruno Ferreira): o pós-hook do item 1
+(`_remove_propagated_without_column`) chamava um endpoint REST inexistente
+(`/repos/{owner}/{repo}/issues/{n}/projectitems`), que falhava silenciosamente em produção —
+ou seja, a causa raiz do incidente não era corrigida de fato, apesar da suíte de testes
+passar. Além disso, 2 dos 4 cenários de teste exigidos no escopo estavam ausentes.
+
+Essas duas pendências foram corrigidas nesta preparação de pré-produção:
+
+- `_remove_propagated_without_column` foi reescrito usando GraphQL (mesmo padrão real já
+  usado por `_belongs_to_board`/`get_issue` no mesmo arquivo), eliminando a chamada REST
+  inexistente.
+- Os 2 cenários de teste faltantes foram adicionados, exercitando o adapter real via mock de
+  `_gql`/`_gh` (sem monkeypatch do próprio método sob teste): pós-hook preservando item
+  legítimo com `Status`, e fallback de coluna em `create_issue`.
+- Adicionado teste para `detect_board_changes` tratando coluna vazia como divergência, e um
+  teste de regressão para a interação entre o guard do `create-down` e o fallback do
+  `change-down` (risco de reversão circular apontado no ponto 3 do code review).
+
+O bug aberto no board `bug` (`correcao-98-sub-issues-propagadas-reincide-endpoint-inexistente`)
+referente a este defeito pode ser encerrado após esta correção ser homologada.
+
 ## Validação já realizada nesta preparação
 
-- Merge de `main` na branch do hotfix: sem conflitos (branch já estava atualizada).
-- Suíte de testes completa: **201 passed, 3 skipped** (`pytest`).
+- Merge de `main` na branch do hotfix: sem conflitos (auto-merge; branch já continha o que
+  era necessário além dos arquivos de documentação recém-adicionados em `main`).
+- Suíte de testes completa: **208 passed, 3 skipped** (`pytest`) — 7 testes novos em relação
+  à versão reprovada (201 passed).
 - Build da imagem Docker (`docker compose build`): sucesso.
-- Smoke test de import dos módulos alterados dentro do container: sucesso.
+- Smoke test dentro do container construído: confirmado que
+  `_remove_propagated_without_column` usa GraphQL (`_gql`) e não chama mais `_gh`/REST.
 
 ### Cobertura específica da correção
 
-Os dois testes adicionados em `tests/test_sub_issue_propagation_fix.py` validam:
+Os testes em `tests/test_sub_issue_propagation_fix.py` agora cobrem os 4 cenários do item 5
+do escopo original, todos exercitando código real (sem fakes substituindo o método sob teste):
 
-- `create-down` com coluna vazia e issue conhecida em outro board: não cria
-  arquivos locais;
-- `create-down` com coluna vazia, sem parent e desconhecida em outros boards:
-  cria na primeira coluna local.
+- `create-down` com coluna vazia e issue conhecida em outro board: não cria arquivos locais
+  e chama `remove_from_board`.
+- `create-down` com coluna vazia, sem parent e desconhecida em outros boards: cria na
+  primeira coluna local (fallback).
+- Pós-hook (`_remove_propagated_without_column`) remove item com `Status` vazio via
+  `deleteProjectV2Item`, e **preserva** item com `Status` definido (sub-issue legítima).
+- Fallback de coluna em `create_issue` quando a opção informada não existe no project.
+- `detect_board_changes` gera `change-down` quando a coluna remota vem vazia divergindo do
+  snapshot.
+- Regressão: o guard do `create-down` impede que a issue chegue a ter entrada no snapshot
+  deste board, logo o fallback do `change-down` nunca reaplica coluna a um item que deveria
+  permanecer removido do project (interação apontada no ponto 3 do code review).
 
-Os seguintes cenários dependem do adapter/API do GitHub e devem ser confirmados
-no roteiro manual abaixo: remoção efetiva do item propagado via
-`deleteProjectV2Item`, preservação da sub-issue legítima com `Status`, fallback
-de `create_issue`, reaplicação da coluna no `change-down` e detecção de coluna
-vazia como divergência. Portanto, o resultado da suíte não substitui a
-homologação em um project de staging.
+Ainda assim, a suíte usa um `FakeBoardPort`/mocks de `_gql`/`_gh` — a validação final contra
+o comportamento real da API do GitHub Projects V2 (rate limits, schema exato de resposta,
+timing de propagação) só é possível no roteiro manual de homologação abaixo.
 
 ## Como subir o ambiente pré-produtivo para homologação
 
