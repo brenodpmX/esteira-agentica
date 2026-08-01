@@ -543,6 +543,38 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     column = issue.column or ""
 
+    # Guard: se coluna for vazia E a issue já existir em outro snapshot de board
+    # (ou tiver parent), não aplicar fallback — chamar remove_from_board e descartar.
+    if not column:
+        # Verificar se a issue já pertence a outro board (tem parent ou está em outro snapshot)
+        has_parent = bool(issue.parent)
+        has_other_board = False
+        # Verificar todos os diretórios de boards em .pipe/boards/
+        import os
+        boards_dir = Path(".pipe/boards")
+        if boards_dir.exists():
+            for entry in boards_dir.iterdir():
+                if entry.is_dir():
+                    bid = entry.name
+                    if bid == board_id:
+                        continue
+                    try:
+                        other_snap = Snapshot(bid).load()
+                        if other_snap.issue(item.id):
+                            has_other_board = True
+                            break
+                    except Exception:
+                        pass
+        if has_parent or has_other_board:
+            log.info("Sync", f"[{board_id}] #{item.id} - coluna vazia, issue pertence a outro board — removendo do project",
+                     issue_id=item.id)
+            try:
+                board_obj.remove_from_board(board_id, item.id)
+            except Exception as e:
+                log.warning("Sync", f"[{board_id}] #{item.id} - falha ao remover do project: {e}",
+                            issue_id=item.id)
+            return
+
     if not column:
         column = list(snap.board.keys())[0] if snap.board else ""
 
@@ -691,6 +723,17 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
         issue.blocks = list(issue_data.get("blocks") or [])
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     remote_col = issue.column or ""
+
+    # Fallback: quando remote_col vier vazio, reaplicar a coluna do snapshot local
+    if not remote_col and old_col:
+        log.info("Sync", f"[{board_id}] #{item.id} - coluna remota vazia, reaplicando '{old_col}'",
+                 issue_id=item.id, column=old_col)
+        try:
+            board_obj.move_issue(board_id, item.id, old_col, from_column=None)
+        except Exception as e:
+            log.warning("Sync", f"[{board_id}] #{item.id} - falha ao reaplicar coluna '{old_col}': {e}",
+                        issue_id=item.id, column=old_col)
+        remote_col = old_col
 
     body_path = _find_issue_files(board_id, item.id)
     if not body_path:

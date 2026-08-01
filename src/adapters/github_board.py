@@ -878,6 +878,18 @@ class GitHubBoardAdapter(BoardPort):
         item_id = add_data["addProjectV2ItemById"]["item"]["id"]
         # Mover para coluna correta
         option_id = meta["options"].get(column)
+        if not option_id:
+            # Fallback: se a coluna não existir como opção, usar a primeira coluna configurada
+            all_options = list(meta["options"].keys())
+            fallback_col = all_options[0] if all_options else None
+            if fallback_col:
+                log.warning("GitHub", f"Coluna '{column}' não encontrada no board '{board_id}' — usando '{fallback_col}' como fallback",
+                            operation="create_issue", board_id=board_id, column=column, fallback=fallback_col)
+                option_id = meta["options"].get(fallback_col)
+                column = fallback_col
+            else:
+                log.warning("GitHub", f"Coluna '{column}' não encontrada e sem fallback disponível no board '{board_id}'",
+                            operation="create_issue", board_id=board_id, column=column)
         if option_id:
             self._gql(
                 "mutation($pid:ID!,$itemId:ID!,$fieldId:ID!,$optionId:String!){updateProjectV2ItemFieldValue(input:{projectId:$pid,itemId:$itemId,fieldId:$fieldId,value:{singleSelectOptionId:$optionId}}){projectV2Item{id}}}",
@@ -1120,6 +1132,41 @@ query($owner:String!,$repo:String!,$number:Int!){
             return
         self._api("POST", f"/repos/{owner}/{repo}/issues/{parent_number}/sub_issues",
                   sub_issue_id=child_db, replace_parent=True)
+        # Pós-hook: remover de projects onde a sub-issue foi propagada sem coluna
+        self._remove_propagated_without_column(child_number)
+
+    def _remove_propagated_without_column(self, issue_number: str) -> None:
+        """Remove item de projects onde foi propagado sem Status definido."""
+        owner, repo = self._repo.split("/")
+        # Buscar todos os projectItems da issue
+        try:
+            result = self._gh(
+                "api", f"/repos/{owner}/{repo}/issues/{issue_number}/projectitems",
+                "-H", "Accept: application/vnd.github+json",
+                "--jq", ".[] | {projectId: .project.id, id: .id, status: .status[0].name}"
+            )
+            if not result:
+                return
+            items = json.loads(result)
+            for item in items:
+                project_id = item.get("projectId")
+                item_id = item.get("id")
+                status_name = item.get("status")
+                # Se o status estiver vazio (None ou string vazia), remover do project
+                if not status_name:
+                    log.info("GitHub", f"#{issue_number} - Removendo item do project {project_id[:8]}... (Status vazio)",
+                             operation="remove_propagated_without_column", issue_number=issue_number)
+                    try:
+                        self._gql(
+                            "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
+                            pid=project_id, itemId=item_id,
+                        )
+                    except Exception as e:
+                        log.warning("GitHub", f"#{issue_number} - Falha ao remover item do project {project_id[:8]}...: {e}",
+                                    operation="remove_propagated_without_column", issue_number=issue_number)
+        except Exception as e:
+            log.warning("GitHub", f"#{issue_number} - Falha ao buscar projectitems: {e}",
+                        operation="remove_propagated_without_column", issue_number=issue_number)
 
     def _remove_sub_issue(self, parent_number: str, child_number: str) -> None:
         owner, repo = self._repo.split("/")
@@ -1330,5 +1377,19 @@ query($owner:String!,$repo:String!,$number:Int!){
                  operation="unarchive_issue", board_id=board_id, issue_id=issue_id)
         self._gql(
             "mutation($pid:ID!,$itemId:ID!){unarchiveProjectV2Item(input:{projectId:$pid,itemId:$itemId}){item{id}}}",
+            pid=meta["project_id"], itemId=item_id,
+        )
+
+    def remove_from_board(self, board_id: str, issue_id: str) -> None:
+        self._penalty_check()
+        meta = self._board_meta(board_id)
+        item_id = self._find_item_id(board_id, issue_id)
+        if not item_id:
+            log.warning("GitHub", f"#{issue_id} não encontrada no project para remover")
+            return
+        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Removendo do project",
+                 operation="remove_from_board", board_id=board_id, issue_id=issue_id)
+        self._gql(
+            "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
             pid=meta["project_id"], itemId=item_id,
         )
