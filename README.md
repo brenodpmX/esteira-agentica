@@ -448,6 +448,32 @@ detectar uma relação adicionada/removida numa issue, o sync enfileira um
 refletir o par recíproco**. Essa checagem é a condição de parada e evita
 reação em cadeia infinita.
 
+### Sub-issues propagadas entre boards sem coluna
+
+Ao vincular uma sub-issue a um parent que está em outro GitHub Project, o
+GitHub Projects V2 pode adicionar automaticamente a filha aos projects do pai
+sem preencher o campo `Status`. Sem tratamento, esse item seria interpretado
+como uma nova issue do board e criaria arquivos locais duplicados.
+
+A sincronização trata esse efeito colateral em duas camadas:
+
+1. **Prevenção após o vínculo:** depois de criar a relação parent/child, o
+   adapter consulta os projects da sub-issue e remove dos outros projects os
+   itens cujo `Status` está vazio. Itens com coluna definida são preservados,
+   inclusive participações multi-board intencionais.
+2. **Defesa no `create-down`:** se um item sem coluna já pertence a outro board
+   conhecido ou possui parent, o core o remove do board atual via
+   `deleteProjectV2Item`, descarta o evento e não cria arquivos locais.
+
+Além disso, uma coluna remota vazia passa a ser detectada como divergência. Em
+issues já rastreadas, o `change-down` usa a coluna conhecida no snapshot para
+reconciliar o estado; para uma issue realmente nova, sem parent e sem presença
+em outro board, permanece o fallback para a primeira coluna configurada.
+
+> A correção previne novas duplicações, mas não remove automaticamente resíduos
+> que já haviam sido materializados localmente antes da atualização. Esses itens
+> devem ser removidos manualmente do project indevido, com a esteira parada.
+
 ### Issues fantasmas (erro irrecuperável)
 
 Quando o sync tenta aplicar uma mudança (`change-up` ou `delete-up`) sobre uma
@@ -512,4 +538,5 @@ penalty indevidamente.
 
 ## Documentação Técnica
 
-Ver [CONTEXT.md](CONTEXT.md) para decisões técnicas e estado do projeto.
+- [Contexto e decisões técnicas](CONTEXT.md)
+- [Changelog](CHANGELOG.md)

@@ -420,6 +420,44 @@ comandos de "remover".
 - Arquivamento: GraphQL `archiveProjectV2Item` / `unarchiveProjectV2Item`.
 - `need_human` é label comum no GitHub, tratada em campo próprio no domínio.
 
+## Proteção contra propagação de sub-issues entre boards (v1.6.1)
+
+O GitHub Projects V2 possui um efeito colateral ao registrar relações de
+sub-issue: ao executar `POST /repos/{owner}/{repo}/issues/{parent}/sub_issues`,
+o filho pode ser propagado para todos os projects do parent sem valor no campo
+`Status`. Antes da v1.6.1, o sync interpretava esse item sem coluna como uma
+issue nova no board e materializava arquivos locais duplicados.
+
+A correção usa defesa em profundidade:
+
+1. **Primitiva da porta:** `BoardPort.remove_from_board` e
+   `Board.remove_from_board` expõem a remoção de item do project. O adapter
+   GitHub resolve o item e executa a mutation `deleteProjectV2Item`.
+2. **Pós-hook do vínculo:** `_add_sub_issue` recebe o board de origem e chama
+   `_remove_propagated_items_without_status`. O adapter lista os project items
+   do filho, ignora o project atual e remove somente itens de outros projects
+   cujo `Status` esteja vazio. Um item com coluna definida é considerado
+   intencional e é preservado.
+3. **Guard no `create-down`:** `_apply_create_down` descarta um item sem coluna
+   quando a mesma issue já aparece no snapshot de outro board ou possui
+   `parent`. Antes de retornar, solicita a remoção do item do board atual; não
+   cria `-body.md`, `-history.md` nem `-addcomment.md` duplicados.
+4. **Reconciliação:** `detect_board_changes` considera `Status` vazio diferente
+   da coluna conhecida. `_apply_change_down` recupera a coluna do snapshot e a
+   usa na reconciliação do item e dos arquivos locais. Issues realmente novas,
+   sem parent e sem presença em outro board, continuam usando a primeira coluna
+   configurada como fallback local.
+
+O discriminador crítico é a ausência de `Status`: a correção não remove
+sub-issues legitimamente mantidas em múltiplos boards quando cada item possui
+coluna própria. Resíduos já materializados antes da v1.6.1 não são limpos
+automaticamente e exigem operação manual com a esteira parada.
+
+Cobertura de regressão: `tests/test_sub_issue_propagation_fix.py` valida a
+primitiva GraphQL, o pós-hook, os guards do `create-down`, a preservação do
+fallback para issue nova, a reconciliação no `change-down` e a detecção de
+coluna vazia.
+
 ## Eventos de coluna (`on_in` / `on_out`)
 
 Cada coluna pode declarar `on_in` e `on_out` (listas). Em uma mudança de

@@ -1,8 +1,8 @@
 # Incidente — Issues criadas em dois boards indevidamente
 
-Status: Decisão tomada
+Status: Fenômeno 1 corrigido
 Owner: engineering
-Last updated: 2026-07-07
+Last updated: 2026-08-01
 
 ## Registro
 
@@ -195,3 +195,31 @@ A esteira não possui hoje primitiva de remoção de item de projeto
 - Sem quebra de funcionalidades existentes.
 - Issues #20 e #21 removidas do `Pipe - Epics` (verificável no GitHub).
 ```
+
+## Correção entregue — Fenômeno 1 (2026-08-01)
+
+A reincidência registrada no incidente #88 confirmou que a propagação nativa
+do GitHub continuava ativa: sub-issues vinculadas a parents de outros boards
+eram adicionadas aos projects do pai sem `Status` e posteriormente
+materializadas pela esteira como duplicatas locais.
+
+A versão 1.6.1 entrega:
+
+- `BoardPort.remove_from_board` e implementação GitHub por
+  `deleteProjectV2Item`;
+- pós-hook em `_add_sub_issue`, que remove de outros projects somente os itens
+  propagados com `Status` vazio;
+- guard em `_apply_create_down`, que remove e descarta itens sem coluna quando
+  a issue já pertence a outro board conhecido ou possui parent, sem criar
+  arquivos locais;
+- detecção de coluna vazia como divergência e reconciliação a partir da coluna
+  conhecida no snapshot;
+- nove testes de regressão em `tests/test_sub_issue_propagation_fix.py`.
+
+O controle de segurança é a presença de `Status`: itens com coluna definida
+são preservados, permitindo participação multi-board intencional. A correção é
+preventiva; resíduos materializados antes do deploy precisam de limpeza manual
+com a esteira parada.
+
+O Fenômeno 2 (snapshots órfãos de boards removidos da configuração) permanece
+uma causa independente e não faz parte desta entrega.
