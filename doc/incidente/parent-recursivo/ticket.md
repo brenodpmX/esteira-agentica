@@ -3,10 +3,10 @@
 ## Registro
 
 **Incidente ID:** 97
-**Status:** Em Análise
+**Status:** Mitigado operacionalmente — correções C1–C5 pendentes
 **Owner:** engenharia
 **Data de Abertura:** 2026-08-01 13:29
-**Last Updated:** 2026-08-01 13:35
+**Last Updated:** 2026-08-01
 
 ### Descrição
 
@@ -119,17 +119,19 @@ filesystem, verificação de integridade pós-execução nem lock de instância.
 - Timeout de agente (3600s) mata a execução sem registrar o chat, apagando a
   trilha de auditoria justamente da execução que gerou os arquivos órfãos.
 
-### Estado atual (pós-incidente)
+### Estado após mitigação operacional
 
-- `#76` no GitHub está com título e labels de outra tarefa:
-  `Remover branch feature/1-1-rodar_no_docker (nomenclatura antiga)`,
-  labels `git`, `cleanup` (verificado com `gh issue view 76`).
-- O conteúdo original da story está preservado em
-  `.pipe/boards/story/change-file/76-consolidacao_de_duplicidade_e_nomenclatura_antiga-body.md`
-  → **recuperável**.
-- Ainda existem **4 arquivos** com prefixo `76-` em duas colunas do board
-  `story` → a colisão persiste e a reincidência é possível.
-- `snapshot.json` do board `story` foi editado à mão pelo agente.
+- O título, o body e as labels da issue `#76` foram restaurados no GitHub a
+  partir do conteúdo original preservado.
+- Os dois arquivos órfãos remanescentes com prefixo `76-` foram removidos da
+  coluna ativa `aguardando-tasks`; a verificação posterior encontrou apenas os
+  arquivos históricos da própria issue `#76` em `change-file`.
+- O estado local do board foi reconciliado para voltar a referenciar o body
+  original da issue `#76`.
+- A esteira voltou a processar após o restart e o descarte do item-veneno.
+- A mitigação removeu a condição concreta do incidente, mas **não corrige os
+  defeitos de código C1–C5**. A recorrência do padrão continua possível até a
+  conclusão das tasks listadas neste documento.
 
 ### Respostas da análise
 
@@ -252,6 +254,21 @@ Manter a issue `#97` no board de incidente e seguir o fluxo normal:
 
 — Isabela Gomes - Tech Lead
 
+## Mitigação executada
+
+Em 01/08/2026, Operações executou o reparo do caso concreto:
+
+1. restaurou o título, o body e as labels originais da issue `#76` no GitHub;
+2. removeu os arquivos órfãos com prefixo `76-` das colunas ativas;
+3. reconciliou a referência local da issue com seu body original; e
+4. confirmou a retomada do processamento após o restart.
+
+Essa ação recuperou a integridade dos dados afetados e encerrou a indisponibilidade,
+mas é um **workaround operacional**, não a correção definitiva. Nenhuma mudança
+em `src/` foi entregue nesta branch.
+
+— Diego Santos - Analista de Operações
+
 ## Tarefas de correção
 
 Decomposição das correções C1–C5 (Análise Técnica) em tasks rastreáveis no
@@ -268,7 +285,7 @@ estado interno e lock de instância).
 | C4 | Verificação de integridade do snapshot antes/depois da execução do agente | `src/core/snapshot.py`, `src/__main__.py` | 3h | C1 |
 | C5 | Lock de instância única (`.pipe/pipe.lock`) | `src/__main__.py` | 1,5h | C1 |
 
-Tasks criadas no board `task` (coluna `todo`):
+Tasks criadas no board `task` (coluna `backlog`):
 
 - C2 — `validar_auto_referencia_em_relacoes_parentchildrenblocked_byblocks-body.md`
 - C3 — `erro_definitivo_nao_reenfileira_contador_de_tentativas_e_dead_letter_na_fila-body.md`
@@ -276,7 +293,9 @@ Tasks criadas no board `task` (coluna `todo`):
 - C4 — `verificacao_de_integridade_do_snapshot_na_execucao_do_agente-body.md`
 - C5 — `lock_de_instancia_unica_da_esteira-body.md`
 
-Cada task referencia esta issue (`#97`) como pai (`/parent #97`) e registra as
-dependências de ordem via `/blocked_by`/`/blocks` conforme a tabela acima.
+Cada task referencia esta issue (`#97`) como pai (`/parent #97`). Como as cinco
+foram criadas localmente na mesma etapa e ainda não tinham IDs do GitHub, a
+ordem foi registrada em texto nos bodies; os vínculos `/blocked_by` devem ser
+adicionados após o sync atribuir IDs numéricos.
 
 — Isabela Gomes - Tech Lead

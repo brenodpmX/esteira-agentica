@@ -9,9 +9,14 @@ Esta etapa (`pre-prod`) trata **apenas a documentação do incidente** — não 
 alteração de código nesta branch. `main` já estava totalmente contido nela
 (relação de ancestralidade direta), então o merge não gerou conflitos.
 
-Único artefato novo: `doc/incidente/parent-recursivo/ticket.md` — registro
-completo do incidente #97 (Triagem → Análise Técnica → Decisão de tratamento
-→ Tarefas de correção C1–C5).
+Artefatos documentais desta branch:
+
+- `doc/incidente/parent-recursivo/ticket.md` — registro completo do incidente,
+  da mitigação operacional e do plano C1–C5;
+- `doc/incidente/parent-recursivo/homologacao.md` — este roteiro de validação;
+- `doc/changelogs/97-erro_reportado_dia_010826.md` — change file da entrega; e
+- `README.md` — alerta de incidente conhecido e cuidados temporários de
+  operação.
 
 **Importante para quem for homologar:** as correções de código propriamente
 ditas (C1–C5, descritas no ticket) ainda **não foram implementadas**. Elas
@@ -24,8 +29,8 @@ em si.
 
 ## Validação já realizada nesta etapa
 
-- `git diff main...hotfix97-97-erro_reportado_dia_010826 --stat` → apenas
-  `doc/incidente/parent-recursivo/ticket.md` (282 linhas adicionadas).
+- `git diff main...hotfix97-97-erro_reportado_dia_010826 --stat` → somente
+  documentação; nenhuma alteração em `src/`.
 - Merge de `main` na branch do épico: **sem conflitos** (branch já continha
   todos os commits de `main`).
 - Suíte de testes: `python3 -m pytest tests/ -q` → **199 passed, 3 skipped**.
@@ -124,9 +129,9 @@ docker compose down       # mantém os volumes (estado preservado)
 Como esta issue trata do **incidente #97** (não de uma correção de código),
 a homologação aqui deve focar em:
 
-1. Confirmar que a documentação do incidente (`ticket.md`) está completa e
-   consistente com o relato original (comparar com o body/histórico da issue
-   #97 no board `incidente`).
+1. Confirmar que `ticket.md`, o change file e o alerta do `README.md` estão
+   completos, consistentes com o body/histórico da issue #97 e explícitos sobre
+   a diferença entre mitigação operacional e correção definitiva.
 2. Confirmar que o ambiente sobe normalmente com o código atual (sem as
    correções C1–C5, que ainda não existem) — ou seja, validar que **nada foi
    quebrado** ao consolidar a documentação, não que o bug do incidente foi
