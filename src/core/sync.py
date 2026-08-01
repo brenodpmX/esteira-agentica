@@ -462,6 +462,28 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     column = issue.column or ""
 
+    # Guard: se coluna vazia E a issue já pertence a outro board (ou tem parent),
+    # remover o item do board atual e descartar o evento (não criar arquivos locais).
+    if not column:
+        # Verificar se a issue já pertence a outro board
+        found = _find_snapshot_issue(item.id)
+        if found and found[0] != board_id:
+            log.info("Sync", f"[{board_id}] #{item.id} create-down descartado - issue pertence a {found[0]}")
+            # Remover o item do project atual (Status vazio = propagação automática inválida)
+            try:
+                board_obj.remove_from_board(board_id, item.id)
+            except Exception as e:
+                log.warning("Sync", f"[{board_id}] #{item.id} - falha ao remover item: {e}")
+            return
+        # Verificar se tem parent (propagação automática sem coluna)
+        if issue.parent:
+            log.info("Sync", f"[{board_id}] #{item.id} create-down descartado - issue tem parent (propagada)")
+            try:
+                board_obj.remove_from_board(board_id, item.id)
+            except Exception as e:
+                log.warning("Sync", f"[{board_id}] #{item.id} - falha ao remover item: {e}")
+            return
+
     if not column:
         column = list(snap.board.keys())[0] if snap.board else ""
 
@@ -602,6 +624,13 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
 
     # Mover se coluna mudou
     current_col = _col_from_path(body_path, board_id)
+
+    # Coluna vazia no board (propagação automática sem Status): reaplicar coluna do snapshot local.
+    # Se a issue tem coluna definida no snapshot, usar essa coluna como "remota" para movimentar.
+    if not remote_col and issue_data.get("column"):
+        remote_col = issue_data.get("column")
+        log.info("Sync", f"[{board_id}] #{item.id} - coluna vazia no board, reaplicando '{remote_col}' do snapshot")
+
     if remote_col and remote_col != current_col:
         slug = body_path.stem.removesuffix("-body")
         new_files = _issue_files(board_id, remote_col, item.id, slug.split("-", 1)[1] if "-" in slug else slug)
@@ -616,6 +645,9 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
             old_ac.rename(new_files["addcomment"])
         body_path = new_files["body"]
         current_col = remote_col
+
+        # Chamar move_issue para sincronizar o board com a nova coluna local
+        board_obj.move_issue(board_id, item.id, current_col, from_column=old_col)
 
     # Atualizar history
     slug = body_path.stem.removesuffix("-body")

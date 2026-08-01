@@ -225,6 +225,10 @@ class BoardPort(ABC):
         """Desarquiva o item da issue no project."""
         log.warning("Board", "unarchive_issue não implementado neste adapter")
 
+    def remove_from_board(self, board_id: str, issue_id: str) -> None:
+        """Remove um item de um project (via deleteProjectV2Item)."""
+        log.warning("Board", "remove_from_board não implementado neste adapter")
+
 
 class Board:
     """Core de boards - usa port para operações."""
@@ -318,6 +322,10 @@ class Board:
 
     def unarchive_issue(self, board_id: str, issue_id: str):
         self._port.unarchive_issue(board_id, issue_id)
+
+    def remove_from_board(self, board_id: str, issue_id: str):
+        """Remove um item de um project (via deleteProjectV2Item)."""
+        self._port.remove_from_board(board_id, issue_id)
 
     def apply_commands(self, board_id: str, issue_id: str, cmds, known: dict = None) -> dict:
         """Aplica os comandos anotados (IssueCommands) como atributos no board.
@@ -490,8 +498,11 @@ class Board:
 
             remote_at = issue.updated_at or ""
             snap_at = known.get("updated_at") or ""
+            # Coluna vazia é divergência (propagação automática sem Status).
+            # Trata-se como change-down para que _apply_change_down possa
+            # reaplicar a coluna do snapshot local ou remover o item se for inválido.
             changed = (remote_at and snap_at and remote_at > snap_at) or \
-                      (issue.column and issue.column != known.get("column"))
+                      (issue.column != known.get("column"))
             if changed:
                 # Full sync diário: reconcilia todas as propriedades + deps.
                 if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id,

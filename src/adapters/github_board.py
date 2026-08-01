@@ -1017,7 +1017,7 @@ class GitHubBoardAdapter(BoardPort):
         data = json.loads(result) if result else []
         return [str(i.get("number")) for i in data if i.get("number")]
 
-    def _add_sub_issue(self, parent_number: str, child_number: str) -> None:
+    def _add_sub_issue(self, parent_number: str, child_number: str, current_board_id: str = None) -> None:
         owner, repo = self._repo.split("/")
         child_db = self._get_issue_db_id(child_number)
         if not child_db:
@@ -1025,6 +1025,70 @@ class GitHubBoardAdapter(BoardPort):
             return
         self._api("POST", f"/repos/{owner}/{repo}/issues/{parent_number}/sub_issues",
                   sub_issue_id=child_db, replace_parent=True)
+
+        # Pós-hook: remover itens duplicados propagados sem coluna (Status vazio)
+        # para boards distintos do board atual (current_board_id).
+        if current_board_id:
+            self._remove_propagated_items_without_status(child_number, current_board_id)
+
+    def _remove_propagated_items_without_status(self, issue_number: str, exclude_board_id: str) -> None:
+        """Remove items propagados automaticamente sem Status de outros projects.
+
+        Quando uma sub-issue é vinculada a um parent em outro board, o GitHub
+        propaga a sub-issue para todos os projects onde o parent está, mas SEM
+        definir coluna (Status vazio). Esses itens órfãos devem ser removidos.
+
+        Discriminador de segurança: só remove quando Status estiver vazio.
+        Item legítimo com coluna própria (mesmo board ou outro board válido)
+        NÃO é removido.
+        """
+        owner, repo = self._repo.split("/")
+        try:
+            # Buscar todos os projects onde a issue está
+            result = self._gh(
+                "api", f"/repos/{owner}/{repo}/issues/{issue_number}/project_items",
+                "-H", "Accept: application/vnd.github+json",
+            )
+        except Exception as e:
+            log.info("GitHub", f"#{issue_number} - falha ao listar project_items: {e}")
+            return
+
+        if not result:
+            return
+
+        try:
+            items = json.loads(result) if result else []
+        except (ValueError, TypeError):
+            log.warning("GitHub", f"#{issue_number} - resposta inválida ao list project_items")
+            return
+
+        # Para cada project, verificar se Status é vazio e se não é o board atual
+        for item in items:
+            project_id = (item.get("project") or {}).get("id")
+            if not project_id:
+                continue
+
+            # Skip se for o mesmo project do board atual
+            current_project_id = (self._projects or {}).get(exclude_board_id, {}).get("project_id")
+            if current_project_id and project_id == current_project_id:
+                continue
+
+            # Verificar se Status é vazio
+            field_values = item.get("field_values", []) or []
+            status_value = None
+            for fv in field_values:
+                if (fv.get("field") or {}).get("name") == "Status":
+                    status_value = fv.get("name")
+                    break
+
+            # Se Status vazio, remover o item do project
+            if not status_value or status_value.strip() == "":
+                log.info("GitHub", f"#{issue_number} - removendo item de project sem Status "
+                         f"(project_id: {project_id[:8]}...)")
+                try:
+                    self._api("DELETE", f"/project_items/{item.get('id')}")
+                except Exception as e:
+                    log.warning("GitHub", f"#{issue_number} - falha ao remover item de project: {e}")
 
     def _remove_sub_issue(self, parent_number: str, child_number: str) -> None:
         owner, repo = self._repo.split("/")
@@ -1049,7 +1113,7 @@ class GitHubBoardAdapter(BoardPort):
         log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - children {sorted(desired)}",
                  operation="set_children", board_id=board_id, issue_id=issue_id)
         for child in desired - current:
-            self._add_sub_issue(issue_id, child)
+            self._add_sub_issue(issue_id, child, current_board_id=board_id)
         for child in current - desired:
             self._remove_sub_issue(issue_id, child)
 
@@ -1082,7 +1146,7 @@ class GitHubBoardAdapter(BoardPort):
 
         if parent_id:
             if str(parent_id) != current_parent:
-                self._add_sub_issue(str(parent_id), issue_id)
+                self._add_sub_issue(str(parent_id), issue_id, current_board_id=board_id)
         elif current_parent:
             self._remove_sub_issue(current_parent, issue_id)
 
@@ -1235,5 +1299,25 @@ class GitHubBoardAdapter(BoardPort):
                  operation="unarchive_issue", board_id=board_id, issue_id=issue_id)
         self._gql(
             "mutation($pid:ID!,$itemId:ID!){unarchiveProjectV2Item(input:{projectId:$pid,itemId:$itemId}){item{id}}}",
+            pid=meta["project_id"], itemId=item_id,
+        )
+
+    def remove_from_board(self, board_id: str, issue_id: str) -> None:
+        """Remove um item de um project usando deleteProjectV2Item.
+
+        Deve ser chamado APENAS para itens com Status vazio (propagação
+        automática sem coluna definida). Item legítimo com coluna própria
+        NÃO deve ser removido.
+        """
+        self._penalty_check()
+        meta = self._board_meta(board_id)
+        item_id = self._find_item_id(board_id, issue_id)
+        if not item_id:
+            log.warning("GitHub", f"#{issue_id} não encontrada no project para remoção")
+            return
+        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Removendo item do project",
+                 operation="remove_from_board", board_id=board_id, issue_id=issue_id)
+        self._gql(
+            "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
             pid=meta["project_id"], itemId=item_id,
         )
