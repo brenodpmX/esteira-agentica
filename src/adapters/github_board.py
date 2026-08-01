@@ -1135,38 +1135,82 @@ query($owner:String!,$repo:String!,$number:Int!){
         # Pós-hook: remover de projects onde a sub-issue foi propagada sem coluna
         self._remove_propagated_without_column(child_number)
 
+    _PROPAGATED_ITEMS_QUERY = """
+query($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    issue(number:$number){
+      projectItems(first:10){
+        nodes{
+          id
+          project{ id }
+          fieldValues(first:10){
+            nodes{
+              ...on ProjectV2ItemFieldSingleSelectValue{
+                field{...on ProjectV2SingleSelectField{name}}
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}"""
+
     def _remove_propagated_without_column(self, issue_number: str) -> None:
-        """Remove item de projects onde foi propagado sem Status definido."""
+        """Remove item de projects onde foi propagado sem Status definido.
+
+        Usa GraphQL (mesmo padrão de `_belongs_to_board`/`get_issue`), consultando
+        os `projectItems` da issue e o valor do campo `Status` de cada item via
+        `fieldValues`. Remove apenas os itens cujo `Status` esteja vazio —
+        preserva sub-issues legítimas que já têm coluna própria no mesmo board.
+        """
         owner, repo = self._repo.split("/")
-        # Buscar todos os projectItems da issue
         try:
-            result = self._gh(
-                "api", f"/repos/{owner}/{repo}/issues/{issue_number}/projectitems",
-                "-H", "Accept: application/vnd.github+json",
-                "--jq", ".[] | {projectId: .project.id, id: .id, status: .status[0].name}"
+            data = self._gql(
+                self._PROPAGATED_ITEMS_QUERY,
+                owner=owner,
+                repo=repo,
+                number=int(issue_number),
             )
-            if not result:
-                return
-            items = json.loads(result)
-            for item in items:
-                project_id = item.get("projectId")
-                item_id = item.get("id")
-                status_name = item.get("status")
-                # Se o status estiver vazio (None ou string vazia), remover do project
-                if not status_name:
-                    log.info("GitHub", f"#{issue_number} - Removendo item do project {project_id[:8]}... (Status vazio)",
-                             operation="remove_propagated_without_column", issue_number=issue_number)
-                    try:
-                        self._gql(
-                            "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
-                            pid=project_id, itemId=item_id,
-                        )
-                    except Exception as e:
-                        log.warning("GitHub", f"#{issue_number} - Falha ao remover item do project {project_id[:8]}...: {e}",
-                                    operation="remove_propagated_without_column", issue_number=issue_number)
         except Exception as e:
-            log.warning("GitHub", f"#{issue_number} - Falha ao buscar projectitems: {e}",
+            log.warning("GitHub", f"#{issue_number} - Falha ao buscar projectItems: {e}",
                         operation="remove_propagated_without_column", issue_number=issue_number)
+            return
+
+        nodes = (
+            (data.get("repository") or {})
+            .get("issue", {})
+            .get("projectItems", {})
+            .get("nodes", [])
+        )
+
+        for item in nodes:
+            project_id = (item.get("project") or {}).get("id")
+            item_id = item.get("id")
+            if not project_id or not item_id:
+                continue
+
+            status_name = ""
+            for fv in item.get("fieldValues", {}).get("nodes", []):
+                if (fv.get("field") or {}).get("name") == "Status":
+                    status_name = fv.get("name", "")
+                    break
+
+            # Se o status estiver vazio, item foi propagado sem coluna: remover.
+            if status_name:
+                continue
+
+            log.info("GitHub", f"#{issue_number} - Removendo item do project {project_id[:8]}... (Status vazio)",
+                     operation="remove_propagated_without_column", issue_number=issue_number)
+            try:
+                self._gql(
+                    "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
+                    pid=project_id, itemId=item_id,
+                )
+            except Exception as e:
+                log.warning("GitHub", f"#{issue_number} - Falha ao remover item do project {project_id[:8]}...: {e}",
+                            operation="remove_propagated_without_column", issue_number=issue_number)
 
     def _remove_sub_issue(self, parent_number: str, child_number: str) -> None:
         owner, repo = self._repo.split("/")
