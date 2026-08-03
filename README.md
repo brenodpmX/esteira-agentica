@@ -458,26 +458,62 @@ como uma nova issue do board e criaria arquivos locais duplicados.
 A sincronização trata esse efeito colateral em duas camadas:
 
 1. **Prevenção após o vínculo:** depois de criar a relação parent/child, o
-   adapter consulta os projects da sub-issue e remove dos outros projects os
-   itens cujo `Status` está vazio. Itens com coluna definida são preservados,
-   inclusive participações multi-board intencionais.
+   adapter consulta via GraphQL os `projectItems` da sub-issue (com o `Status`
+   de cada item em `fieldValues`) e remove, por `deleteProjectV2Item`, os itens
+   de **outros** projects cujo `Status` está vazio. Dados de Projects V2 não
+   existem na REST API — a consulta usa o mesmo padrão de `get_issue` e
+   `_belongs_to_board`. Itens com coluna definida são preservados, inclusive
+   participações multi-board intencionais.
 2. **Defesa no `create-down`:** se um item sem coluna já está registrado em
    outro board configurado com coluna conhecida, o core o remove do board atual
    via `deleteProjectV2Item`, descarta o evento e não cria arquivos locais. A
    simples presença de `parent` não basta para remover: sem prova de presença em
-   outro board, a issue pode ser uma sub-issue legítima e nova do board atual.
+   outro board, a issue pode ser uma sub-issue legítima e nova do board atual, e
+   segue o fluxo normal com o fallback da primeira coluna.
 
-A remoção precisa concluir antes de o evento ser descartado; falhas são
-reprocessadas pela fila. O project de origem é sempre preservado pelo pós-hook,
-mesmo se estiver temporariamente sem `Status`. Além disso, uma coluna remota
-vazia passa a ser detectada como divergência. Em issues já rastreadas, o
-`change-down` usa a coluna conhecida no snapshot para reconciliar o estado; para
-uma issue realmente nova, sem presença comprovada em outro board, permanece o
-fallback para a primeira coluna configurada.
+O project informado ao pós-hook é sempre preservado, mesmo temporariamente sem
+`Status`; se esse project não puder ser resolvido, nada é removido. Como
+`set_children` informa o project do pai — justamente onde o item propagado
+aparece —, esse caminho é coberto deliberadamente pela camada 2, que tem a prova
+de presença no snapshot.
+
+A remoção precisa concluir antes de o evento ser descartado; falhas propagam e
+são reprocessadas pela fila. Snapshots de boards ausentes do `pipe.yml` não
+servem como prova. Além disso, uma coluna remota vazia passa a ser detectada
+como divergência: em issues já rastreadas, o `change-down` reaplica no board a
+coluna conhecida do snapshot (evitando que a mesma divergência retorne em todo
+full sync), e `create_issue` nunca deixa uma issue nascer sem `Status` — coluna
+inexistente cai na primeira opção do project com warning.
 
 > A correção previne novas duplicações, mas não remove automaticamente resíduos
 > que já haviam sido materializados localmente antes da atualização. Esses itens
 > devem ser removidos manualmente do project indevido, com a esteira parada.
+
+### Incidente conhecido: parent recursivo (#97)
+
+Em 01/08/2026, um arquivo órfão com prefixo numérico foi associado à issue
+`#76` após o caminho salvo para seu body ficar obsoleto. O sync sobrescreveu o
+conteúdo da issue, tentou aplicar `set_parent(76, 76)` e recebeu HTTP 422. Como
+o evento inválido permaneceu na cabeça da fila global, todos os boards ficaram
+sem processamento por 2h37.
+
+O estado afetado foi reparado operacionalmente (conteúdo da issue restaurado e
+arquivos órfãos removidos das colunas ativas), mas as correções preventivas de
+código **ainda estão pendentes**. Elas estão divididas em C1–C5: resolução
+segura do body, validação de auto-referência, tratamento de mensagem-veneno,
+proteção de integridade do estado e lock de instância única.
+
+Até essas correções serem entregues:
+
+- crie issues novas somente como `<slug>-body.md`, sem prefixo numérico;
+- não execute duas instâncias da esteira sobre o mesmo estado;
+- não altere arquivos internos da `.pipe` manualmente;
+- trate repetição contínua de `Erro no ciclo (não fatal)` para o mesmo item
+  como incidente: interrompa a instância duplicada, preserve os logs e siga o
+  procedimento registrado no ticket antes de reiniciar.
+
+A análise, a mitigação e o plano completo estão em
+[`doc/incidente/parent-recursivo/ticket.md`](doc/incidente/parent-recursivo/ticket.md).
 
 ### Issues fantasmas (erro irrecuperável)
 
