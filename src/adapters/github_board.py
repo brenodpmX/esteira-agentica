@@ -25,7 +25,7 @@ class GitHubBoardAdapter(BoardPort):
     _penalty_cooldown: datetime = None
 
     # Throttle
-    _throttle_value: int = 16
+    _throttle_value: int = 1
     _throttle_cooldown: datetime = None
     _throttle_file: str = ".pipe/throttle"
 
@@ -84,6 +84,11 @@ class GitHubBoardAdapter(BoardPort):
                 self._throttle_value //= 2
                 self._save_throttle()
                 log.info("GitHub", f"Throttle reduzido para {self._throttle_value}s (cooldown)")
+            elif self._throttle_value == 1:
+                # Último degrau: de 1 vai direto para 0 (sem throttle).
+                self._throttle_value = 0
+                self._save_throttle()
+                log.info("GitHub", f"Throttle reduzido para {self._throttle_value}s (cooldown)")
             self._throttle_cooldown = datetime.now() + timedelta(hours=1)
 
         time.sleep(self._throttle_value)
@@ -92,7 +97,11 @@ class GitHubBoardAdapter(BoardPort):
         if self._throttle_value >= 64:
             raise self._penalty_hit()
 
-        self._throttle_value = min(self._throttle_value * 2, 64)
+        if self._throttle_value == 0:
+            # Saindo do "sem throttle": primeiro degrau é 1.
+            self._throttle_value = 1
+        else:
+            self._throttle_value = min(self._throttle_value * 2, 64)
         self._throttle_cooldown = datetime.now() + timedelta(hours=1)
         self._save_throttle()
         log.info("GitHub", f"Throttle aumentado para {self._throttle_value}s")
