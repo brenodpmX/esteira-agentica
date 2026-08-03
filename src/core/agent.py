@@ -261,8 +261,13 @@ def build_prompt(config: dict, task: dict) -> str:
         lines.append("```bash")
         lines.append(f"cd {work_dir}")
         lines.append("git fetch origin")
-        lines.append(f"git checkout {origin_branch} && git pull origin {origin_branch}")
-        lines.append(f"git checkout -b {branch_name}")
+        # Criação ATÔMICA: a branch nasce explicitamente de origin/<origem>.
+        # Não use a forma em duas etapas (`git checkout <origem> && git pull` +
+        # `git checkout -b <branch>`): se o checkout/pull da origem falhar, o
+        # `checkout -b` ainda cria a branch a partir do HEAD corrente — base
+        # errada e silenciosa (bug #108). Aqui, se origin/<origem> não existir,
+        # o comando falha em vez de inventar uma base.
+        lines.append(f"git checkout -b {branch_name} origin/{origin_branch}")
         lines.append("```")
         lines.append("")
 
@@ -301,7 +306,17 @@ def build_prompt(config: dict, task: dict) -> str:
     # ── Merge Request (merge / create-merge) ──
     if gitevents in ("merge", "create-merge"):
         lines.append("## Pull Request")
+        lines.append("")
+        lines.append(f"Antes de abrir o PR, garanta que a branch contém a ponta de "
+                     f"`origin/{merge_branch}`. Um PR aberto a partir de base defasada "
+                     f"nasce com conflitos e diff poluído (bug #108). Se o merge abaixo "
+                     f"gerar conflito, resolva-o antes de prosseguir.")
         lines.append("```bash")
+        lines.append(f"cd {work_dir}")
+        lines.append("git fetch origin")
+        lines.append(f"git merge-base --is-ancestor origin/{merge_branch} HEAD "
+                     f"|| git merge origin/{merge_branch}")
+        lines.append(f"git push origin {branch_name}")
         lines.append(f"gh pr create --base {merge_branch} --head {branch_name} "
                      f"--title \"merge: {branch_name} -> {merge_branch}\" "
                      f"--body \"Automated PR from agent\"")
