@@ -1,22 +1,40 @@
 from src.core.log import log
 from src.core.config import check_config as validate_config, ConfigError, SSH_KEY_ENV
+from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
 from src.core.snapshot import Snapshot
 from src.core.change_queue import ChangeQueue, QUEUE_FILE
-from src.core.sync import sync_remote, detect_local_changes, apply_changes
+from src.core.sync import sync_remote, detect_local_changes, apply_changes, migrate_agent_level_labels
 from src.core.version import VERSION
+from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
 from src.adapters.github_board import GitHubBoardAdapter
+from src.adapters.kiro_cli_agent import KiroCliAgent
 from pathlib import Path
 from datetime import datetime, timedelta
 import subprocess
 import shutil
 import os
+import signal
 import time
 
 REPO_DIR = Path("repo")
 SSH_DIR = Path.home() / ".ssh"
 
 board: Board = None
+
+
+class _Shutdown(Exception):
+    """Sinaliza SIGTERM recebido: encerra o loop de forma limpa.
+
+    Erguida a partir do handler de SIGTERM para interromper o time.sleep do
+    loop ocioso (PEP 475 só reergue o sleep se o handler não levanta exceção),
+    garantindo shutdown rápido em vez de esperar o grace period estourar."""
+    pass
+
+
+def _handle_sigterm(signum, frame):
+    raise _Shutdown()
+
 
 ADAPTERS = {
     "github": GitHubBoardAdapter,
@@ -36,11 +54,32 @@ def check_config():
         raise SystemExit(1)
 
 
+def _normalize_key_bytes(data: bytes) -> bytes:
+    """Normaliza o material da chave privada para o formato que o OpenSSH aceita.
+
+    O erro "Load key ...: error in libcrypto" ocorre quando o parser do OpenSSH
+    rejeita o arquivo da chave por questões de formatação — mesmo quando o
+    material da chave é válido. As duas causas mais comuns são:
+
+      1. Ausência de quebra de linha final após a linha "-----END ... KEY-----".
+      2. Terminadores de linha CRLF (\\r\\n) herdados de edição/transporte em
+         ambientes Windows.
+
+    Cópia byte-a-byte (read_bytes/write_bytes) preserva esses defeitos vindos da
+    origem (secret montado, copy/paste, etc.). Aqui normalizamos: removemos os
+    \\r e garantimos exatamente uma quebra de linha final.
+    """
+    normalized = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if normalized and not normalized.endswith(b"\n"):
+        normalized += b"\n"
+    return normalized
+
+
 def _setup_ssh():
     SSH_DIR.mkdir(mode=0o700, exist_ok=True)
     key_file = SSH_DIR / "id_pipe"
     source_key = Path(os.environ[SSH_KEY_ENV]).expanduser()
-    key_file.write_bytes(source_key.read_bytes())
+    key_file.write_bytes(_normalize_key_bytes(source_key.read_bytes()))
     key_file.chmod(0o600)
     
     # Configura SSH para usar essa chave no github
@@ -57,6 +96,7 @@ def _setup_ssh():
 def startup(config: dict):
     log.info("Startup", "Verificando repositórios")
     _setup_ssh()
+    preflight()
     REPO_DIR.mkdir(exist_ok=True)
 
     # Gerar CONTEXT.md para instruir agentes sobre regras e estrutura do sistema
@@ -137,6 +177,18 @@ def board_full_sync(config: dict):
     if recovered:
         log.info("Board", f"{recovered} item(ns) recuperado(s) de execução anterior")
 
+    # Migração one-shot: issues com /agent_level no body mas sem label no board.
+    # DEVE ocorrer ANTES de detect_board_changes para garantir que o CHANGE_UP
+    # de migração entre na fila antes de qualquer CHANGE_DOWN da mesma issue.
+    # Assim o sync-up grava a label no board antes do sync-down reescrever o
+    # body — evitando perda silenciosa do agent_level em issues legadas que
+    # foram alteradas remotamente no mesmo ciclo de full sync.
+    total_migrated = 0
+    for board_id in board.board_ids(config):
+        total_migrated += migrate_agent_level_labels(board_id, queue)
+    if total_migrated:
+        log.info("Board", f"Migração agent_level: {total_migrated} issue(s) enfileirada(s) para gravar label")
+
     # Detectar mudanças remotas
     log.info("Board", "Detectando mudanças remotas")
     total = 0
@@ -152,7 +204,7 @@ def board_full_sync(config: dict):
                 break
             except PenaltyException as e:
                 back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
-                log.warning("Board", f"Rate limit em '{board_id}' - retorna às {back_at}")
+                log.warning("Board", f"Rate limit em '{board_id}' - retoma às {back_at}")
                 time.sleep(e.wait_seconds)
     log.info("Board", f"{total} mudança(s) remota(s) adicionada(s) à fila")
 
@@ -346,10 +398,6 @@ def call_agent(config: dict, task: dict | None):
     col = task["column"]
     issue = task["issue"]
 
-    from src.core.agent import (AgentParams, build_prompt,
-                                resolve_agent_id, resolve_repo_id,
-                                resolve_work_dir)
-    from src.adapters.kiro_cli_agent import KiroCliAgent
     from src.core.config import CONTEXTS_DIR
 
     agent_id = resolve_agent_id(col, issue)
@@ -376,6 +424,13 @@ def call_agent(config: dict, task: dict | None):
 
     prompt = build_prompt(config, task)
 
+    # Extrair título da issue (primeira linha não-vazia do body, sem prefixo '# ')
+    title = ""
+    body_path = Path(issue.get("body_path", ""))
+    if body_path.exists():
+        first_line = body_path.read_text(encoding="utf-8").split("\n", 1)[0]
+        title = first_line.lstrip("# ").strip()
+
     params = AgentParams(
         platform=platform,
         agent_id=agent_id,
@@ -387,10 +442,15 @@ def call_agent(config: dict, task: dict | None):
         prompt=prompt,
         work_dir=str(work_dir),
         repo_id=repo_id,
+        col_name=col.get("name", col_id),
+        title=title,
     )
 
     adapter = KiroCliAgent()
-    adapter.execute(params)
+
+    from src.core.agent_guard import AgentGuard
+    with AgentGuard(board_id, col_id):
+        adapter.execute(params)
 
 
 def sleep_time(config: dict):
@@ -443,6 +503,13 @@ def main():
     index = 0
 
     log.info("Pipe", "Esteira agêntica iniciada")
+
+    # Handler de SIGTERM: docker compose down/stop envia SIGTERM. Como o Python
+    # roda como PID 1 (ou sob tini via init:true), sem handler o sinal é
+    # ignorado/mata sujo (SIGKILL/137). Aqui encerramos o loop de forma limpa,
+    # simétrico ao tratamento de SIGINT (KeyboardInterrupt). Ver issue #70.
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     running = True
     while running:
         try:
@@ -492,6 +559,9 @@ def main():
             time.sleep(e.wait_seconds)
         except KeyboardInterrupt:
             log.info("Pipe", "Interrompido pelo usuário")
+            running = False
+        except _Shutdown:
+            log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
             running = False
         except Exception as e:
             log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
