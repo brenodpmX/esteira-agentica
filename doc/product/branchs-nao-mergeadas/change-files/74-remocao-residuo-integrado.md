@@ -112,3 +112,33 @@ precedidas de evidência de integração.
 
 - Branches órfãs de tarefas arquivadas → story #75
 - Duplicidade e nomenclatura antiga (`epicNN`×`featureNN`) → story #76
+
+---
+
+## Addendum — correção de branch desatualizada (2026-08-03)
+
+O code review anterior (PR #105) reprovou o merge porque a branch
+`story74-74-remocao_segura_do_residuo_ja_integrado` havia divergido de `epic`
+desde o commit `26d863e`: cada lado acumulou histórico próprio (78 commits em
+`epic` — Docker, preflight, correções do incidente Issue Fantasma — vs. 10
+commits na story, incluindo hotfix5). Um merge direto teria revertido/apagado
+esse trabalho publicado em `epic`.
+
+**Correção aplicada:** merge de `origin/epic` na branch da story
+(commit `6d4d5d9`), resolvendo manualmente os 4 conflitos de conteúdo
+(`.env.example`, `Dockerfile`, `docker-compose.yml`, `prepare-docker.sh`) em
+favor da versão mais recente de `epic` — a story não tinha alterações próprias
+nesses arquivos, apenas versões antigas herdadas do ponto de divergência.
+
+**Resultado:**
+- `gh pr view 105` → `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`.
+- Diff do PR #105 caiu de 1710 inserções / 11624 deleções para
+  **1541 inserções / 31 deleções**, restrito à documentação da story e ao
+  próprio merge de sincronização — sem perda de trabalho de `epic`.
+- Suíte de testes: 707 passed, 23 skipped, 3 failed (falhas pré-existentes em
+  `epic` por dependência de `.env` local ausente no ambiente — não
+  relacionadas a esta story nem introduzidas pelo merge).
+
+O bug reportado em `bug/backlog/correcao-story74-branch-desatualizada-gera-pr-destrutivo`
+está resolvido por este addendum e pode ser encerrado/arquivado quando
+sincronizado ao board.
