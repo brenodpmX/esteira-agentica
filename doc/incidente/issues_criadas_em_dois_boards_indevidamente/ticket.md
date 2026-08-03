@@ -1,8 +1,8 @@
 # Incidente — Issues criadas em dois boards indevidamente
 
-Status: Fenômeno 1 corrigido
+Status: Fenômeno 1 em correção — veículo único #88 / PR #102
 Owner: engineering
-Last updated: 2026-08-01
+Last updated: 2026-08-03
 
 ## Registro
 
@@ -196,30 +196,69 @@ A esteira não possui hoje primitiva de remoção de item de projeto
 - Issues #20 e #21 removidas do `Pipe - Epics` (verificável no GitHub).
 ```
 
-## Correção entregue — Fenômeno 1 (2026-08-01)
+## Consolidação do veículo de entrega (2026-08-03)
 
-A reincidência registrada no incidente #88 confirmou que a propagação nativa
-do GitHub continuava ativa: sub-issues vinculadas a parents de outros boards
-eram adicionadas aos projects do pai sem `Status` e posteriormente
-materializadas pela esteira como duplicatas locais.
+Por decisão humana registrada no débito #110, a correção será consolidada na
+issue #88 e no PR #102. A retentativa #98 e o PR #103 foram cancelados para
+eliminar duas implementações concorrentes nos mesmos pontos do código. A branch
+cancelada permanece apenas como referência técnica; ela não deve ser mesclada
+nem combinada integralmente com a branch #88.
 
-A versão 1.6.1 entrega:
+O bug #106 concentra a correção do veículo escolhido. O commit `01f9e83`, da
+retentativa cancelada, pode servir como fonte seletiva para a query GraphQL e
+para testes, mas não deve ser aplicado por cherry-pick cego: além de conflitos
+nos mesmos arquivos, seu pós-hook deixou de receber o board de origem e, por
+isso, não prova que um item sem `Status` pertence a outro project antes de
+removê-lo.
 
-- `BoardPort.remove_from_board` e implementação GitHub por
-  `deleteProjectV2Item`;
-- pós-hook em `_add_sub_issue`, que remove de outros projects somente os itens
-  propagados com `Status` vazio;
-- guard em `_apply_create_down`, que remove e descarta itens sem coluna quando
-  a issue já pertence a outro board conhecido ou possui parent, sem criar
-  arquivos locais;
-- detecção de coluna vazia como divergência e reconciliação a partir da coluna
-  conhecida no snapshot;
-- nove testes de regressão em `tests/test_sub_issue_propagation_fix.py`.
+## Definição complementar para a correção #106
 
-O controle de segurança é a presença de `Status`: itens com coluna definida
-são preservados, permitindo participação multi-board intencional. A correção é
-preventiva; resíduos materializados antes do deploy precisam de limpeza manual
-com a esteira parada.
+A entrega só pode ser considerada concluída quando atender simultaneamente aos
+controles abaixo:
 
-O Fenômeno 2 (snapshots órfãos de boards removidos da configuração) permanece
-uma causa independente e não faz parte desta entrega.
+1. **API real de Projects V2:** o pós-hook deve consultar `projectItems` e
+   `fieldValues` via GraphQL e remover por `deleteProjectV2Item`. Os endpoints
+   REST `/issues/{n}/project_items` e `/project_items/{id}` não existem e não
+   podem permanecer no caminho produtivo.
+2. **Project de origem preservado:** `_add_sub_issue` deve continuar informando
+   o board/project de origem. Mesmo se esse item estiver temporariamente sem
+   `Status`, o pós-hook nunca pode removê-lo. Somente itens de **outros**
+   projects, sem `Status`, são candidatos à limpeza. Item com coluna definida
+   também é sempre preservado, inclusive em uso multi-board intencional.
+3. **Prova de propagação no `create-down`:** `parent` isolado é contexto, não
+   evidência suficiente. Uma issue nova, com parent e coluna vazia, pode ser
+   legítima no board atual. O descarte exige evidência de que a própria issue já
+   está registrada em outro board configurado com coluna conhecida. Sem essa
+   evidência, aplica-se o fallback da primeira coluna e cria-se o estado local.
+   Diretórios órfãos de boards fora da configuração não contam como prova.
+4. **Falha não pode virar descarte silencioso:** o evento só é descartado depois
+   de `remove_from_board` concluir. Falha na remoção deve propagar para a fila
+   tentar novamente; registrar warning e retornar perderia a garantia
+   *at-least-once* e deixaria o item remoto sem rastreamento local.
+5. **Uma única implementação:** o PR #102 deve terminar com um pós-hook, uma
+   primitiva de remoção e uma suíte canônica. Não manter os métodos das duas
+   branches em paralelo.
+6. **Conflito com `main`:** a atualização da branch deve preservar tanto esta
+   seção de sub-issues propagadas quanto a documentação de parent recursivo já
+   integrada em `main`; resolver o conflito removendo uma das duas análises não
+   é aceitável.
+
+### Matriz mínima de regressão
+
+- pós-hook real usa GraphQL e não chama `_gh`/REST;
+- item de outro project sem `Status` é removido;
+- item do project de origem sem `Status` é preservado;
+- item de qualquer project com `Status` é preservado;
+- issue nova com parent, sem presença comprovada em outro board, é criada no
+  board atual pelo fallback;
+- issue sem coluna já registrada em outro board configurado é removida sem
+  criar arquivos locais;
+- falha de `remove_from_board` não consome silenciosamente o evento;
+- fallback de `create_issue`, divergência de coluna vazia e reconciliação de
+  `change-down` permanecem cobertos, sem ciclo de reintrodução do item removido.
+
+A versão 1.6.1 e o Fenômeno 1 só devem ser marcados como entregues após o PR
+#102 estar sem conflitos, a suíte completa passar e esses cenários serem
+verificados. O Fenômeno 2 (snapshots órfãos de boards removidos da configuração)
+continua sendo causa independente e fica fora desta entrega, exceto por não
+poder fornecer evidência para uma remoção.
