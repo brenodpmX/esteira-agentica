@@ -92,11 +92,22 @@ python -m src
 - Token do GitHub com escopos `repo` e `project`
 - API key do kiro-cli (plano Pro/Pro+ ou superior) — gere em https://app.kiro.dev → API Keys
 
-**1. Preparar o contexto de build (copia o binário kiro-cli):**
+**1. Preparar o contexto de build (copia os binários do kiro-cli):**
 
 ```bash
 ./prepare-docker.sh
 ```
+
+O script copia **dois** binários do host para o contexto de build: `kiro-cli`
+(launcher, ~109 MB) e `kiro-cli-chat` (~665 MB), que é quem realmente executa o
+subcomando `chat` usado pela esteira — o launcher faz `exec` nele. Copiar apenas
+o launcher faz toda execução de agente falhar dentro do container com
+`error: No such file or directory (os error 2)` (issue #120). O
+`kiro-cli-term` não é copiado por não ser usado.
+
+Consequência: a imagem final passa de ~620 MB para ~1,7 GB (medido com
+`docker images`). É o custo de embarcar o kiro-cli, que não tem distribuição
+pública instalável dentro da imagem.
 
 **2. Criar o arquivo `.env` com os tokens:**
 
