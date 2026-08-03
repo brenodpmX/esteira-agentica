@@ -22,6 +22,12 @@ RUN chmod +x /usr/local/bin/kiro-cli
 # Dependências Python
 RUN pip install --no-cache-dir pyyaml
 
+# stdout/stderr sem buffer: fora de um TTY (caso do `docker compose up`, que
+# captura a saída por pipe) o CPython usa buffer de bloco e os logs só apareceriam
+# quando o buffer enchesse. Com isso, `docker logs` mostra os logs em tempo real
+# (issue #70)
+ENV PYTHONUNBUFFERED=1
+
 # Diretório de trabalho da esteira
 WORKDIR /app
 

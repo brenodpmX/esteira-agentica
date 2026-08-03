@@ -11,12 +11,28 @@ from datetime import datetime, timedelta
 import subprocess
 import shutil
 import os
+import signal
 import time
 
 REPO_DIR = Path("repo")
 SSH_DIR = Path.home() / ".ssh"
 
 board: Board = None
+
+
+class _Shutdown(Exception):
+    """Sinaliza SIGTERM recebido: encerra o loop de forma limpa.
+
+    Erguida a partir do handler de SIGTERM para interromper o time.sleep do
+    loop ocioso (pela PEP 475 o sleep é reiniciado se o handler retorna sem
+    levantar exceção), garantindo shutdown rápido em vez de esperar o grace
+    period do Docker estourar e escalar para SIGKILL/137."""
+    pass
+
+
+def _handle_sigterm(signum, frame):
+    raise _Shutdown()
+
 
 ADAPTERS = {
     "github": GitHubBoardAdapter,
@@ -443,6 +459,14 @@ def main():
     index = 0
 
     log.info("Pipe", "Esteira agêntica iniciada")
+
+    # Handler de SIGTERM: docker compose down/stop envia SIGTERM. Como o Python
+    # roda como PID 1 (ou sob tini via init:true), sem handler instalado o sinal
+    # é ignorado e o container morre sujo (SIGKILL/137). Aqui encerramos o loop
+    # de forma limpa, simétrico ao tratamento de SIGINT (KeyboardInterrupt).
+    # Ver issue #70.
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     running = True
     while running:
         try:
@@ -492,6 +516,9 @@ def main():
             time.sleep(e.wait_seconds)
         except KeyboardInterrupt:
             log.info("Pipe", "Interrompido pelo usuário")
+            running = False
+        except _Shutdown:
+            log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
             running = False
         except Exception as e:
             log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
