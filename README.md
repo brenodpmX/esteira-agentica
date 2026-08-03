@@ -464,6 +464,32 @@ detectar uma relação adicionada/removida numa issue, o sync enfileira um
 refletir o par recíproco**. Essa checagem é a condição de parada e evita
 reação em cadeia infinita.
 
+### Incidente conhecido: parent recursivo (#97)
+
+Em 01/08/2026, um arquivo órfão com prefixo numérico foi associado à issue
+`#76` após o caminho salvo para seu body ficar obsoleto. O sync sobrescreveu o
+conteúdo da issue, tentou aplicar `set_parent(76, 76)` e recebeu HTTP 422. Como
+o evento inválido permaneceu na cabeça da fila global, todos os boards ficaram
+sem processamento por 2h37.
+
+O estado afetado foi reparado operacionalmente (conteúdo da issue restaurado e
+arquivos órfãos removidos das colunas ativas), mas as correções preventivas de
+código **ainda estão pendentes**. Elas estão divididas em C1–C5: resolução
+segura do body, validação de auto-referência, tratamento de mensagem-veneno,
+proteção de integridade do estado e lock de instância única.
+
+Até essas correções serem entregues:
+
+- crie issues novas somente como `<slug>-body.md`, sem prefixo numérico;
+- não execute duas instâncias da esteira sobre o mesmo estado;
+- não altere arquivos internos da `.pipe` manualmente;
+- trate repetição contínua de `Erro no ciclo (não fatal)` para o mesmo item
+  como incidente: interrompa a instância duplicada, preserve os logs e siga o
+  procedimento registrado no ticket antes de reiniciar.
+
+A análise, a mitigação e o plano completo estão em
+[`doc/incidente/parent-recursivo/ticket.md`](doc/incidente/parent-recursivo/ticket.md).
+
 ### Issues fantasmas (erro irrecuperável)
 
 Quando o sync tenta aplicar uma mudança (`change-up` ou `delete-up`) sobre uma
