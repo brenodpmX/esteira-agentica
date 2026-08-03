@@ -461,14 +461,19 @@ A sincronização trata esse efeito colateral em duas camadas:
    adapter consulta os projects da sub-issue e remove dos outros projects os
    itens cujo `Status` está vazio. Itens com coluna definida são preservados,
    inclusive participações multi-board intencionais.
-2. **Defesa no `create-down`:** se um item sem coluna já pertence a outro board
-   conhecido ou possui parent, o core o remove do board atual via
-   `deleteProjectV2Item`, descarta o evento e não cria arquivos locais.
+2. **Defesa no `create-down`:** se um item sem coluna já está registrado em
+   outro board configurado com coluna conhecida, o core o remove do board atual
+   via `deleteProjectV2Item`, descarta o evento e não cria arquivos locais. A
+   simples presença de `parent` não basta para remover: sem prova de presença em
+   outro board, a issue pode ser uma sub-issue legítima e nova do board atual.
 
-Além disso, uma coluna remota vazia passa a ser detectada como divergência. Em
-issues já rastreadas, o `change-down` usa a coluna conhecida no snapshot para
-reconciliar o estado; para uma issue realmente nova, sem parent e sem presença
-em outro board, permanece o fallback para a primeira coluna configurada.
+A remoção precisa concluir antes de o evento ser descartado; falhas são
+reprocessadas pela fila. O project de origem é sempre preservado pelo pós-hook,
+mesmo se estiver temporariamente sem `Status`. Além disso, uma coluna remota
+vazia passa a ser detectada como divergência. Em issues já rastreadas, o
+`change-down` usa a coluna conhecida no snapshot para reconciliar o estado; para
+uma issue realmente nova, sem presença comprovada em outro board, permanece o
+fallback para a primeira coluna configurada.
 
 > A correção previne novas duplicações, mas não remove automaticamente resíduos
 > que já haviam sido materializados localmente antes da atualização. Esses itens
