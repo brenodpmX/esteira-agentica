@@ -540,3 +540,22 @@ destrutiva (dentro da quota de 5000 pontos/hora).
 ## Pendências
 
 - [ ] Implementar adapter ClickUp
+
+## Distribuição Docker (v1.6.0)
+
+A distribuição homologada usa `Dockerfile` e `docker-compose.yml` na raiz.
+Antes do build, `prepare-docker.sh` copia da instalação local os binários
+`kiro-cli` (launcher) e `kiro-cli-chat` (implementação do subcomando `chat`).
+Ambos são obrigatórios; a ausência do segundo reproduz o erro corrigido na
+issue #120.
+
+Credenciais e configuração entram apenas em runtime: `GH_TOKEN` e
+`KIRO_API_KEY` por ambiente, chave SSH e `pipe.yml` por bind, e contextos pelo
+diretório `contexts/`. O estado é persistido nos volumes `pipe_state`,
+`pipe_repos` e `pipe_logs`.
+
+A operação usa `PYTHONUNBUFFERED=1` para logs em tempo real, `init: true` para
+repassar sinais e handler de `SIGTERM` para shutdown limpo. O serviço usa
+`restart: unless-stopped`. A arquitetura implementada, limitações e evidências
+de homologação estão em `doc/architecture/rodar-no-docker/arquitetura.md`; o
+guia operacional está no `README.md`.

@@ -1,171 +1,129 @@
 # Requisitos — Rodar no Docker
 
-Status: draft
-Owner: requirements
-Last updated: 2026-07-02
+**Status:** implementados e homologados, com débitos residuais aceitos
+**Owner:** requirements
+**Última atualização:** 2026-08-03
+**Versão:** 1.6.0
 
-## Inputs
-- Issue #1 "Rodar no Docker"
-- doc/product/rodar-no-docker/vision.md
-- doc/product/rodar-no-docker/problem-space.md
-- doc/product/rodar-no-docker/epicos.md
-- src/core/config.py
-- src/adapters/kiro_cli_agent.py
-- src/__main__.py (startup, _setup_ssh)
-- README.md / CONTEXT.md
+## Contexto
 
----
+Antes desta feature, a execução dependia de um host preparado manualmente com
+Python, dependências, GitHub CLI e Kiro CLI. A entrega passou a empacotar o
+runtime da esteira e a declarar configuração, credenciais e persistência em
+Docker Compose.
 
-## Contexto de análise
+O build ainda precisa de uma instalação completa do Kiro CLI no host, porque
+não há distribuição pública utilizada pela imagem. `prepare-docker.sh` copia
+`kiro-cli` e `kiro-cli-chat`; depois do build, o runtime depende apenas da
+imagem, das configurações e das credenciais montadas.
 
-A esteira hoje pressupõe um host preparado manualmente. O `startup` lê a
-variável `PIPE_SSH_KEY_FILE`, copia a chave para `~/.ssh/id_pipe` e configura
-`~/.ssh/config`. O adapter `kiro_cli_agent` invoca `kiro-cli chat` via PATH,
-assumindo autenticação prévia. As operações de board usam `gh` CLI autenticado.
-Nada disso é empacotado nem parametrizável para um ambiente efêmero de
-container.
+## Requisitos funcionais e aceite
 
----
+| ID | Requisito | Resultado homologado | Status |
+|----|-----------|-----------------------|--------|
+| RF-01 | Imagem com dependências de runtime | `python:3.12-slim`, código, PyYAML, git, SSH, gh, `kiro-cli` e `kiro-cli-chat` na imagem | Atendido |
+| RF-02 | Chave SSH externa | chave privada e `.pub` montadas read-only; `PIPE_SSH_KEY_FILE` aponta para o caminho interno | Atendido |
+| RF-03 | GitHub CLI headless | `GH_TOKEN` injetado pelo Compose; configuração local do `gh` pode ser montada como apoio | Atendido |
+| RF-04 | Kiro CLI headless | `KIRO_API_KEY` por ambiente e execução não interativa dentro do container | Atendido |
+| RF-05 | Configuração via Compose | `pipe.yml`, `contexts/`, credenciais e caminhos declarados sem rebuild | Atendido |
+| RF-06 | Persistência | volumes nomeados para `.pipe/`, `repo/` e `logs/`, preservados em `down/up` | Atendido |
+| RF-07 | Operação autônoma | loop sem stdin, restart automático, logs em tempo real e shutdown limpo por SIGTERM | Atendido com ressalva |
+| RF-08 | Guia operacional | instalação, configuração, build, execução, verificação, rotação, parada e troubleshooting no README | Atendido |
 
-## Requisitos Funcionais
+### RF-01 — Imagem executável
 
-### RF-01 — Imagem com todas as dependências de runtime
-A imagem deve conter, pré-instalados e no PATH:
-- Python 3.12+
-- Código-fonte da esteira (`src/`)
-- `pyyaml` (única dependência Python declarada no README)
-- `git`
-- `gh` CLI (GitHub CLI)
-- `kiro-cli`
+O runtime inicia com `python -m src` e não instala dependências durante o
+startup. Para construir localmente, o host deve fornecer os dois binários do
+Kiro CLI por meio de `prepare-docker.sh`. Essa restrição é pública e validada
+antes de qualquer cópia.
 
-**Critério de aceitação:** `python -m src` executa dentro do container sem
-nenhuma instalação adicional no host.
+### RF-02 a RF-04 — Autenticação sem interação
 
-### RF-02 — Injeção de chave SSH via variável de ambiente
-A variável `PIPE_SSH_KEY_FILE` já é o ponto de entrada de configuração SSH
-(`_validate_env` em `config.py`). No contexto de container, o arquivo SSH deve
-ser fornecido via montagem de volume ou secret Docker; `PIPE_SSH_KEY_FILE` deve
-apontar para o caminho montado dentro do container.
+- **SSH:** `SSH_KEY_FILE` define a chave do host; os arquivos são montados em
+  `/root/.ssh/` como read-only e copiados internamente pela aplicação.
+- **GitHub:** `GH_TOKEN` é consumido nativamente pelo `gh` e deve ter escopos
+  `repo` e `project`.
+- **Kiro:** `KIRO_API_KEY` usa o modo headless oficial. Não há login por browser
+  nem montagem de cache SSO.
 
-**Critério de aceitação:** a esteira clona repositórios via SSH sem nenhuma
-preparação manual dentro do container.
+A homologação executou um agente real no container, cobrindo a autenticação e o
+binário `kiro-cli-chat` que havia causado o bug #120.
 
-### RF-03 — Autenticação do `gh` CLI sem interatividade
-O `gh` CLI precisa estar autenticado antes que qualquer chamada de board ocorra
-(`github_board.py` usa `gh api`). A autenticação deve ser possível via arquivo
-de credenciais ou token injetado como variável de ambiente — sem prompt
-interativo.
+### RF-05 — Configuração sem rebuild
 
-**Critério de aceitação:** `gh auth status` retorna sucesso dentro do
-container a partir de credenciais fornecidas via compose, sem nenhuma ação
-manual.
+O Compose monta `pipe.yml` read-only e `contexts/` em runtime. `.env` fornece os
+segredos e caminhos do host. Alterações nesses itens não exigem reconstrução da
+imagem; mudanças nos binários do Kiro exigem nova preparação e build.
 
-### RF-04 — Autenticação do `kiro-cli` sem interatividade
-O adapter `kiro_cli_agent.py` chama `kiro-cli chat --no-interactive`. A
-autenticação do `kiro-cli` deve funcionar em modo headless, a partir de
-credenciais ou arquivos injetados via compose.
+### RF-06 — Estado persistente
 
-**Critério de aceitação:** `kiro-cli chat --no-interactive` executa com
-sucesso dentro do container sem prompt de login.
+Os volumes `pipe_state`, `pipe_repos` e `pipe_logs` são criados por padrão.
+`docker compose down` os preserva e `docker compose down -v` os remove. A
+operação efêmera não é o padrão do arquivo entregue, mas pode ser obtida por um
+override de Compose que substitua/remova os volumes.
 
-**Risco:** o mecanismo de autenticação headless do `kiro-cli` deve ser
-confirmado em Arquitetura — pode ser bloqueador.
+### RF-07 — Autonomia e falhas
 
-### RF-05 — Configuração completa via `docker-compose`
-Toda configuração necessária para rodar a esteira deve ser declarável no
-`docker-compose.yml`, sem alterar a imagem:
-- `pipe.yml` — via montagem de volume.
-- `contexts/` — via montagem de volume.
-- Chave SSH — via volume ou Docker secret.
-- Credencial do `gh` — via variável de ambiente (token) ou volume.
-- Credencial do `kiro-cli` — via volume ou variável de ambiente.
+O processo não lê `stdin`; o agente usa modo não interativo. O serviço combina
+`restart: unless-stopped`, `init: true`, `PYTHONUNBUFFERED=1` e handler de
+`SIGTERM`. Assim, logs chegam imediatamente e `stop/down` encerram o loop sem
+esperar `SIGKILL`.
 
-**Critério de aceitação:** `docker compose up` sobe a esteira funcionando com
-configurações distintas sem rebuild da imagem.
+Configuração local inválida (`pipe.yml`, SSH ou contextos) falha no startup com
+mensagem explícita. Credenciais externas inválidas podem ser detectadas apenas
+na primeira operação do GitHub/Kiro, e não em um preflight único; o erro fica
+visível nos logs. Essa é a ressalva aceita para RF-07.
 
-### RF-06 — Persistência configurável de estado de runtime
-Os diretórios `.pipe/`, `logs/` e `repo/` acumulam estado entre ciclos. O
-compose deve permitir que o usuário monte esses diretórios como volumes,
-tornando o estado persistente entre reinícios do container.
+### RF-08 — Documentação
 
-**Critério de aceitação:** após `docker compose down && docker compose up`, o
-estado anterior (`.pipe/`, `logs/`, `repo/`) é preservado quando volumes estão
-configurados.
+O `README.md` cobre:
 
-### RF-07 — Operação autônoma sem prompts interativos
-Nenhuma etapa do ciclo principal — startup, clone, sync, agente — pode
-aguardar input do terminal. Falhas de credencial ou setup devem resultar em
-saída com código de erro e mensagem clara, não em travamento silencioso.
+1. Docker Compose V2 e demais pré-requisitos;
+2. preparação dos dois binários do Kiro;
+3. `.env`, `pipe.yml` e contextos;
+4. build e execução foreground/background;
+5. sinais esperados de startup e smoke test do agente;
+6. persistência, parada, limpeza e rotação de API key; e
+7. solução de problemas, inclusive o erro da issue #120.
 
-**Critério de aceitação:** o container roda `python -m src` sem nenhum prompt
-interativo; falhas de credencial geram log de erro e exit-code != 0.
+## Requisitos não funcionais
 
-### RF-08 — Documentação de operação simples e completa
-Deve existir um guia de operação que cubra:
-1. Pré-requisitos no host (Docker, credenciais disponíveis).
-2. Estrutura do `docker-compose.yml` com todos os parâmetros.
-3. Comando para subir a esteira (`docker compose up`).
-4. Como verificar que a esteira está rodando (log output esperado).
-5. Como parar e reiniciar preservando estado.
+| ID | Requisito | Situação final |
+|----|-----------|----------------|
+| RNF-01 | Segredos fora da imagem | Atendido: `.env` ignorado, tokens por ambiente e SSH por bind read-only |
+| RNF-02 | Base oficial e dependências mínimas | Parcial: base slim e pacotes necessários; Kiro eleva a imagem para ~1,7 GB |
+| RNF-03 | Docker Compose V2 | Atendido e validado com `docker compose` |
+| RNF-04 | Não alterar regras de negócio | Atendido; a mudança Python limita-se ao ciclo de vida por SIGTERM |
+| RNF-05 | Build integralmente reprodutível | Parcial: gh 2.94.0 pinado; base, APT, PyYAML e Kiro não estão todos fixados por versão/digest |
 
-**Critério de aceitação:** um usuário sem conhecimento prévio do código
-consegue colocar a esteira para rodar seguindo apenas o guia.
+Os itens parciais não impediram a homologação funcional, mas permanecem como
+débitos explícitos de hardening e reprodutibilidade.
 
----
+## Dependências e riscos — encerramento
 
-## Requisitos Não-Funcionais
+| ID | Item | Resultado |
+|----|------|-----------|
+| D-01 | Autenticação headless do Kiro | Resolvida por `KIRO_API_KEY` |
+| D-02 | Distribuição do Kiro CLI | Resolvida operacionalmente copiando launcher + chat do host; há risco de drift de versão |
+| D-03 | GitHub CLI por token | Confirmada com `GH_TOKEN` |
+| D-04 | Persistência | Definida com três volumes nomeados por padrão |
 
-### RNF-01 — Segredos nunca embutidos na imagem
-A imagem deve ser construída sem nenhum segredo hardcoded. Tokens, chaves e
-senhas só entram em runtime, via variáveis de ambiente ou volumes externos.
+Riscos residuais: build restrito a Linux `amd64`, execução como `root`, tamanho
+da imagem, dependência da instalação do Kiro no host e pinagem incompleta.
 
-### RNF-02 — Imagem leve e baseada em imagem oficial
-Usar base oficial (ex.: `python:3.12-slim` ou similar) para reduzir superfície
-de ataque e tamanho da imagem. Instalar apenas as dependências estritamente
-necessárias.
+## Fora de escopo
 
-### RNF-03 — Compatibilidade com `docker compose` (V2)
-O compose deve funcionar com `docker compose` (plugin V2, sem hífen). Não é
-obrigatorio garantir compatibilidade com `docker-compose` V1 (deprecado).
+- publicação da imagem em registry;
+- Kubernetes ou outros orquestradores;
+- remoção dos gates `need_human`;
+- CI/CD de build e push da imagem;
+- suporte multi-arquitetura; e
+- gestão corporativa de secrets.
 
-### RNF-04 — Sem alteração da lógica de negócio da esteira
-O código da esteira não deve ser modificado para rodar em container. Toda
-adaptação deve ocorrer via configuração externa e Dockerfile.
-Exceção permitida: se o `kiro-cli` não suportar autenticação headless de
-nenhuma forma, o adapter pode precisar de ajuste minimal — deve ser documentado
-como issue separada e não bloquear a entrega deste escopo.
+## Evidência de conclusão
 
-### RNF-05 — Reprodutibilidade do build
-O `Dockerfile` deve produzir a mesma imagem em builds sucessivos (pinagem de
-versões de dependências, sem `latest` genérico em dependências críticas).
-
----
-
-## Dependências e Riscos
-
-| ID | Item | Tipo | Ação |
-|----|------|------|------|
-| D-01 | Autenticação headless do `kiro-cli` | Risco técnico (bloqueador potencial) | Confirmar mecanismo em Arquitetura antes de implementar RF-04 |
-| D-02 | Versão do `kiro-cli` compatível com `--no-interactive` | Dependência | Confirmar versão mínima e método de instalação |
-| D-03 | Autenticação do `gh` via token de ambiente | Dependência | Verificar suporte (`GH_TOKEN` / `GITHUB_TOKEN`) — documentado pelo GitHub CLI |
-| D-04 | Política de persistência de `.pipe/` | Decisão de produto | Usuário decide se persiste ou começa zerado a cada `up` |
-
----
-
-## Fora de Escopo
-
-- Publicação da imagem em registry (Docker Hub, GHCR, ECR etc.).
-- Orquestração com Kubernetes ou qualquer runtime além de Docker Compose.
-- Alteração dos gates de aprovação do fluxo (`need_human`).
-- CI/CD da própria esteira (build e push automático da imagem).
-- Multi-repositório no compose (um serviço = uma instância da esteira).
-
----
-
-## Critério de conclusão da feature
-
-A feature "Rodar no Docker" está concluída quando:
-1. Existe um `Dockerfile` e um `docker-compose.yml` (ou `docker-compose.example.yml`) na raiz do repositório.
-2. Todos os requisitos RF-01 a RF-08 são atendidos e verificáveis.
-3. A documentação de operação (RF-08) está publicada no repositório.
-4. A imagem não contém segredos (RNF-01).
+Em 03/08/2026, a homologação iniciou a Esteira Agêntica 1.6.0 no container,
+validou o `pipe.yml`, acessou o GitHub, sincronizou os boards, selecionou uma
+issue e concluiu a execução de um agente. Na pré-produção, o build e o smoke
+test do Kiro foram aprovados e a suíte registrou 207 testes aprovados e 3
+ignorados.

@@ -1,9 +1,29 @@
 # User Stories — Rodar no Docker
 
-Status: draft
+Status: entregues e homologadas
 Owner: product (Helena Costa — Product Manager)
-Last updated: 2026-07-06
+Last updated: 2026-08-03
 Épico de origem: #1 "Rodar no Docker" (board `epic`)
+
+## Resultado final
+
+As seis stories foram consolidadas na versão 1.6.0 e homologadas em ambiente
+Docker real. A tabela abaixo registra o resultado entregue; as seções seguintes
+preservam a decomposição e os critérios originais para rastreabilidade.
+
+| Story | Resultado |
+|-------|-----------|
+| US-01 | Imagem baseada em Python 3.12 slim com runtime completo; o build copia `kiro-cli` e `kiro-cli-chat` do host |
+| US-02 | SSH por volume read-only, GitHub por `GH_TOKEN` e Kiro por `KIRO_API_KEY`; agente executado em homologação |
+| US-03 | `docker-compose.yml` e `.env.example` permitem trocar configuração e credenciais sem rebuild |
+| US-04 | `.pipe/`, `repo/` e `logs/` persistidos em volumes nomeados |
+| US-05 | Operação sem prompts, restart automático, logs em tempo real e shutdown limpo por SIGTERM |
+| US-06 | Guia completo e troubleshooting publicados no `README.md` |
+
+**Desvios documentados:** a imagem atual roda como `root`, é Linux `amd64` e a
+pinagem integral prevista em RNF-05 permanece parcial. Os binários foram
+instalados em `/usr/local/bin` para não criar dependência de `$HOME` e facilitar
+hardening futuro. Esses desvios não impediram a homologação funcional.
 
 ## Inputs
 
