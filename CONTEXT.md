@@ -473,6 +473,19 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
+## Arquitetura planejada: confiabilidade Parent Recursivo (#97/#104)
+
+O incidente de 01/08/2026 permanece mitigado, com C1–C5 pendentes. A solução
+preserva a arquitetura hexagonal e adiciona cinco limites no core: resolução
+determinística de artefatos, sanitização de auto-referências antes de I/O,
+erros tipados com dead-letter por item, guarda/restauração dos snapshots ao
+redor do agente e lock local de instância antes do startup.
+
+As decisões, contratos, fluxo de falhas, rollout e testes de regressão estão em
+`doc/architecture/confiabilidade-parent-recursivo/arquitetura.md`. A causa raiz
+e o estado operacional permanecem em
+`doc/incidente/parent-recursivo/ticket.md`.
+
 ## Post mortem: sub-issues propagadas entre boards (documentação v1.6.1 — #99)
 
 O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o
