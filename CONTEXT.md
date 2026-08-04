@@ -311,7 +311,20 @@ Detalhes técnicos verificados no kiro-cli:
 
 ### Log de execução
 
-Gerado em `<log.dir>/<issue_id>/<timestamp>.md` com 3 seções:
+No início de cada execução, `KiroCliAgent.execute` emite no terminal um resumo
+operacional:
+
+```text
+[<board>] #<issue> "<título>" @ <etapa> agent='<agente>' log='<arquivo>'
+```
+
+`call_agent` obtém o título da primeira linha do `-body.md`, com fallback para
+o slug do arquivo, e resolve o nome humanizado da etapa pela configuração da
+coluna, com fallback para `col_id`. Esses valores são transportados pelos
+campos opcionais `title` e `col_name` de `AgentParams`. O resumo não exibe mais
+`model` nem `cwd`; esses dados permanecem no log Markdown detalhado.
+
+O arquivo `<log.dir>/<issue_id>/<timestamp>.md` mantém 3 seções:
 - **Parâmetros**: plataforma, agente, model, agent_level, board, coluna, issue, context
 - **Prompt**: prompt completo montado por `build_prompt`
 - **Chat**: diálogo (preenchido durante execução)

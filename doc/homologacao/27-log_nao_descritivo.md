@@ -1,6 +1,8 @@
 # Homologação — #27 Log não descritivo
 
-Guia para o humano validar em ambiente pré-produtivo a correção do log de
+**Status:** aprovada em 04/08/2026.
+
+Guia usado para validar em ambiente pré-produtivo a correção do log de
 execução de agente (título + etapa legíveis, remoção de `model`/`cwd`).
 
 ## O que foi corrigido

@@ -264,6 +264,17 @@ em `agents`.
 
 ### Log de execução
 
+Ao iniciar um agente, o terminal exibe um resumo operacional no formato:
+
+```text
+09:47:03 [Agent] [task] #25 "Log não descritivo" @ Análise Técnica agent='Sofia Carvalho - Engenheira de Software PL' log='logs/25/2026-07-20_19-47-03.md'
+```
+
+O resumo identifica board, issue, título, etapa, agente e caminho do log. O
+título vem da primeira linha do `-body.md` (com fallback para o slug do arquivo)
+e a etapa usa o nome da coluna (com fallback para o ID). `model` e `cwd` não
+aparecem mais no terminal, mas continuam disponíveis no arquivo detalhado.
+
 Cada execução gera um arquivo em `logs/<issue_id>/<timestamp>.md` com:
 - **Parâmetros**: plataforma, agente, model, agent_level, board, coluna, issue
 - **Prompt**: prompt completo enviado ao agente
