@@ -445,6 +445,32 @@ Validar credenciais e retornar JWT.
 /agent_level high
 ```
 
+### Incidente: sub-issues propagadas entre boards (#98/#99)
+
+**Versão desta documentação: 1.6.1.** Ao vincular uma sub-issue a um parent
+presente em outro GitHub Project, o GitHub Projects V2 pode propagar a filha
+para o project do parent sem preencher o campo `Status`. O sync então pode
+interpretar o item sem coluna como uma issue nova daquele board, criar arquivos
+locais duplicados e executar o agente no contexto errado.
+
+A correção homologada para o incidente é composta por cinco proteções:
+
+1. operação `remove_from_board` via GraphQL `deleteProjectV2Item`;
+2. pós-hook de `_add_sub_issue` para remover propagação sem `Status`;
+3. guard em `create-down` para não materializar a duplicata local;
+4. fallback de coluna para issues realmente novas ou já rastreadas; e
+5. detecção de coluna vazia como divergência a reconciliar.
+
+**Estado em 04/08/2026:** a implementação final está no commit `01f9e83` e foi
+homologada com 208 testes aprovados e 3 ignorados, mas o PR #103 foi fechado sem
+merge. Portanto, essa proteção ainda não está disponível em `main` nem deve ser
+considerada implantada em produção. Até a integração, evite criar novos
+vínculos hierárquicos entre boards sem monitorar itens sem `Status`; resíduos
+anteriores (#84/#85/#86) exigem limpeza manual com a esteira parada.
+
+Documentação: [change #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
+e [post mortem #99](doc/incidente/sub-issues-propagadas/ticket.md).
+
 ## Eventos de coluna (`on_in` / `on_out`)
 
 Cada coluna pode declarar arrays `on_in` (disparado ao entrar) e `on_out`
