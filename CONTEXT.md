@@ -473,6 +473,36 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
+## Post mortem: sub-issues propagadas entre boards (documentação v1.6.1 — #99)
+
+O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o
+vínculo hierárquico é criado, mas esses itens podem nascer sem `Status`. O core
+atual interpreta um `create-down` sem coluna como issue nova e pode materializar
+uma cópia local no board errado.
+
+A correção #98 foi implementada e homologada no commit `01f9e83`, com cinco
+camadas: `remove_from_board` via `deleteProjectV2Item`, limpeza pós-vínculo,
+guard no `create-down`, fallback de coluna e reconciliação de coluna vazia. A
+suíte da hotfix terminou com 208 testes aprovados e 3 ignorados. Contudo, o PR
+#103 foi fechado sem merge em 03/08/2026; o commit não pertence a `main` nem a
+esta branch documental. Logo, a correção não está disponível no runtime desta
+versão e não deve ser anunciada como implantada.
+
+### Regra de acesso à API de GitHub Projects V2
+
+Operações sobre projects, `projectItems`, campos de project e remoção de item
+devem usar GraphQL via `self._gql`. REST via `self._gh` fica restrito às APIs
+tradicionais de issues e pull requests. Um endpoint REST de `projectitems` foi
+inventado em duas tentativas de correção e passou pelos mocks; qualquer exceção
+a essa regra exige validação contra a documentação oficial e teste de integração
+gated.
+
+O registro completo, os fatores de reincidência e as ações preventivas estão em
+`doc/incidente/sub-issues-propagadas/ticket.md`. O conteúdo funcional planejado
+e o estado de integração estão em
+`doc/changes/98-sub-issues-propagadas-entre-boards.md`; a entrega documental
+v1.6.1 está em `doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
+
 ## Robustez e Segurança do Estado (v1.5.0 — Incidente "Issue Fantasma")
 
 Pacote de correções derivado do incidente "Issue Fantasma" (registro completo

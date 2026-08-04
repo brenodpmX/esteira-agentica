@@ -3,12 +3,13 @@
 ## Registro
 
 **Incidente ID:** 88 (registro), 98 (task de correção), 99 (este post mortem)
-**Status:** Mitigado — correção implementada e validada por testes; homologação da branch
-`hotfix98-...` concluída por Isabela Gomes - Tech Lead; deploy em produção pendente de merge
-do PR.
+**Status:** Post mortem homologado em 04/08/2026. A correção foi implementada e
+homologada no commit `01f9e83`, mas não foi integrada: o PR #103 foi fechado em
+03/08/2026 sem merge, e o commit não pertence a `main` nem a esta branch
+documental. Deploy em produção continua pendente.
 **Owner:** engenharia
 **Data de Abertura:** 2026-08-01
-**Last Updated:** 2026-08-01
+**Last Updated:** 2026-08-04
 
 ### Descrição
 

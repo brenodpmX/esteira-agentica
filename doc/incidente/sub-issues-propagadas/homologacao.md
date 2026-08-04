@@ -19,14 +19,14 @@ Artefato documental desta branch:
   recomendações.
 - `doc/incidente/sub-issues-propagadas/homologacao.md` — este roteiro.
 
-**Importante para quem for homologar:** a correção de código do incidente subjacente (#98) já
-foi implementada, testada e homologada **em outra branch** —
+**Importante para quem consultar este histórico:** a correção de código do
+incidente subjacente (#98) foi implementada e homologada **em outra branch** —
 `hotfix98-98-corrigir_duplicacao_e_ausencia_de_coluna_em_sub_issues_propagadas_entre_boards_github_projects_v2`
-(commit `01f9e83`, homologado por Isabela Gomes - Tech Lead em 2026-08-01 22:43, com roteiro
-próprio em `doc/homologacao-98-sub-issues-propagadas.md` naquela branch). Essa correção ainda
-**não está mergeada em `main`** — o PR #103 foi reprovado em code review numa versão anterior
-do commit e precisa de uma nova revisão sobre o commit corrigido antes do merge. O que há
-para homologar **aqui** é o documento de post mortem, não uma correção de bug em si.
+(commit `01f9e83`, homologado por Isabela Gomes - Tech Lead em 2026-08-01 22:43,
+com roteiro próprio em `doc/homologacao-98-sub-issues-propagadas.md` naquela
+branch). O PR #103 foi fechado em 03/08/2026 **sem merge** e a branch remota não
+está mais disponível. A correção não está em `main` nem nesta branch; este
+roteiro homologa somente o post mortem.
 
 ## Validação já realizada nesta etapa
 
