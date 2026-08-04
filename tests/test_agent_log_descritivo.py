@@ -1,6 +1,7 @@
 """Testes para o log de execução descritivo do agente (etapa + título).
 
 Issue #31 — Tornar log de execução de agente descritivo (etapa + título)
+Issue #127 — Omitir título e coluna vazios no resumo de execução do agente
 
 Cobertura:
   (a) AgentParams aceita os novos campos opcionais `col_name` e `title`.
@@ -8,13 +9,19 @@ Cobertura:
   (c) Comportamento com campos vazios (fallback: campos ausentes não quebram).
   (d) `model` e `cwd` não aparecem mais na linha de log do terminal.
   (e) `call_agent` popula `col_name` e `title` corretamente em AgentParams.
+  (f) Omissão de título e/ou coluna vazios no resumo (as 4 combinações),
+      sem produzir `""` (aspas vazias) nem `@` sem conteúdo — critérios de
+      aceite da issue #127.
 """
 
+import re
 import sys
 from pathlib import Path
 from dataclasses import fields
 from unittest.mock import MagicMock, patch, call
 from tempfile import TemporaryDirectory
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -550,3 +557,123 @@ class TestCallAgentPopulaNovosCampos:
         )
         assert params is not None
         assert params.title == "Título sem hash"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (f) Issue #127 — Omitir título e coluna vazios no resumo de execução
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestOmiteTituloEColunaVaziosNoResumo:
+    """Critérios de aceite da issue #127.
+
+    - Título vazio não produz `""` no resumo.
+    - Coluna vazia não produz `@` sem conteúdo.
+    - Board, issue, agente e caminho do log continuam presentes.
+    - Com título e coluna preenchidos, o formato homologado permanece
+      inalterado (`"<title>" @ <col_name>`).
+    """
+
+    def _capture_log_info(self, params: AgentParams) -> str:
+        """Executa KiroCliAgent.execute mockando tudo exceto o log.info
+        e retorna a linha de resumo (a que contém `agent=`)."""
+        from src.adapters.kiro_cli_agent import KiroCliAgent
+
+        captured = []
+
+        def fake_log_info(tag, msg, **kwargs):
+            if tag == "Agent" and "agent=" in msg:
+                captured.append(msg)
+
+        with TemporaryDirectory() as tmp:
+            p = AgentParams(
+                platform=params.platform,
+                agent_id=params.agent_id,
+                agent_name=params.agent_name,
+                model=params.model,
+                issue_id=params.issue_id,
+                board_id=params.board_id,
+                col_id=params.col_id,
+                prompt=params.prompt,
+                work_dir=str(tmp),
+                col_name=params.col_name,
+                title=params.title,
+            )
+            agent = KiroCliAgent()
+            with patch("src.adapters.kiro_cli_agent.log") as mock_log, \
+                 patch.object(agent, "_run", return_value="ok"), \
+                 patch.object(agent, "_append_log"), \
+                 patch.object(agent, "_create_log", return_value=Path(tmp) / "log.md"):
+                mock_log.info.side_effect = fake_log_info
+                agent.execute(p)
+
+        return captured[0] if captured else ""
+
+    # --- combinação 1: ambos preenchidos (formato homologado inalterado) ---
+
+    def test_ambos_preenchidos_mantem_formato_homologado(self):
+        """Título e coluna preenchidos: formato `"<title>" @ <col_name>` íntegro."""
+        params = _make_params(title="Log não descritivo", col_name="Análise Técnica")
+        msg = self._capture_log_info(params)
+        assert '"Log não descritivo" @ Análise Técnica' in msg, \
+            f"Formato homologado alterado: {msg}"
+
+    # --- combinação 2: apenas título preenchido ---
+
+    def test_apenas_titulo_preenchido_omite_arroba_vazio(self):
+        """Coluna vazia: não deve sobrar `@` sem conteúdo (nem `@  agent=`)."""
+        params = _make_params(title="Log não descritivo", col_name="")
+        msg = self._capture_log_info(params)
+        assert '"Log não descritivo"' in msg
+        assert "@  agent=" not in msg, f"'@' vazio não omitido: {msg}"
+        assert not re.search(r"@\s*agent=", msg), \
+            f"Marcador de coluna vazio ainda presente: {msg}"
+
+    # --- combinação 3: apenas coluna preenchida ---
+
+    def test_apenas_coluna_preenchida_omite_aspas_vazias(self):
+        """Título vazio: não deve sobrar `""` (aspas vazias) no resumo."""
+        params = _make_params(title="", col_name="Análise Técnica")
+        msg = self._capture_log_info(params)
+        assert "@ Análise Técnica" in msg
+        assert '""' not in msg, f"Aspas vazias não omitidas: {msg}"
+
+    # --- combinação 4: ambos vazios ---
+
+    def test_ambos_vazios_omite_aspas_e_arroba(self):
+        """Título e coluna vazios: nem `""` nem `@` sem conteúdo no resumo."""
+        params = _make_params(title="", col_name="")
+        msg = self._capture_log_info(params)
+        assert '""' not in msg, f"Aspas vazias não omitidas: {msg}"
+        assert not re.search(r"@\s*agent=", msg), \
+            f"Marcador de coluna vazio ainda presente: {msg}"
+
+    # --- board, issue, agente e log path sempre presentes ---
+
+    @pytest.mark.parametrize("title,col_name", [
+        ("Log não descritivo", "Análise Técnica"),
+        ("Log não descritivo", ""),
+        ("", "Análise Técnica"),
+        ("", ""),
+    ])
+    def test_board_issue_agente_e_log_sempre_presentes(self, title, col_name):
+        """Nas 4 combinações, board/issue/agente/log_path continuam no resumo."""
+        params = _make_params(
+            title=title,
+            col_name=col_name,
+            board_id="task",
+            issue_id="5",
+            agent_name="Sofia Carvalho - Engenheira de Software PL",
+        )
+        msg = self._capture_log_info(params)
+        assert "[task]" in msg, f"board_id ausente: {msg}"
+        assert "#5" in msg, f"issue_id ausente: {msg}"
+        assert "Sofia Carvalho - Engenheira de Software PL" in msg, \
+            f"agent_name ausente: {msg}"
+        assert "log=" in msg, f"log_path ausente: {msg}"
+
+    def test_exemplo_do_bug_relatado_na_issue_nao_ocorre(self):
+        """Reproduz literalmente o exemplo de saída indevida citado na issue
+        (`[task] #5 "" @  agent='...'`) e garante que não ocorre mais."""
+        params = _make_params(title="", col_name="", board_id="task", issue_id="5")
+        msg = self._capture_log_info(params)
+        assert '#5 "" @' not in msg, f"Bug relatado na issue ainda presente: {msg}"
