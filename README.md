@@ -85,66 +85,127 @@ python -m src
 
 ### Execução via Docker Compose (recomendado para produção)
 
-**Pré-requisitos:**
-- Docker e Docker Compose instalados
-- `gh auth login` executado no host (gera `~/.config/gh/`)
-- Chave SSH configurada no GitHub (`~/.ssh/id_ed25519`)
-- Token do GitHub com escopos `repo` e `project`
+A distribuição Docker foi homologada na versão 1.6.0. Ela executa o loop da
+esteira sem prompts no container; intervenções de negócio continuam sendo feitas
+no board do GitHub e são capturadas pelo sincronismo seguinte.
 
-**1. Preparar o contexto de build (copia o binário kiro-cli):**
+**Pré-requisitos no host:**
+- Docker Engine com Docker Compose V2 (`docker compose`);
+- `kiro-cli` instalado por completo no `PATH` — o build copia o launcher e o
+  executável de chat da instalação local;
+- chave SSH registrada no GitHub (por padrão, `~/.ssh/id_ed25519`);
+- token do GitHub com escopos `repo` e `project`;
+- API key do Kiro (plano Pro/Pro+ ou superior), gerada em
+  https://app.kiro.dev → **API Keys**.
+
+O login local do `gh` é opcional quando `GH_TOKEN` está preenchido. O diretório
+`~/.config/gh` também é montado por padrão e pode ser alterado por
+`GH_CONFIG_DIR`.
+
+**1. Preparar o contexto de build:**
 
 ```bash
 ./prepare-docker.sh
 ```
 
-**2. Criar o arquivo `.env` com o token do GitHub:**
+O script copia **dois** binários do host: `kiro-cli` (launcher, ~109 MB) e
+`kiro-cli-chat` (~665 MB), que implementa o subcomando `chat` usado pela
+esteira. Copiar somente o launcher causa
+`No such file or directory (os error 2)` durante a execução do agente
+(issue #120). O script resolve symlinks da instalação, valida os dois arquivos e
+não copia `kiro-cli-term`, que não é usado.
+
+Os binários são ignorados pelo Git e usados apenas no contexto local de build.
+A imagem resultante ocupa aproximadamente 1,7 GB; a maior parte vem do Kiro CLI,
+que não possui distribuição pública instalável pela imagem.
+
+**2. Configurar credenciais e caminhos:**
 
 ```bash
 cp .env.example .env
-# Editar .env e preencher GH_TOKEN (e opcionalmente SSH_KEY_FILE, GH_CONFIG_DIR)
 ```
 
-**3. Garantir que o `pipe.yml` existe na raiz do projeto:**
+Preencha no `.env`:
 
-```bash
-# pipe.yml não é versionado — deve ser criado/copiado manualmente
-# Ver seção "Configuração → Arquivo pipe.yml" abaixo para o formato
+```env
+GH_TOKEN=ghp_seu_token
+KIRO_API_KEY=kiro_sua_api_key
+SSH_KEY_FILE=~/.ssh/id_ed25519       # opcional; este é o padrão
+GH_CONFIG_DIR=~/.config/gh           # opcional; este é o padrão
 ```
 
-**4. Build e execução:**
+Não versione o `.env`. Para rotacionar a API key, atualize `KIRO_API_KEY` e
+recrie o serviço com `docker compose up -d --force-recreate`.
+
+**3. Criar a configuração da esteira:**
+
+Crie `pipe.yml` na raiz (ele não é versionado) usando o exemplo da seção
+[Configuração](#configuração). Preencha também os contextos requeridos em
+`contexts/<plataforma>/<agente>.md`; o startup cria arquivos ausentes, mas exige
+conteúdo antes de executar os agentes.
+
+**4. Construir e iniciar:**
 
 ```bash
 docker compose build
 docker compose up
 ```
 
-**5. Para rodar em background:**
+Para executar em background e acompanhar os logs:
 
 ```bash
 docker compose up -d
-docker compose logs -f   # acompanhar logs
+docker compose logs -f
 ```
 
-**6. Para parar:**
+Os logs são emitidos em tempo real (`PYTHONUNBUFFERED=1`). O Compose usa um
+processo init e a aplicação trata `SIGTERM`, portanto `down`/`stop` encerram o
+loop de forma limpa, sem aguardar `SIGKILL` (issue #70).
+
+**5. Verificar a execução:**
+
+Uma inicialização saudável registra, nesta ordem geral: validação do
+`pipe.yml`, verificação dos repositórios, sincronização dos boards, início da
+esteira e seleção/execução de tarefas. Para validar os binários embarcados:
 
 ```bash
-docker compose down
+docker compose run --rm pipe kiro-cli chat --help
 ```
+
+**6. Parar ou reiniciar:**
+
+```bash
+docker compose down       # preserva os volumes
+docker compose up -d      # reutiliza estado, clones e logs
+docker compose down -v    # remove também todo o estado persistido
+```
+
+O serviço usa `restart: unless-stopped`, reiniciando após crash ou reboot do
+host, mas permanecendo parado após uma interrupção explícita.
 
 **Volumes persistidos entre reinícios:**
 
 | Volume | Caminho no container | Conteúdo |
 |--------|---------------------|----------|
-| `pipe_state` | `/app/.pipe` | Snapshots, fila de mudanças, índice de sessões |
-| `pipe_repos` | `/app/repo` | Clones dos repositórios git |
-| `pipe_logs` | `/app/logs` | Logs de execução |
+| `pipe_state` | `/app/.pipe` | Snapshots, fila de mudanças e índice de sessões |
+| `pipe_repos` | `/app/repo` | Clones dos repositórios Git |
+| `pipe_logs` | `/app/logs` | Logs da esteira e das execuções de agentes |
 
-Os volumes são criados automaticamente pelo Docker na primeira execução.
-Para limpar o estado interno (forçar re-sync completo), remova os volumes:
+### Solução de problemas do Docker
 
-```bash
-docker compose down -v
-```
+| Sintoma | Verificação / correção |
+|---------|------------------------|
+| `kiro-cli não encontrado no PATH` | Instale o Kiro CLI completo no host e rode novamente `./prepare-docker.sh`. |
+| `kiro-cli-chat não encontrado` | Reinstale/atualize o Kiro CLI; launcher e binário de chat devem estar no mesmo diretório real. |
+| `No such file or directory (os error 2)` ao chamar o agente | Remova `kiro-cli` e `kiro-cli-chat` da raiz, execute `./prepare-docker.sh` e refaça o build sem cache. |
+| Falha de autenticação do agente | Confirme `KIRO_API_KEY` no `.env` e recrie o serviço. |
+| Falha de API/projeto do GitHub | Confirme os escopos `repo` e `project` de `GH_TOKEN`. |
+| Falha ao clonar via SSH | Confirme `SSH_KEY_FILE`, o arquivo `.pub` correspondente e o cadastro da chave no GitHub. |
+| Configuração ou contexto inválido | Consulte `docker compose logs`; o startup encerra com mensagem explícita. |
+
+> A imagem atual é construída para Linux `amd64`, pois o Dockerfile baixa o
+> binário do GitHub CLI para essa arquitetura e copia binários nativos do Kiro
+> CLI instalados no host.
 
 ## Estrutura
 

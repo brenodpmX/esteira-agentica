@@ -1,8 +1,17 @@
 # Problem Space — Rodar no Docker
 
-Status: draft
+Status: resolvido na versão 1.6.0
 Owner: product
-Last updated: 2026-07-02
+Last updated: 2026-08-03
+
+## Resultado da entrega
+
+O problema foi atendido com imagem Docker, orquestração por Compose, credenciais
+externas, volumes persistentes e documentação operacional. O host ainda precisa
+de Docker, credenciais e uma instalação completa do Kiro CLI no momento do
+build, mas não precisa instalar dependências da esteira dentro do container nem
+interagir com o runtime depois do startup. A homologação confirmou o ciclo real
+de sincronização e agente.
 
 ## Inputs
 - Issue #1 "Rodar no Docker"
@@ -11,8 +20,8 @@ Last updated: 2026-07-02
 - src/adapters/kiro_cli_agent.py (`_run` chama `kiro-cli chat`)
 - README.md (seção Requisitos)
 
-## Contexto
-A execução atual pressupõe uma máquina preparada à mão. O `startup` copia a
+## Contexto original
+A execução anterior pressupunha uma máquina preparada à mão. O `startup` copia a
 chave SSH indicada por `PIPE_SSH_KEY_FILE` para `~/.ssh/id_pipe`, configura o
 `~/.ssh/config` e clona os repositórios. O adapter de agente invoca
 `kiro-cli chat` assumindo que o binário existe no PATH e está autenticado. As

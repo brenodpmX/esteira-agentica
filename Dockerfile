@@ -16,11 +16,25 @@ RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_$
     && gh --version
 
 # kiro-cli — copiado do host (binário nativo, não distribuído via repositório público)
-COPY kiro-cli /usr/local/bin/kiro-cli
-RUN chmod +x /usr/local/bin/kiro-cli
+#
+# `kiro-cli` é apenas um launcher: o subcomando `chat` é executado via `exec` no
+# binário irmão `kiro-cli-chat`, que precisa estar no PATH ao lado dele. Omitir
+# esse binário faz toda execução de agente falhar com
+# "error: No such file or directory (os error 2)" (issue #120).
+#
+# Instalados em /usr/local/bin (e não em ~/.local/bin) para não depender do HOME
+# e sobreviver à migração para usuário não-root (issue #40).
+COPY kiro-cli kiro-cli-chat /usr/local/bin/
+RUN chmod +x /usr/local/bin/kiro-cli /usr/local/bin/kiro-cli-chat
 
 # Dependências Python
 RUN pip install --no-cache-dir pyyaml
+
+# stdout/stderr sem buffer: fora de um TTY (caso do `docker compose up`, que
+# captura a saída por pipe) o CPython usa buffer de bloco e os logs só apareceriam
+# quando o buffer enchesse. Com isso, `docker logs` mostra os logs em tempo real
+# (issue #70)
+ENV PYTHONUNBUFFERED=1
 
 # Diretório de trabalho da esteira
 WORKDIR /app

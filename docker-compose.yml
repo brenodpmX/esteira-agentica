@@ -14,6 +14,10 @@ services:
       # Token do GitHub — preencha em .env ou exporte antes de subir
       GH_TOKEN: ${GH_TOKEN}
 
+      # API key do kiro-cli (modo headless — autenticação sem interatividade)
+      # Gere em: https://app.kiro.dev → API Keys
+      KIRO_API_KEY: ${KIRO_API_KEY}
+
       # Inibe cor nos logs do kiro-cli para facilitar parsing
       KIRO_LOG_NO_COLOR: "1"
 
@@ -45,7 +49,14 @@ services:
       # Configuração do gh CLI (autenticação — gerada por `gh auth login`)
       - ${GH_CONFIG_DIR:-~/.config/gh}:/root/.config/gh:ro
 
+    # ─── Init (PID 1) ─────────────────────────────────────────────────────────
+    # PID 1 = tini: repassa SIGTERM ao Python (shutdown limpo/rápido, sem escalar
+    # para SIGKILL/137) e reapa processos zumbis deixados por git/gh/kiro-cli
+    # (issue #70)
+    init: true
+
     # ─── Restart ──────────────────────────────────────────────────────────────
+    # Reinicia após crash ou reboot do host; para com docker compose stop (US-05)
     restart: unless-stopped
 
     # ─── Recursos (opcional — ajuste conforme o ambiente) ─────────────────────
