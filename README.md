@@ -246,17 +246,25 @@ main()
 ├── board_full_sync()      # Sync completo (estrutura + mudanças remotas)
 │
 └── while running:
-    ├── board_full_sync()  # Re-executa se mudou o dia (daily full sync)
-    ├── sync_board()       # Detecta mudanças remotas/locais, aplica fila → bool
-    ├── keep_task()        # Seleciona próxima tarefa → task | AUTO_ADVANCED | None
-    ├── call_agent()       # Executa agente com prompt construído
-    └── sleep_time()       # Intervalo entre ciclos (condicional)
+    ├── board_full_sync()   # Re-executa se mudou o dia (daily full sync)
+    ├── detect_local_all()  # Descoberta local (up) em TODOS os boards → bool
+    ├── sync_remote_board() # Descoberta remota (down) no board atual → bool
+    ├── process_queue()     # Aplica a fila global de mudanças
+    ├── keep_task()         # Seleciona próxima tarefa → task | AUTO_ADVANCED | None
+    ├── call_agent()        # Executa agente com prompt construído
+    └── sleep_time()        # Intervalo entre ciclos (condicional)
 ```
+
+> **Descoberta desacoplada:** a detecção local (`up`) roda em **todos** os
+> boards a cada ciclo — barata (varredura de filesystem) e necessária porque um
+> agente atuando em um board pode criar artefatos (ex.: issue bloqueante) em
+> outro. Já o sync remoto (`down`) permanece **por board**, na rotação
+> priorizada, por consumir API do provider (sujeito a rate limit).
 
 ### sleep_time (controle de ociosidade)
 
 Ativado apenas quando **ambas** as condições são verdadeiras:
-- `sync_board()` retornou `False` (nenhuma movimentação up ou down)
+- a descoberta não movimentou nada (`detect_local_all()` e `sync_remote_board()` retornaram `False`)
 - `keep_task()` retornou `None` (nenhuma tarefa elegível)
 
 Quando ativado, dorme pelo tempo definido em `sleep` no `pipe.yml` (em segundos).

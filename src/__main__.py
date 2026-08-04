@@ -182,23 +182,59 @@ def get_board_ids(config: dict) -> list[str]:
     )
 
 
-def sync_board(board_id: str, config: dict) -> bool:
-    """Descobre mudanças (remotas e locais) de um único board.
+def detect_local_all(config: dict) -> bool:
+    """Descoberta local (up) em TODOS os boards a cada ciclo.
 
-    Retorna True se houve qualquer mudança detectada para este board.
+    Os efeitos colaterais de um agente são cross-board: atuando em um board
+    ele pode criar/editar/remover arquivos em outro (ex.: abrir uma issue
+    bloqueante em outro board). Se a descoberta local ficasse presa ao board
+    da rotação priorizada, esses artefatos só seriam vistos quando a rotação
+    chegasse lá — e boards de baixa prioridade podem ser inanidos enquanto os
+    de cima têm atividade, atrasando indefinidamente a criação (inclusive de
+    bloqueios). Por isso a descoberta local é global e desacoplada da rotação
+    usada para o sync remoto e a execução.
+
+    Retorna True se alguma mudança local foi enfileirada.
+    """
+    queue = ChangeQueue()
+    before = queue.size()
+    for board_id in get_board_ids(config):
+        detect_local_changes(board_id, queue)
+    return queue.size() > before
+
+
+def sync_remote_board(board_id: str) -> bool:
+    """Descoberta remota (down) de um único board (rotação priorizada).
+
+    O sync remoto consome API do provider (sujeito a rate limit), então
+    permanece por board, na ordem de prioridade da rotação — diferente da
+    descoberta local, que é global por ser barata (varredura de filesystem).
+
+    Retorna True se houve mudança remota enfileirada para este board.
     Penalty não propaga — apenas interrompe e retorna o que já descobriu.
     """
     global board
     queue = ChangeQueue()
-
     try:
         sync_remote(board_id, board, queue)
     except PenaltyException:
         log.warning("Sync", f"[{board_id}] Penalty no sync remoto")
 
-    detect_local_changes(board_id, queue)
-
     return queue.has_board(board_id)
+
+
+def sync_board(board_id: str, config: dict) -> bool:
+    """Descoberta combinada de um board: local global (up) + remota (down).
+
+    Mantida por compatibilidade. O loop principal usa `detect_local_all` +
+    `sync_remote_board` diretamente para desacoplar as duas fases.
+
+    Retorna True se houve qualquer mudança detectada (up global ou down deste
+    board).
+    """
+    local = detect_local_all(config)
+    remote = sync_remote_board(board_id)
+    return local or remote
 
 
 def process_queue(config: dict):
@@ -478,8 +514,13 @@ def main():
 
             current_board = board_ids[index]
 
-            # Fase 1: Descoberta no board atual
-            had_changes = sync_board(current_board, config)
+            # Fase 1: Descoberta
+            # 1a. Local (up) em TODOS os boards — efeitos colaterais de agentes
+            #     são cross-board (ex.: issue bloqueante criada em outro board).
+            local_changes = detect_local_all(config)
+            # 1b. Remota (down) apenas no board atual da rotação priorizada.
+            remote_changes = sync_remote_board(current_board)
+            had_changes = local_changes or remote_changes
 
             # Fase 2: Processamento global da fila
             process_queue(config)
@@ -495,10 +536,10 @@ def main():
 
             if task is AUTO_ADVANCED:
                 # Auto-advance local: mantém o board atual (não avança nem
-                # reinicia em 0). A próxima iteração força o sync deste board
-                # (sync_board + process_queue), propagando o movimento ao
-                # board e reconciliando o estado — deixando-o realmente pronto
-                # antes de selecionar a tarefa avançada.
+                # reinicia em 0). A próxima iteração força a descoberta deste
+                # board (detect_local_all + sync_remote_board + process_queue),
+                # propagando o movimento ao board e reconciliando o estado —
+                # deixando-o realmente pronto antes de selecionar a tarefa.
                 continue
             elif task:
                 call_agent(config, task)
