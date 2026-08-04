@@ -362,7 +362,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
                 # senão, manter o que já está (pode ser o do snapshot)
             else:
                 local_bodies[issue_id] = body_file
-        elif body_file.name.count("-") >= 2:
+        else:
             # Arquivo sem id numérico = issue criada localmente (sem id)
             body_path_str = str(body_file)
             # Verificar se já está no snapshot por body_path
