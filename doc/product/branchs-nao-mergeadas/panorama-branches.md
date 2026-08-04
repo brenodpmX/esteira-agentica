@@ -141,7 +141,7 @@ o trabalho já foi absorvido pela branch `epic1` ou `epic` antes de remover.
 |--------|-------|-----------------|
 | `hotfix23-23-avaliacao_de_complexidade_falhando` | #23 | Avaliação de complexidade falhando |
 | `hotfix24-24-issues_criadas_em_dois_boards_indevidamente` | #24 | Issues criadas em dois boards indevidamente |
-| `hotfix27-27-log_nao_descritivo` | #27 | Log não descritivo |
+| `hotfix27-27-log_nao_descritivo` | #27 | Conteúdo parcialmente absorvido. Decisão #125: preservar temporariamente, recriar apenas a formatação condicional sobre `epic` e remover após a task corretiva ser integrada. |
 
 **Total seção 5:** ~10 branches para análise e remoção conforme critério.
 
