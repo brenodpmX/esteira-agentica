@@ -29,6 +29,7 @@ PROTECTED_PATHS: list[str] = [
     ".pipe/changeQueue.json",
     ".pipe/throttle.json",
     ".pipe/throttle-*.json",
+    ".pipe/deadLetter.json",
 ]
 
 

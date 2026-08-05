@@ -9,6 +9,7 @@ from src.core.commands import (AGENT_LEVEL_PREFIX, apply_events_to_commands,
                                compose_body, from_issue, sanitize_relations,
                                split_body)
 from src.core.config import resolve_max_attempts
+from src.core.dead_letter import DeadLetterEntry, DeadLetterQueue, sanitize_reason
 from src.core.log import log
 from src.core.snapshot import BOARDS_DIR, Snapshot
 
@@ -20,6 +21,12 @@ _DEFINITIVE_MESSAGE_SUBSTRINGS = (
     "Could not resolve to an issue or pull request",
     "não pertence a este board",
 )
+
+# next_step: ação recomendada, curta e acionável, por categoria de dead-letter.
+_NEXT_STEP = {
+    "definitivo": "item não será retentado; revisar manualmente e, se aplicável, recriar a entrada",
+    "transitorio_esgotado": "limite de tentativas esgotado; verificar causa raiz antes de reenviar manualmente",
+}
 
 
 def classify_error(exc: Exception) -> str:
@@ -514,20 +521,27 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
                     "Sync",
                     f"[{board_id}] #{item.id} erro definitivo em {item.event} - "
                     f"removendo da fila: {exc}",
-                    issue_id=item.id, event=item.event, attempts=item.attempts,
+                    board_id=board_id, issue_id=item.id, event=item.event,
+                    reason=sanitize_reason(str(exc)), attempts=item.attempts,
+                    category=category, next_step=_NEXT_STEP[category],
                 )
+                _isolate_in_dead_letter(board_id, item, category, exc)
                 queue.remove(item.uuid)
                 continue
 
             # transitorio
             item.attempts += 1
             if item.attempts >= max_attempts:
+                category = "transitorio_esgotado"
                 log.warning(
                     "Sync",
                     f"[{board_id}] #{item.id} esgotou tentativas ({item.attempts}) "
                     f"em {item.event} - removendo da fila: {exc}",
-                    issue_id=item.id, event=item.event, attempts=item.attempts,
+                    board_id=board_id, issue_id=item.id, event=item.event,
+                    reason=sanitize_reason(str(exc)), attempts=item.attempts,
+                    category=category, next_step=_NEXT_STEP[category],
                 )
+                _isolate_in_dead_letter(board_id, item, category, exc)
                 queue.remove(item.uuid)
                 continue
 
@@ -538,6 +552,30 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
                 issue_id=item.id, event=item.event, attempts=item.attempts,
             )
             queue.requeue(item)
+
+
+def _isolate_in_dead_letter(board_id: str, item: ChangeItem, category: str,
+                            exc: Exception) -> None:
+    """Persiste o item isolado em dead-letter antes de removê-lo da fila ativa.
+
+    add() é idempotente por alvo (board+id/identifier+event): se o processo
+    for interrompido entre esta chamada e o queue.remove() subsequente, o
+    pior caso é uma nova tentativa do mesmo item sobrescrever esta entrada
+    com dados atualizados — seguro, sem duplicar nem perder o registro.
+    """
+    entry = DeadLetterEntry(
+        uuid=item.uuid,
+        board=board_id,
+        id=item.id,
+        identifier=item.identifier,
+        event=item.event,
+        category=category,
+        reason=sanitize_reason(str(exc)),
+        attempts=item.attempts,
+        isolated_at=ChangeItem.now(),
+        next_step=_NEXT_STEP[category],
+    )
+    DeadLetterQueue().add(entry)
 
 
 def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None):

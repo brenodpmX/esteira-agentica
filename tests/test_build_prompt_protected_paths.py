@@ -129,6 +129,7 @@ class TestProtectedPathsConstant:
         ".pipe/changeQueue.json",
         ".pipe/throttle.json",
         ".pipe/throttle-*.json",
+        ".pipe/deadLetter.json",
     ])
     def test_protected_paths_contem_padroes_minimos(self, padrao):
         assert PROTECTED_PATHS is not None, "PROTECTED_PATHS não implementada ainda"
