@@ -171,6 +171,13 @@ class TestArquivosProtegidos(unittest.TestCase):
         content = self._get_content()
         self.assertIn("orphanFiles.json", content)
 
+    def test_lista_pipe_lock(self):
+        """Issue #150 (LockGuard): .pipe/pipe.lock (lock de instância via
+        flock) deve constar entre os arquivos protegidos listados no
+        CONTEXT.md gerado."""
+        content = self._get_content()
+        self.assertIn("pipe.lock", content)
+
     def test_secao_restricoes_presente(self):
         """Deve haver uma seção de restrições ou arquivos protegidos."""
         content = self._get_content()
