@@ -30,6 +30,7 @@ _PROTECTED_FILES = [
     ".pipe/throttle",
     ".pipe/sessions.json",
     ".pipe/deadLetter.json",
+    ".pipe/orphanFiles.json",
 ]
 
 

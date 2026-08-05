@@ -130,6 +130,7 @@ class TestProtectedPathsConstant:
         ".pipe/throttle.json",
         ".pipe/throttle-*.json",
         ".pipe/deadLetter.json",
+        ".pipe/orphanFiles.json",
     ])
     def test_protected_paths_contem_padroes_minimos(self, padrao):
         assert PROTECTED_PATHS is not None, "PROTECTED_PATHS não implementada ainda"
@@ -184,6 +185,16 @@ class TestAssertNoProtected:
             pytest.skip("_assert_no_protected não implementada ainda")
         prompt = "Config em .pipe/throttle-myboard.json."
         with pytest.raises(ValueError, match="throttle"):
+            _assert_no_protected(prompt)
+
+    def test_guard_levanta_para_orphanfiles_json(self):
+        """Issue #147: .pipe/orphanFiles.json é o registro de isolamento de
+        arquivos órfãos (record_orphan) e deve ser protegido como os demais
+        arquivos de estado interno."""
+        if _assert_no_protected is None:
+            pytest.skip("_assert_no_protected não implementada ainda")
+        prompt = "Verifique .pipe/orphanFiles.json antes de continuar."
+        with pytest.raises(ValueError, match="orphanFiles.json"):
             _assert_no_protected(prompt)
 
     def test_guard_levanta_com_path_absoluto_snapshot(self):
