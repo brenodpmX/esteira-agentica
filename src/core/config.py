@@ -126,6 +126,35 @@ def _validate_sleep(sleep_val):
         raise ConfigError("sleep: deve ser número > 0 (segundos)")
 
 
+DEFAULT_MAX_ATTEMPTS = 3
+
+
+def validate_max_attempts(config: dict) -> None:
+    """Valida a chave opcional sync.max_attempts do pipe.yml.
+
+    Se presente, deve ser um int >= 1 (rejeita 0, negativos, floats e
+    strings não numéricas). Levanta ConfigError identificando a chave.
+    """
+    sync_cfg = config.get("sync") or {}
+    if "max_attempts" not in sync_cfg:
+        return
+    value = sync_cfg["max_attempts"]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(
+            f"sync.max_attempts: deve ser inteiro >= 1 (valor recebido: {value!r})"
+        )
+
+
+def resolve_max_attempts(config: dict) -> int:
+    """Retorna o limite de tentativas configurado (sync.max_attempts).
+
+    Default seguro de DEFAULT_MAX_ATTEMPTS quando a chave está ausente.
+    Não valida — assume que validate_max_attempts já rodou em check_config.
+    """
+    sync_cfg = config.get("sync") or {}
+    return sync_cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
+
+
 def check_config() -> dict:
     """Valida e retorna configuração do pipe.yml."""
     _validate_env()
@@ -144,7 +173,9 @@ def check_config() -> dict:
     
     _require(config, "sleep", "pipe.yml")
     _validate_sleep(config["sleep"])
-    
+
+    validate_max_attempts(config)
+
     git = _require(config, "git", "pipe.yml")
     _validate_git(git)
     

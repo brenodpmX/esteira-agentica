@@ -8,8 +8,38 @@ from src.core.change_queue import ChangeQueue
 from src.core.commands import (AGENT_LEVEL_PREFIX, apply_events_to_commands,
                                compose_body, from_issue, sanitize_relations,
                                split_body)
+from src.core.config import resolve_max_attempts
 from src.core.log import log
 from src.core.snapshot import BOARDS_DIR, Snapshot
+
+
+# Substrings estáveis de mensagens de exceção já tratadas como "definitivo"
+# em pontos específicos do sync (issue fantasma / isolamento de board). São
+# reconhecidas aqui de forma genérica para classify_error.
+_DEFINITIVE_MESSAGE_SUBSTRINGS = (
+    "Could not resolve to an issue or pull request",
+    "não pertence a este board",
+)
+
+
+def classify_error(exc: Exception) -> str:
+    """Classifica um erro de sincronismo em categoria estável.
+
+    Retorna uma das três categorias:
+    - "rate_limit": PenaltyException (rate limit do board, tratado pelo
+      throttle/penalty — não é responsabilidade do item da fila).
+    - "definitivo": mensagens estáveis que indicam que o alvo não existe ou
+      nunca vai se resolver (issue fantasma, isolamento de board).
+    - "transitorio": qualquer outra exceção (default seguro).
+
+    Função pura: não faz I/O nem loga.
+    """
+    if isinstance(exc, PenaltyException):
+        return "rate_limit"
+    message = str(exc)
+    if any(substr in message for substr in _DEFINITIVE_MESSAGE_SUBSTRINGS):
+        return "definitivo"
+    return "transitorio"
 
 
 def _slugify(text: str) -> str:
@@ -435,11 +465,28 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
-    """Consome toda a fila e aplica mudanças. Para no primeiro PenaltyException."""
+    """Consome toda a fila e aplica mudanças. Para no primeiro PenaltyException.
+
+    Erros não classificados como rate limit nunca interrompem o processamento
+    dos demais itens (evita head-of-line blocking, ver incidente #97):
+    - "definitivo": item sai da fila já na primeira falha.
+    - "transitorio": item volta ao fim da fila com attempts incrementado, até
+      esgotar o limite configurado (sync.max_attempts); aí também sai da fila.
+    Cada item é tentado no máximo uma vez por chamada de apply_changes.
+    """
+    config = config or {}
+    max_attempts = resolve_max_attempts(config)
+    tried_targets = []
+
     while True:
         item = queue.getNext()
         if not item:
             return
+        if any(item.same_target(t) for t in tried_targets):
+            # Já tentamos este alvo nesta chamada (requeue ao fim da fila) —
+            # não reprocessar no mesmo ciclo, evita loop infinito.
+            return
+        tried_targets.append(item)
 
         board_id = item.board
         try:
@@ -460,6 +507,37 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
         except PenaltyException:
             log.warning("Sync", f"[{board_id}] Penalty - abandonando apply_changes")
             return
+        except Exception as exc:
+            category = classify_error(exc)
+            if category == "definitivo":
+                log.warning(
+                    "Sync",
+                    f"[{board_id}] #{item.id} erro definitivo em {item.event} - "
+                    f"removendo da fila: {exc}",
+                    issue_id=item.id, event=item.event, attempts=item.attempts,
+                )
+                queue.remove(item.uuid)
+                continue
+
+            # transitorio
+            item.attempts += 1
+            if item.attempts >= max_attempts:
+                log.warning(
+                    "Sync",
+                    f"[{board_id}] #{item.id} esgotou tentativas ({item.attempts}) "
+                    f"em {item.event} - removendo da fila: {exc}",
+                    issue_id=item.id, event=item.event, attempts=item.attempts,
+                )
+                queue.remove(item.uuid)
+                continue
+
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{item.id} erro transitório em {item.event} "
+                f"(tentativa {item.attempts}/{max_attempts}) - reenfileirando: {exc}",
+                issue_id=item.id, event=item.event, attempts=item.attempts,
+            )
+            queue.requeue(item)
 
 
 def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None):
