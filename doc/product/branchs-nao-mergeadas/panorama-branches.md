@@ -109,41 +109,41 @@ duplicata.
 
 ---
 
-## 5. Branches órfãs de tarefas arquivadas (→ story #75)
+## 5. Branches órfãs de tarefas arquivadas (story #75)
 
-Issues cujas branches **não** estão integradas em `main` nem em `epic`, mas
-cuja issue correspondente já está **arquivada no board** (independente de ainda
-estar aberta no GitHub como issue).
+Análise detalhada em
+`doc/product/branchs-nao-mergeadas/stories/limpeza-branches-orfas-arquivadas.md`.
 
-Regra de negócio aplicável:
-- Issue que passou pela coluna "Cancelado" → remover sem merge.
-- Trabalho absorvido por outro caminho → remover como resíduo.
-- Conteúdo vivo não absorvido → não remover; encaminhar para análise de código.
+### 5.1 Removidas — absorvidas (8 branches)
 
-### 5.1 Branches `epicNN` de sub-issues do épico #1
+Trabalho refeito por tasks posteriores do épico ou código equivalente já
+integrado a `epic`/`main`. Todas as branches abaixo já foram removidas do
+remoto.
 
-Issues #16–#21 são sub-issues do épico #1 (ativo em Homologação). Verificar se
-o trabalho já foi absorvido pela branch `epic1` ou `epic` antes de remover.
+| Branch | Issue | Razão |
+|--------|-------|-------|
+| `epic16-16-empacotar_a_esteira_em_imagem_docker` | #16 | Documentação de exploração substituída pelas tasks do épico |
+| `epic17-17-autenticar_dependencias_externas_em_modo_headless` | #17 | Documentação de exploração substituída pelas tasks do épico |
+| `epic18-18-configurar_a_esteira_via_docker_compose_sem_rebuild` | #18 | Documentação de orquestração substituída por feature37/feature41 |
+| `epic19-19-persistir_estado_de_runtime_entre_reinicios` | #19 | Documentação de persistência substituída pelas tasks |
+| `epic20-20-operar_de_forma_autonoma_sem_intervencao_no_runtime` | #20 | Documentação substituída por feature35 (preflight) |
+| `epic21-21-documentar_a_operacao_em_docker` | #21 | Runbook refeito por feature42 (já em `epic`) |
+| `epic36-36-bump_de_versao_minor_pela_adicao_do_preflight_de_credenciais` | #36 | Bump e preflight absorvidos por feature34/feature35 |
+| `hotfix27-27-log_nao_descritivo` | #27 | Conteúdo absorvido por feature31 (PR #32). Decisão #125 tratou a divergência residual (preservar temporariamente, recriar apenas a formatação condicional sobre `epic` e remover após a task corretiva ser integrada) — ver `change-files/125-destino-conteudo-hotfix27.md`. |
 
-| Branch | Issue | Título resumido |
-|--------|-------|-----------------|
-| `epic16-16-empacotar_a_esteira_em_imagem_docker` | #16 | Empacotar a esteira em imagem Docker |
-| `epic17-17-autenticar_dependencias_externas_em_modo_headless` | #17 | Autenticar dependências externas em modo headless |
-| `epic18-18-configurar_a_esteira_via_docker_compose_sem_rebuild` | #18 | Configurar a esteira via docker-compose sem rebuild |
-| `epic19-19-persistir_estado_de_runtime_entre_reinicios` | #19 | Persistir estado de runtime entre reinícios |
-| `epic20-20-operar_de_forma_autonoma_sem_intervencao_no_runtime` | #20 | Operar de forma autônoma sem intervenção no runtime |
-| `epic21-21-documentar_a_operacao_em_docker` | #21 | Documentar a operação em Docker |
-| `epic36-36-bump_de_versao_minor_pela_adicao_do_preflight_de_credenciais` | #36 | Bump de versão minor — preflight de credenciais |
+### 5.2 Encaminhadas para análise (2 branches)
 
-### 5.2 Branches `hotfixNN` de issues arquivadas
+Continham apenas ticket de incidente, sem código de correção. Preservadas
+temporariamente via branch de merge dedicada até decisão de arquivamento do
+histórico.
 
-| Branch | Issue | Título resumido |
-|--------|-------|-----------------|
-| `hotfix23-23-avaliacao_de_complexidade_falhando` | #23 | Avaliação de complexidade falhando |
-| `hotfix24-24-issues_criadas_em_dois_boards_indevidamente` | #24 | Issues criadas em dois boards indevidamente |
-| `hotfix27-27-log_nao_descritivo` | #27 | Conteúdo parcialmente absorvido. Decisão #125: preservar temporariamente, recriar apenas a formatação condicional sobre `epic` e remover após a task corretiva ser integrada. |
+| Branch original | Issue | Branch de preservação | Situação |
+|------------------|-------|------------------------|----------|
+| `hotfix23-23-avaliacao_de_complexidade_falhando` | #23 | `temp-hotfix23-merge` | Aguardando decisão sobre preservar o ticket em `main`/`epic` |
+| `hotfix24-24-issues_criadas_em_dois_boards_indevidamente` | #24 | `temp-hotfix24-merge` | Aguardando decisão sobre preservar o ticket em `main`/`epic` |
 
-**Total seção 5:** ~10 branches para análise e remoção conforme critério.
+**Total seção 5:** 10 branches analisadas — 8 removidas, 2 preservadas
+temporariamente para decisão.
 
 ---
 
@@ -155,7 +155,7 @@ o trabalho já foi absorvido pela branch `epic1` ou `epic` antes de remover.
 | Trabalho vivo | 3 | — | Preservar |
 | Resíduo já integrado | 12 | #74 | Remover (seguro) |
 | Duplicidade / nomenclatura antiga | ~9 | #76 | Analisar código → decidir |
-| Órfãs de arquivadas | ~10 | #75 | Analisar → remover ou preservar |
+| Órfãs de arquivadas | 10 | #75 | 8 removidas / 2 preservadas para decisão |
 
 > Levantamento realizado em 2026-07-24. Verificar o estado atual das branches
 > antes de executar qualquer remoção — o cenário pode ter mudado.
