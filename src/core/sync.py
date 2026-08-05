@@ -6,7 +6,8 @@ from pathlib import Path
 from src.core.board import Board, ChangeItem, Issue, PenaltyException, SyncEvent
 from src.core.change_queue import ChangeQueue
 from src.core.commands import (AGENT_LEVEL_PREFIX, apply_events_to_commands,
-                               compose_body, from_issue, split_body)
+                               compose_body, from_issue, sanitize_relations,
+                               split_body)
 from src.core.log import log
 from src.core.snapshot import BOARDS_DIR, Snapshot
 
@@ -484,6 +485,7 @@ def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: C
     created = board_obj.create_issue(board_id, title, body, column)
     log.info("Sync", f"[{board_id}] create-up '{title}' -> #{created.id}",
              issue_id=created.id, column=column)
+    cmds = sanitize_relations(created.id, cmds)
 
     # Aplicar comandos (labels, relações, etc). Create parte de estado vazio:
     # known=_empty_state() garante que os deltas 'added' reflitam tudo que foi
@@ -602,6 +604,7 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     raw_body = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
     # Separar comandos do body real
     body, cmds = split_body(raw_body)
+    cmds = sanitize_relations(item.id, cmds)
 
     # Remédio 1: se a issue está sendo arquivada (comando /archive no body OU
     # coluna de destino com on_in:[archive]), remove TODOS os bloqueios antes

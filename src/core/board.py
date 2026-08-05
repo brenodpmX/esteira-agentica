@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
+from src.core.commands import _sanitize_relations_with_discards
 from src.core.log import log
 
 
@@ -337,6 +338,15 @@ class Board:
            children:{...}, blocked_by:{...}, blocks:{...}}
         Onde 'added'/'removed' são numbers de issues (str).
         """
+        cmds, discards = _sanitize_relations_with_discards(issue_id, cmds)
+        self_id = str(issue_id)
+        for attr_name in discards:
+            log.warning(
+                "Board",
+                f"[{board_id}] auto-referência descartada em {attr_name}: #{self_id}",
+                board_id=board_id, issue_id=self_id,
+            )
+
         deltas = {
             "parent": {"added": [], "removed": []},
             "children": {"added": [], "removed": []},
