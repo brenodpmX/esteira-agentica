@@ -68,27 +68,148 @@ def _issue_files(board_id: str, col_id: str, issue_id: str, slug: str) -> dict:
     }
 
 
+def _is_valid_registered_path(candidate: Path, board_id: str, issue_id: str,
+                              snap: Snapshot) -> bool:
+    """Valida se o body_path registrado no snapshot pode ser aceito de
+    imediato (passo 1 do ADR-01), sem varrer o filesystem.
+
+    Todas as condições abaixo precisam valer:
+    - o arquivo existe;
+    - está dentro do diretório do board (sem escape via `..`/symlink);
+    - o nome termina em '-body.md';
+    - o nome começa com '<issue_id>-';
+    - nenhuma outra issue do snapshot registra o mesmo body_path.
+    """
+    if not candidate.exists():
+        return False
+
+    board_dir = (BOARDS_DIR / board_id).resolve()
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(board_dir)
+    except ValueError:
+        return False
+
+    name = candidate.name
+    if not name.endswith("-body.md"):
+        return False
+    if not name.startswith(f"{issue_id}-"):
+        return False
+
+    for other in snap.issues:
+        if str(other.get("id")) == str(issue_id):
+            continue
+        if other.get("body_path") and Path(other["body_path"]) == candidate:
+            return False
+
+    return True
+
+
 def _find_issue_files(board_id: str, issue_id: str) -> Path | None:
     """Encontra o arquivo body de uma issue em qualquer coluna do board.
 
-    Prioriza o path registrado no snapshot para evitar retornar um arquivo
-    órfão quando há colisão de IDs.
+    Resolução determinística por identidade (ADR-01 / RN-005 / RN-006):
+
+    1. O body_path registrado no snapshot é a fonte de verdade quando válido
+       (existe, dentro do board, sufixo/prefixo corretos, não reivindicado
+       por outra issue) — aceito imediatamente, sem varrer o filesystem.
+    2. Se o path registrado não for aceito, busca pelo nome completo do
+       arquivo (Path(body_path).name) em todas as colunas do board.
+    3. Aceita somente se exatamente 1 candidato for encontrado no passo 2 e
+       ele não pertencer (via body_path) a outra issue do snapshot.
+    4. Sem body_path registrado (issue legada): fallback por prefixo
+       numérico ('<issue_id>-*-body.md'), aceito somente com exatamente 1
+       candidato.
+
+    Qualquer recusa (zero ou múltiplos candidatos) retorna None e loga um
+    warning — nunca escolhe arbitrariamente. Função puramente local: não faz
+    chamada de rede/board.
     """
-    # Primeiro, verificar se o snapshot possui body_path registrado.
     snap = Snapshot(board_id).load()
     issue_data = snap.issue(issue_id)
-    if issue_data and issue_data.get("body_path"):
-        candidate = Path(issue_data["body_path"])
-        if candidate.exists():
-            return candidate
 
-    # Fallback: rglob
     board_dir = BOARDS_DIR / board_id
     if not board_dir.exists():
         return None
-    for body_file in board_dir.rglob(f"{issue_id}-*-body.md"):
-        return body_file
-    return None
+
+    registered = issue_data.get("body_path") if issue_data else None
+
+    if registered:
+        candidate = Path(registered)
+        if _is_valid_registered_path(candidate, board_id, issue_id, snap):
+            return candidate
+
+        # Passo 2/3: path registrado inválido/ausente — buscar pelo nome
+        # completo do arquivo em todas as colunas do board. O nome buscado
+        # só é uma identidade válida de body file se respeitar o mesmo
+        # contrato do passo 1 (sufixo '-body.md' e prefixo '<issue_id>-');
+        # caso contrário não há candidato válido possível (ex.: o próprio
+        # path registrado tinha sufixo/prefixo errado).
+        file_name = Path(registered).name
+        if not (file_name.endswith("-body.md") and file_name.startswith(f"{issue_id}-")):
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{issue_id} body_path registrado com nome "
+                f"inválido: '{file_name}'",
+                board_id=board_id, issue_id=issue_id,
+                reason="nome de body_path inválido",
+            )
+            return None
+
+        candidates = list(board_dir.rglob(file_name))
+
+        if len(candidates) == 0:
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{issue_id} zero candidatos ao buscar '{file_name}'",
+                board_id=board_id, issue_id=issue_id, reason="zero candidatos",
+            )
+            return None
+        if len(candidates) > 1:
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{issue_id} múltiplos candidatos: "
+                f"{[str(c) for c in candidates]}",
+                board_id=board_id, issue_id=issue_id,
+                reason=f"múltiplos candidatos: {[str(c) for c in candidates]}",
+            )
+            return None
+
+        candidate = candidates[0]
+        for other in snap.issues:
+            if str(other.get("id")) == str(issue_id):
+                continue
+            if other.get("body_path") and Path(other["body_path"]) == candidate:
+                log.warning(
+                    "Sync",
+                    f"[{board_id}] #{issue_id} candidato '{candidate}' "
+                    f"reivindicado por outra issue",
+                    board_id=board_id, issue_id=issue_id,
+                    reason="candidato reivindicado por outra issue",
+                )
+                return None
+        return candidate
+
+    # Passo 4: sem body_path registrado (issue legada) — fallback por
+    # prefixo numérico, aceito somente com exatamente 1 candidato.
+    candidates = list(board_dir.rglob(f"{issue_id}-*-body.md"))
+    if len(candidates) == 0:
+        log.warning(
+            "Sync",
+            f"[{board_id}] #{issue_id} zero candidatos por prefixo numérico",
+            board_id=board_id, issue_id=issue_id, reason="zero candidatos",
+        )
+        return None
+    if len(candidates) > 1:
+        log.warning(
+            "Sync",
+            f"[{board_id}] #{issue_id} múltiplos candidatos: "
+            f"{[str(c) for c in candidates]}",
+            board_id=board_id, issue_id=issue_id,
+            reason=f"múltiplos candidatos: {[str(c) for c in candidates]}",
+        )
+        return None
+    return candidates[0]
 
 
 def _col_from_path(file_path: Path, board_id: str) -> str:
