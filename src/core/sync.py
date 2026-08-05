@@ -1,6 +1,10 @@
 """Sync core - sincronização entre local e board remoto."""
 
+import hashlib
+import json
 import re
+from dataclasses import asdict, dataclass, fields as dataclass_fields
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.core.board import Board, ChangeItem, Issue, PenaltyException, SyncEvent
@@ -12,6 +16,9 @@ from src.core.config import resolve_max_attempts
 from src.core.dead_letter import DeadLetterEntry, DeadLetterQueue, sanitize_reason
 from src.core.log import log
 from src.core.snapshot import BOARDS_DIR, Snapshot
+
+PIPE_DIR = Path(".pipe")
+ORPHAN_FILE = PIPE_DIR / "orphanFiles.json"
 
 
 # Substrings estáveis de mensagens de exceção já tratadas como "definitivo"
@@ -103,6 +110,95 @@ def _is_valid_registered_path(candidate: Path, board_id: str, issue_id: str,
             return False
 
     return True
+
+
+@dataclass
+class OrphanEntry:
+    """Registro de isolamento de um arquivo local órfão (.pipe/orphanFiles.json).
+
+    Representa um arquivo com prefixo numérico que não corresponde de forma
+    confiável a nenhuma issue conhecida do snapshot (ID desconhecido, ou
+    ambíguo/conflitante). Deduplicado pela chave (board, apparent_id, reason,
+    content_fingerprint) — ver record_orphan().
+    """
+    board: str
+    apparent_id: str
+    reason: str
+    content_fingerprint: str
+    path: str
+    recorded_at: str  # timestamp ISO 8601 UTC
+
+
+def _orphan_key(entry: OrphanEntry) -> tuple:
+    return (entry.board, entry.apparent_id, entry.reason, entry.content_fingerprint)
+
+
+def _read_orphans() -> list[OrphanEntry]:
+    if not ORPHAN_FILE.exists():
+        return []
+    raw = json.loads(ORPHAN_FILE.read_text(encoding="utf-8"))
+    fields = {f.name for f in dataclass_fields(OrphanEntry)}
+    return [OrphanEntry(**{k: v for k, v in item.items() if k in fields}) for item in raw]
+
+
+def _write_orphans(entries: list[OrphanEntry]) -> None:
+    PIPE_DIR.mkdir(parents=True, exist_ok=True)
+    data = [asdict(entry) for entry in entries]
+    ORPHAN_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def record_orphan(board_id: str, path: Path, apparent_id: str, reason: str) -> None:
+    """Registra um arquivo local órfão (isolamento sem alterar issues).
+
+    Um arquivo é considerado órfão quando tem prefixo numérico mas não
+    corresponde de forma confiável a nenhuma issue conhecida do snapshot
+    (ID desconhecido, ou ambíguo/conflitante). Este registro:
+
+    - NÃO enfileira create-up/change-up/delete-up;
+    - NÃO altera o snapshot;
+    - persiste em .pipe/orphanFiles.json (memória interna da esteira, ver
+      PROTECTED_PATHS em src/core/agent.py), sobrevivendo entre ciclos e
+      processos, seguindo o mesmo padrão de leitura/escrita JSON de
+      src/core/change_queue.py e src/core/dead_letter.py;
+    - deduplica pela chave (board_id, apparent_id, reason,
+      content_fingerprint): só a primeira ocorrência da chave (ou quando a
+      causa/conteúdo mudar) gera um novo registro e um novo log.warning.
+
+    content_fingerprint é o SHA-256 do conteúdo do arquivo (bytes), calculado
+    apenas se o arquivo ainda existir.
+    """
+    try:
+        content = path.read_bytes()
+    except OSError:
+        content = b""
+    fingerprint = hashlib.sha256(content).hexdigest()
+
+    entry = OrphanEntry(
+        board=board_id,
+        apparent_id=apparent_id,
+        reason=reason,
+        content_fingerprint=fingerprint,
+        path=str(path),
+        recorded_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+    entries = _read_orphans()
+    key = _orphan_key(entry)
+    if any(_orphan_key(existing) == key for existing in entries):
+        return
+
+    entries.append(entry)
+    _write_orphans(entries)
+
+    log.warning(
+        "Sync",
+        f"[{board_id}] arquivo órfão detectado: '{path}' (ID aparente "
+        f"#{apparent_id}, motivo: {reason}) — verificar manualmente se o "
+        f"arquivo pertence a esta issue ou deve ser renomeado sem prefixo "
+        f"numérico",
+        board_id=board_id, path=str(path), apparent_id=apparent_id,
+        reason=reason,
+    )
 
 
 def _find_issue_files(board_id: str, issue_id: str) -> Path | None:
@@ -499,29 +595,31 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def detect_local_changes(board_id: str, queue: ChangeQueue):
-    """Detecta criações, modificações e deleções locais."""
+    """Detecta criações, modificações e deleções locais.
+
+    Arquivos com prefixo numérico (`^(\\d+)-`) só são adotados como o body de
+    `issue_id` quando passam na mesma regra de "match confiável" usada por
+    `_find_issue_files`/`_is_valid_registered_path` (ADR-01): path já
+    registrado e válido no snapshot, ou único candidato por nome completo, ou
+    único candidato por prefixo quando a issue ainda não tem `body_path`
+    registrado. Qualquer arquivo com prefixo numérico que não passe nessa
+    regra (ID desconhecido no snapshot, ou ambíguo/conflitante) é isolado via
+    record_orphan() — nunca enfileira create-up/change-up/delete-up nem
+    altera o snapshot a partir dele.
+    """
     snap = Snapshot(board_id).load()
     board_dir = BOARDS_DIR / board_id
     snapshot_by_id = {str(i["id"]): i for i in snap.issues if i.get("id")}
 
-    # Conjunto de body_paths registrados no snapshot (para resolver colisões).
-    snapshot_paths = {Path(i["body_path"]).resolve()
-                      for i in snap.issues if i.get("body_path")}
-
-    # Scan de arquivos body locais
-    local_bodies = {}  # id -> Path
+    # Agrupa todos os arquivos body locais com prefixo numérico por ID
+    # aparente, para resolver cada grupo com a regra de match confiável.
+    numbered_candidates: dict[str, list[Path]] = {}
+    local_bodies = {}  # id -> Path (apenas matches confiáveis)
     for body_file in board_dir.rglob("*-body.md"):
         match = re.match(r"^(\d+)-", body_file.name)
         if match:
             issue_id = match.group(1)
-            # Em caso de colisão (dois arquivos com mesmo ID numérico),
-            # priorizar o que já está registrado no snapshot.
-            if issue_id in local_bodies:
-                if body_file.resolve() in snapshot_paths:
-                    local_bodies[issue_id] = body_file
-                # senão, manter o que já está (pode ser o do snapshot)
-            else:
-                local_bodies[issue_id] = body_file
+            numbered_candidates.setdefault(issue_id, []).append(body_file)
         elif body_file.name.count("-") >= 2:
             # Arquivo sem id numérico = issue criada localmente (sem id)
             body_path_str = str(body_file)
@@ -541,6 +639,47 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
                     })
                     log.info("Sync", f"[{board_id}] '{body_file.name}' create-up")
 
+    # Resolve cada grupo de candidatos por ID aparente com a mesma regra de
+    # match confiável de _find_issue_files (reaproveitando _is_valid_registered_path
+    # para não duplicar a lógica de resolução).
+    for issue_id, candidates in numbered_candidates.items():
+        issue_data = snapshot_by_id.get(issue_id)
+
+        if issue_data is None:
+            # ID desconhecido no snapshot: todos os candidatos são órfãos.
+            for candidate in candidates:
+                record_orphan(board_id, candidate, issue_id,
+                             "issue desconhecida no snapshot")
+            continue
+
+        registered = issue_data.get("body_path")
+        accepted = None
+
+        if registered:
+            registered_path = Path(registered)
+            if _is_valid_registered_path(registered_path, board_id, issue_id, snap):
+                accepted = registered_path
+            else:
+                # Path registrado inválido: aceita somente se houver
+                # exatamente 1 candidato entre os encontrados localmente.
+                if len(candidates) == 1:
+                    accepted = candidates[0]
+        else:
+            # Issue legada sem body_path registrado: aceita somente com
+            # exatamente 1 candidato.
+            if len(candidates) == 1:
+                accepted = candidates[0]
+
+        for candidate in candidates:
+            if accepted is not None and candidate.resolve() == accepted.resolve():
+                continue
+            reason = ("ambíguo: múltiplos candidatos" if len(candidates) > 1
+                      else "conflita com body_path de outra issue")
+            record_orphan(board_id, candidate, issue_id, reason)
+
+        if accepted is not None:
+            local_bodies[issue_id] = accepted
+
     # Para cada issue no snapshot com id, verificar mudanças
     for issue in snap.issues:
         issue_id = str(issue.get("id") or "")
@@ -551,7 +690,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         ):
             continue
 
-        body_path = Path(issue.get("body_path", ""))
+        body_path = Path(issue.get("body_path") or "")
         local_file = local_bodies.get(issue_id)
 
         # Delete-up: body não encontrado em nenhum diretório
