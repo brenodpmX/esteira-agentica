@@ -49,6 +49,7 @@ class ChangeItem:
     board: str = None       # board_id ao qual a issue pertence
     uuid: str = None        # id único na fila (atribuído por add/addAll)
     fullsync: bool = False  # se True, reconcilia todas as propriedades + deps
+    attempts: int = 0       # tentativas de processamento já feitas (erro transitório)
 
     @staticmethod
     def now() -> str:
