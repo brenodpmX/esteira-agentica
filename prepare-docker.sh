@@ -1,40 +1,35 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────────────────────
-# prepare-docker.sh — Prepara o contexto de build Docker
-#
-# O Dockerfile precisa do binário `kiro-cli` no contexto de build.
-# Este script o copia do host para a raiz do projeto antes do docker-compose.
+# prepare-docker.sh — prepara o contexto de build antes de `docker build`
 #
 # Uso:
 #   ./prepare-docker.sh
-# ─────────────────────────────────────────────────────────────────────────────
+#   docker build -t pipe-esteira .
+#
+# O que faz:
+#   Copia o binário kiro-cli instalado localmente para a raiz do repositório,
+#   tornando-o disponível no contexto de build do Dockerfile.
+#
+# Pré-requisito: kiro-cli deve estar instalado (ex.: ~/.local/bin/kiro-cli).
+# A versão utilizada na imagem é a versão instalada localmente — o operador
+# controla qual versão empacotar atualizando o kiro-cli no host antes de rodar
+# este script.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KIRO_BIN="${SCRIPT_DIR}/kiro-cli"
+DEST="$SCRIPT_DIR/kiro-cli"
 
-# Localizar o binário no host
-KIRO_HOST="$(command -v kiro-cli 2>/dev/null || echo "")"
+# Localizar o binário kiro-cli
+KIRO_BIN="$(command -v kiro-cli 2>/dev/null || echo "")"
 
-if [[ -z "$KIRO_HOST" ]]; then
-    echo "ERRO: kiro-cli não encontrado no PATH do host."
-    echo "      Instale kiro-cli antes de executar este script."
+if [[ -z "$KIRO_BIN" ]]; then
+    echo "ERRO: kiro-cli não encontrado no PATH." >&2
+    echo "Instale o kiro-cli e certifique-se de que está no PATH." >&2
     exit 1
 fi
 
-echo "kiro-cli encontrado em: $KIRO_HOST ($(du -sh "$KIRO_HOST" | cut -f1))"
+echo "Copiando $KIRO_BIN → $DEST"
+cp "$KIRO_BIN" "$DEST"
+chmod 755 "$DEST"
 
-if [[ -f "$KIRO_BIN" ]]; then
-    echo "kiro-cli já presente no contexto de build. Pulando cópia."
-else
-    echo "Copiando kiro-cli para o contexto de build..."
-    cp "$KIRO_HOST" "$KIRO_BIN"
-    chmod +x "$KIRO_BIN"
-    echo "Copiado: $KIRO_BIN ($(du -sh "$KIRO_BIN" | cut -f1))"
-fi
-
-echo ""
-echo "Contexto de build pronto. Execute:"
-echo "  docker compose build"
-echo "  docker compose up"
+echo "Pronto. Execute: docker build -t pipe-esteira ."
