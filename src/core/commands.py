@@ -39,7 +39,9 @@ Comandos suportados:
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+
+from src.core.log import log
 
 # Separador entre o body real e o bloco de comandos.
 SEP = "@---"
@@ -121,6 +123,57 @@ def from_issue(issue) -> IssueCommands:
         need_human=need_human,
         agent_level=agent_level_value,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sanitização de auto-referência (parent/children/blocked_by/blocks)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def sanitize_relations(issue_id, cmds: IssueCommands) -> IssueCommands:
+    """Remove auto-referência de parent/children/blocked_by/blocks.
+
+    Impede que uma issue seja registrada como sua própria `parent`,
+    `children`, `blocked_by` ou `blocks` antes de qualquer chamada ao board.
+    Normaliza `issue_id` e os IDs das relações para `str` antes de comparar,
+    preservando os demais IDs válidos (não descarta a lista inteira ao
+    encontrar a auto-referência).
+
+    Função pura: não muta `cmds` (retorna uma nova instância), não recebe
+    `board_id` e não faz nenhuma chamada de rede nem importa `Board`/adapters.
+    """
+    result, discards = _sanitize_relations_with_discards(issue_id, cmds)
+    self_id = str(issue_id)
+    for attr_name in discards:
+        log.warning("Commands", f"auto-referência descartada em {attr_name}: #{self_id}",
+                    issue_id=self_id)
+    return result
+
+
+def _sanitize_relations_with_discards(issue_id, cmds: IssueCommands):
+    """Implementação pura (sem log): retorna (novo IssueCommands, discards).
+
+    `discards` é a lista de nomes de atributos ('parent'/'children'/
+    'blocked_by'/'blocks') onde uma auto-referência foi removida.
+    """
+    self_id = str(issue_id)
+    result = replace(cmds)
+    discards = []
+
+    if result.parent is not None and str(result.parent) == self_id:
+        result.parent = None
+        discards.append("parent")
+
+    for attr_name in ("children", "blocked_by", "blocks"):
+        values = getattr(result, attr_name)
+        normalized = [str(v) for v in values]
+        filtered = [v for v in normalized if v != self_id]
+        if filtered != normalized:
+            setattr(result, attr_name, filtered)
+            discards.append(attr_name)
+        elif normalized != values:
+            setattr(result, attr_name, normalized)
+
+    return result, discards
 
 
 # ══════════════════════════════════════════════════════════════════════════════
