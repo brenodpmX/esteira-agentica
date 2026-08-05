@@ -160,6 +160,10 @@ class TestArquivosProtegidos(unittest.TestCase):
         content = self._get_content()
         self.assertIn("sessions.json", content)
 
+    def test_lista_deadletter_json(self):
+        content = self._get_content()
+        self.assertIn("deadLetter.json", content)
+
     def test_secao_restricoes_presente(self):
         """Deve haver uma seção de restrições ou arquivos protegidos."""
         content = self._get_content()
