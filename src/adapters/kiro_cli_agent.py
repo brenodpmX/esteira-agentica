@@ -40,9 +40,14 @@ class KiroCliAgent(AgentPort):
                 )
             output = self._run(params, work_dir)
             self._append_log(log_path, self._strip_ansi(output) + "\n")
-            last_line = self._last_meaningful_line(output)
-            log.info("Agent", f"[{params.board_id}] [{col_name}] #{params.issue_id} "
-                     f"concluído: {last_line}", log=str(log_path))
+            error = self._detect_failure(output)
+            if error:
+                log.error("Agent", f"[{params.board_id}] [{col_name}] #{params.issue_id} "
+                          f"falhou: {error}", log=str(log_path))
+            else:
+                last_line = self._last_meaningful_line(output)
+                log.info("Agent", f"[{params.board_id}] [{col_name}] #{params.issue_id} "
+                         f"concluído: {last_line}", log=str(log_path))
         except Exception as e:
             self._append_log(log_path, f"\n**ERRO**: {e}\n")
             last_line = self._last_meaningful_line(str(e))
@@ -175,6 +180,63 @@ class KiroCliAgent(AgentPort):
         clean = self._strip_ansi(output)
         lines = [l.strip() for l in clean.strip().splitlines() if l.strip()]
         return lines[-1] if lines else "(sem output)"
+
+    # Marcadores que indicam que a execução do kiro-cli falhou.
+    _FAILURE_MARKERS = (
+        "[exit-code:",
+        "[TIMEOUT]",
+        "[ERRO]",
+        "Kiro is having trouble responding",
+    )
+
+    # Trechos que identificam a linha do erro real dentro do output.
+    _ERROR_HINTS = (
+        "Kiro is having trouble responding",
+        "temporarily unavailable",
+        "unavailable",
+        "InternalServerError",
+        "Request ID:",
+        "request_id:",
+        "error:",
+        "Error:",
+        "ERRO",
+        "Location:",
+        "[exit-code:",
+        "[TIMEOUT]",
+    )
+
+    def _detect_failure(self, output: str) -> str | None:
+        """Detecta falha na execução do kiro-cli e extrai o erro real.
+
+        O kiro-cli nem sempre sinaliza falha só pelo exit-code: erros de
+        modelo/servidor aparecem como blocos de texto ('Kiro is having trouble
+        responding...', 'InternalServerError', 'The model ... is temporarily
+        unavailable', 'error: ...'). Sem isso, o log de conclusão mostrava
+        apenas a última linha (ex.: 'Request ID: ...'), escondendo a causa.
+
+        Retorna uma mensagem de uma linha com o erro real (linhas relevantes
+        unidas por ' | '), ou None se a execução foi bem-sucedida. O output
+        completo continua gravado no arquivo de log da issue.
+        """
+        clean = self._strip_ansi(output)
+        non_empty = [l.strip() for l in clean.splitlines() if l.strip()]
+        if not non_empty:
+            return None
+
+        if not any(m in clean for m in self._FAILURE_MARKERS):
+            return None
+
+        relevant: list[str] = []
+        for line in non_empty:
+            if any(hint in line for hint in self._ERROR_HINTS):
+                if line not in relevant:
+                    relevant.append(line)
+
+        # Falhou, mas sem padrão conhecido: usa as últimas linhas como contexto.
+        if not relevant:
+            relevant = non_empty[-3:]
+
+        return " | ".join(relevant)
 
     def _append_log(self, log_path: Path, content: str) -> None:
         """Adiciona conteúdo ao final do log."""
