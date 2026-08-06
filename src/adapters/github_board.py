@@ -71,7 +71,8 @@ class GitHubBoardAdapter(BoardPort):
         self._penalty_ttl = datetime.now() + timedelta(hours=self._penalty_value)
         self._penalty_value *= 2
         self._in_penalty = True
-        log.warning("GitHub", f"Penalty ativado por {self._penalty_value // 2}h")
+        back_at = self._penalty_ttl.strftime('%H:%M:%S')
+        log.warning("GitHub", f"Penalty ativado por {self._penalty_value // 2}h - retorna às {back_at}")
         remaining = int((self._penalty_ttl - datetime.now()).total_seconds())
         return PenaltyException(remaining)
 
@@ -125,6 +126,11 @@ class GitHubBoardAdapter(BoardPort):
                     log.info("GitHub", f"Throttle restaurado: {val}s")
             except (ValueError, OSError):
                 pass
+
+    @property
+    def _tp(self) -> str:
+        """Prefixo de throttle para logs: '[Xs] ' se > 0, '' se zero."""
+        return f"[{self._throttle_value}s] " if self._throttle_value > 0 else ""
 
     def _extract_retry_after(self, text: str) -> int | None:
         """Extrai retry-after de headers ou mensagem de erro."""
@@ -373,7 +379,7 @@ class GitHubBoardAdapter(BoardPort):
         while True:
             attempt += 1
             if attempt > 1:
-                log.info("GitHub", f"[{self._throttle_value}s] Tentando novamente (tentativa {attempt})",
+                log.info("GitHub", f"{self._tp}Tentando novamente (tentativa {attempt})",
                          attempt=attempt, command=args[0] if args else "")
             self._throttle()
             result = subprocess.run(["gh", *args], capture_output=True, text=True,
@@ -477,7 +483,7 @@ class GitHubBoardAdapter(BoardPort):
         while True:
             attempt += 1
             if attempt > 1:
-                log.info("GitHub", f"[{self._throttle_value}s] Tentando novamente (tentativa {attempt})",
+                log.info("GitHub", f"{self._tp}Tentando novamente (tentativa {attempt})",
                          attempt=attempt, query=query[:80])
             self._throttle()
             args = ["gh", "api", "-i", "graphql", "-f", f"query={query}"]
@@ -509,7 +515,7 @@ class GitHubBoardAdapter(BoardPort):
             return data.get("data", {})
 
     def _resolve_owner(self, owner: str) -> tuple[str, str]:
-        log.info("GitHub", f"[{self._throttle_value}s] {owner} - Resolvendo owner",
+        log.info("GitHub", f"{self._tp}{owner} - Resolvendo owner",
                  operation="resolve_owner", owner=owner)
         data = self._gql(
             "query($login:String!){organization(login:$login){id} user(login:$login){id}}",
@@ -520,7 +526,7 @@ class GitHubBoardAdapter(BoardPort):
         return data["user"]["id"], "user"
 
     def _list_projects(self, owner: str, owner_type: str) -> list[dict]:
-        log.info("GitHub", f"[{self._throttle_value}s] {owner} - Listando projects",
+        log.info("GitHub", f"{self._tp}{owner} - Listando projects",
                  operation="list_projects", owner=owner, owner_type=owner_type)
         entity = "organization" if owner_type == "organization" else "user"
         query = f"query($login:String!){{{entity}(login:$login){{projectsV2(first:50){{nodes{{id number title}}}}}}}}"
@@ -528,7 +534,7 @@ class GitHubBoardAdapter(BoardPort):
         return data[entity]["projectsV2"]["nodes"]
 
     def _create_project(self, owner_id: str, title: str) -> dict:
-        log.info("GitHub", f"[{self._throttle_value}s] {title} - Criando project",
+        log.info("GitHub", f"{self._tp}{title} - Criando project",
                  operation="create_project", owner_id=owner_id, title=title)
         data = self._gql(
             "mutation($ownerId:ID!,$title:String!){createProjectV2(input:{ownerId:$ownerId,title:$title}){projectV2{id number title}}}",
@@ -537,8 +543,8 @@ class GitHubBoardAdapter(BoardPort):
         )
         return data["createProjectV2"]["projectV2"]
 
-    def _get_status_field(self, project_id: str) -> dict | None:
-        log.info("GitHub", f"[{self._throttle_value}s] {project_id[:8]}... - Buscando campo Status",
+    def _get_status_field(self, project_id: str, board_name: str = "") -> dict | None:
+        log.trace("GitHub", f"{self._tp}'{board_name}' - Buscando campo Status",
                  operation="get_status_field", project_id=project_id)
         data = self._gql(
             "query($id:ID!){node(id:$id){...on ProjectV2{fields(first:20){nodes{...on ProjectV2SingleSelectField{id name options{id name}}}}}}}",
@@ -549,8 +555,8 @@ class GitHubBoardAdapter(BoardPort):
                 return field
         return None
 
-    def _create_status_field(self, project_id: str, columns: list[str]) -> None:
-        log.info("GitHub", f"[{self._throttle_value}s] {project_id[:8]}... - Criando campo Status",
+    def _create_status_field(self, project_id: str, columns: list[str], board_name: str = "") -> None:
+        log.info("GitHub", f"{self._tp}'{board_name}' - Criando campo Status: {columns}",
                  operation="create_status_field", project_id=project_id, columns=columns)
         opts = "[" + ",".join(f'{{name:"{col}",color:GRAY,description:""}}' for col in columns) + "]"
         self._gql(
@@ -558,8 +564,12 @@ class GitHubBoardAdapter(BoardPort):
             pid=project_id,
         )
 
-    def _update_status_options(self, field_id: str, columns: list[str], existing: dict[str, str]) -> None:
-        log.info("GitHub", f"[{self._throttle_value}s] {field_id[:8]}... - Atualizando opções do Status",
+    def _update_status_options(self, field_id: str, columns: list[str], existing: dict[str, str], board_name: str = "") -> None:
+        created = [c for c in columns if c not in existing]
+        updated = [c for c in columns if c in existing]
+        log.info("GitHub", f"{self._tp}'{board_name}' - Atualizando opções do Status"
+                 + (f" | criadas: {created}" if created else "")
+                 + (f" | atualizadas: {updated}" if updated else ""),
                  operation="update_status_options", field_id=field_id, columns=columns)
         parts = []
         for col in columns:
@@ -675,18 +685,18 @@ class GitHubBoardAdapter(BoardPort):
                 project = self._create_project(owner_id, board_name)
                 projects_by_title[board_name] = project
 
-            status_field = self._get_status_field(project["id"])
+            status_field = self._get_status_field(project["id"], board_name)
             if not status_field:
-                log.info("GitHub", f"Criando campo Status para '{board_name}'")
-                self._create_status_field(project["id"], columns)
-                status_field = self._get_status_field(project["id"])
+                log.info("GitHub", f"Criando campo Status para '{board_name}': {columns}")
+                self._create_status_field(project["id"], columns, board_name)
+                status_field = self._get_status_field(project["id"], board_name)
             else:
                 existing = {o["name"]: o["id"] for o in status_field.get("options", [])}
                 current_order = [o["name"] for o in status_field.get("options", [])]
                 if current_order != columns:
-                    log.info("GitHub", f"Atualizando colunas de '{board_name}'")
-                    self._update_status_options(status_field["id"], columns, existing)
-                    status_field = self._get_status_field(project["id"])
+                    log.info("GitHub", f"Atualizando colunas de '{board_name}': {columns}")
+                    self._update_status_options(status_field["id"], columns, existing, board_name)
+                    status_field = self._get_status_field(project["id"], board_name)
 
             # Cacheia metadados para list_issues/move_issue
             self._projects[board_id] = {
@@ -705,7 +715,7 @@ class GitHubBoardAdapter(BoardPort):
         meta = self._board_meta(board_id)
         project_id = meta["project_id"]
 
-        log.info("GitHub", f"[{self._throttle_value}s] {board_id} - Listando issues",
+        log.trace("GitHub", f"{self._tp}{board_id} - Listando issues",
                  operation="list_issues", board_id=board_id, project_id=project_id)
 
         query = """query($pid:ID!,$cursor:String){
@@ -728,7 +738,7 @@ class GitHubBoardAdapter(BoardPort):
         while True:
             page_num += 1
             if page_num > 1:
-                log.info("GitHub", f"[{self._throttle_value}s] {board_id} - Página {page_num}",
+                log.trace("GitHub", f"{self._tp}{board_id} - Página {page_num}",
                          operation="list_issues_page", board_id=board_id, page=page_num)
             data = self._gql(query, pid=project_id, cursor=cursor) if cursor \
                 else self._gql(query, pid=project_id)
@@ -777,7 +787,7 @@ class GitHubBoardAdapter(BoardPort):
 
     def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
         self._penalty_check()
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Buscando issue"
+        log.info("GitHub", f"{self._tp}#{issue_id} - Buscando issue"
                  + (" (fullsync)" if fullsync else ""),
                  operation="get_issue", board_id=board_id, issue_id=issue_id,
                  fullsync=fullsync)
@@ -845,7 +855,7 @@ class GitHubBoardAdapter(BoardPort):
 
     def create_issue(self, board_id: str, title: str, body: str, column: str) -> Issue:
         self._penalty_check()
-        log.info("GitHub", f"[{self._throttle_value}s] {board_id} - Criando issue '{title}'",
+        log.info("GitHub", f"{self._tp}{board_id} - Criando issue '{title}'",
                  operation="create_issue", board_id=board_id, title=title)
         # 'gh issue create' NÃO suporta --json; ele imprime a URL da issue
         # criada no stdout (ex.: https://github.com/owner/repo/issues/42).
@@ -906,7 +916,7 @@ class GitHubBoardAdapter(BoardPort):
             log.warning("GitHub", f"Coluna '{column}' não encontrada no board '{board_id}'")
             return
         move_label = f"{from_column} -> {column}" if from_column else f"-> {column}"
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} {move_label}",
+        log.info("GitHub", f"{self._tp}#{issue_id} {move_label}",
                  operation="move_issue", board_id=board_id, issue_id=issue_id, column=column)
         item_id = self._find_item_id(board_id, issue_id)
         if not item_id:
@@ -1015,7 +1025,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         # de issues de outro board que coincidam numericamente (Correção 5).
         if not self._assert_belongs_to_board(board_id, issue_id):
             return
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Atualizando issue",
+        log.trace("GitHub", f"{self._tp}#{issue_id} - Atualizando issue",
                  operation="update_issue", board_id=board_id, issue_id=issue_id)
         args = ["issue", "edit", issue_id, "--repo", self._repo]
         if title:
@@ -1026,13 +1036,13 @@ query($owner:String!,$repo:String!,$number:Int!){
 
     def add_comment(self, board_id: str, issue_id: str, comment: str) -> None:
         self._penalty_check()
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Adicionando comentário",
+        log.trace("GitHub", f"{self._tp}#{issue_id} - Adicionando comentário",
                  operation="add_comment", board_id=board_id, issue_id=issue_id)
         self._gh("issue", "comment", issue_id, "--repo", self._repo, "--body", comment)
 
     def list_comments(self, board_id: str, issue_id: str) -> list[dict]:
         self._penalty_check()
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Listando comentários",
+        log.trace("GitHub", f"{self._tp}#{issue_id} - Listando comentários",
                  operation="list_comments", board_id=board_id, issue_id=issue_id)
         result = self._gh("issue", "view", issue_id, "--repo", self._repo,
                           "--json", "comments")
@@ -1048,13 +1058,13 @@ query($owner:String!,$repo:String!,$number:Int!){
         # outro board que coincidam numericamente (Correção 5 — Incidente Issue Fantasma).
         if not self._assert_belongs_to_board(board_id, issue_id):
             return
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Fechando issue",
+        log.trace("GitHub", f"{self._tp}#{issue_id} - Fechando issue",
                  operation="close_issue", board_id=board_id, issue_id=issue_id)
         self._gh("issue", "close", issue_id, "--repo", self._repo)
 
     def reopen_issue(self, board_id: str, issue_id: str) -> None:
         self._penalty_check()
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Reabrindo issue",
+        log.trace("GitHub", f"{self._tp}#{issue_id} - Reabrindo issue",
                  operation="reopen_issue", board_id=board_id, issue_id=issue_id)
         self._gh("issue", "reopen", issue_id, "--repo", self._repo)
 
@@ -1141,7 +1151,7 @@ query($owner:String!,$repo:String!,$number:Int!){
             current = {str(c) for c in known_current}
         else:
             current = set(self._list_sub_issue_numbers(issue_id))
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - children {sorted(desired)}",
+        log.info("GitHub", f"{self._tp}#{issue_id} - children {sorted(desired)}",
                  operation="set_children", board_id=board_id, issue_id=issue_id)
         for child in desired - current:
             self._add_sub_issue(issue_id, child)
@@ -1172,7 +1182,7 @@ query($owner:String!,$repo:String!,$number:Int!){
             except Exception:
                 current_parent = None
 
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - parent {parent_id}",
+        log.info("GitHub", f"{self._tp}#{issue_id} - parent {parent_id}",
                  operation="set_parent", board_id=board_id, issue_id=issue_id)
 
         if parent_id:
@@ -1215,7 +1225,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         else:
             current_by, _ = self._get_dependencies(issue_id)
             current = set(current_by)
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - blocked_by {sorted(desired)}",
+        log.info("GitHub", f"{self._tp}#{issue_id} - blocked_by {sorted(desired)}",
                  operation="set_blocked_by", board_id=board_id, issue_id=issue_id)
         for b in desired - current:
             db = self._get_issue_db_id(b)
@@ -1253,7 +1263,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         if not this_db:
             log.warning("GitHub", f"#{issue_id} - databaseId não resolvido para set_blocks")
             return
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - blocks {sorted(desired)}",
+        log.info("GitHub", f"{self._tp}#{issue_id} - blocks {sorted(desired)}",
                  operation="set_blocks", board_id=board_id, issue_id=issue_id)
         for n in desired - current:
             self._api("POST", f"/repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by",
@@ -1269,7 +1279,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         """SET das labels da issue (substitui todas via PUT REST)."""
         self._penalty_check()
         owner, repo = self._repo.split("/")
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - labels {labels}",
+        log.info("GitHub", f"{self._tp}#{issue_id} - labels {labels}",
                  operation="set_labels", board_id=board_id, issue_id=issue_id)
         # PUT substitui todas as labels; usa --input - com JSON para garantir
         # que a API receba um array válido (inclusive array vazio).
@@ -1284,7 +1294,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         """Adiciona uma única label (mantém as demais) via POST REST."""
         self._penalty_check()
         owner, repo = self._repo.split("/")
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - +label '{label}'",
+        log.info("GitHub", f"{self._tp}#{issue_id} - +label '{label}'",
                  operation="add_label", board_id=board_id, issue_id=issue_id)
         self._api("POST", f"/repos/{owner}/{repo}/issues/{issue_id}/labels",
                   **{"labels[]": label})
@@ -1293,7 +1303,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         """Remove uma única label (mantém as demais) via DELETE REST."""
         self._penalty_check()
         owner, repo = self._repo.split("/")
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - -label '{label}'",
+        log.info("GitHub", f"{self._tp}#{issue_id} - -label '{label}'",
                  operation="remove_label", board_id=board_id, issue_id=issue_id)
         try:
             self._gh("api", "-X", "DELETE",
@@ -1312,7 +1322,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         if not item_id:
             log.warning("GitHub", f"#{issue_id} não encontrada no project para arquivar")
             return
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Arquivando item",
+        log.info("GitHub", f"{self._tp}#{issue_id} - Arquivando item",
                  operation="archive_issue", board_id=board_id, issue_id=issue_id)
         self._gql(
             "mutation($pid:ID!,$itemId:ID!){archiveProjectV2Item(input:{projectId:$pid,itemId:$itemId}){item{id}}}",
@@ -1326,7 +1336,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         if not item_id:
             # Item arquivado pode não aparecer em _find_item_id (que filtra). Ignora silenciosamente.
             return
-        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Desarquivando item",
+        log.info("GitHub", f"{self._tp}#{issue_id} - Desarquivando item",
                  operation="unarchive_issue", board_id=board_id, issue_id=issue_id)
         self._gql(
             "mutation($pid:ID!,$itemId:ID!){unarchiveProjectV2Item(input:{projectId:$pid,itemId:$itemId}){item{id}}}",

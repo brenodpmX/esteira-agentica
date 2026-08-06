@@ -127,7 +127,7 @@ def board_full_sync(config: dict):
         try:
             attempt += 1
             if attempt > 1:
-                log.info("Board", f"Sincronizando boards remotos - tentativa {attempt}")
+                log.warning("Board", f"Sincronizando boards remotos - tentativa {attempt}")
             board.sync_boards(config)
             break
         except PenaltyException as e:
@@ -162,8 +162,10 @@ def board_full_sync(config: dict):
         while True:
             try:
                 attempt += 1
-                log.info("Board", f"Analisando board '{board_id}'"
-                         + (f" - tentativa {attempt}" if attempt > 1 else ""))
+                if attempt > 1:
+                    log.warning("Board", f"Analisando board '{board_id}' - tentativa {attempt}")
+                else:
+                    log.info("Board", f"Analisando board '{board_id}'")
                 total += board.detect_board_changes(board_id, snap, queue)
                 break
             except PenaltyException as e:
@@ -416,7 +418,7 @@ def call_agent(config: dict, task: dict | None):
             break
 
     if not platform:
-        log.warning("Agent", f"Agente '{agent_id}' não encontrado na config")
+        log.trace("Agent", f"Agente '{agent_id}' não encontrado na config")
         return
 
     # Resolução de model (definido na config do agente)
@@ -427,6 +429,13 @@ def call_agent(config: dict, task: dict | None):
     work_dir = resolve_work_dir(config, board_cfg)
 
     prompt = build_prompt(config, task)
+
+    # Extrair título da issue do body_path
+    body_path = Path(issue.get("body_path", ""))
+    issue_title = ""
+    if body_path.exists():
+        first_line = body_path.read_text(encoding="utf-8").split("\n", 1)[0]
+        issue_title = first_line.lstrip("# ").strip()
 
     params = AgentParams(
         platform=platform,
@@ -439,6 +448,7 @@ def call_agent(config: dict, task: dict | None):
         prompt=prompt,
         work_dir=str(work_dir),
         repo_id=repo_id,
+        issue_title=issue_title,
     )
 
     adapter = KiroCliAgent()

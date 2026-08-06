@@ -67,12 +67,12 @@ def _fire_column_events(board_id: str, issue_id: str, board_obj: Board,
 
     out_events = (columns.get(old_col, {}) or {}).get("on_out") if old_col else None
     if out_events:
-        log.info("Sync", f"[{board_id}] #{issue_id} on_out '{old_col}': {out_events}")
+        log.trace("Sync", f"[{board_id}] #{issue_id} on_out '{old_col}': {out_events}")
         board_obj.apply_column_events(board_id, issue_id, out_events)
 
     in_events = (columns.get(new_col, {}) or {}).get("on_in") if new_col else None
     if in_events:
-        log.info("Sync", f"[{board_id}] #{issue_id} on_in '{new_col}': {in_events}")
+        log.trace("Sync", f"[{board_id}] #{issue_id} on_in '{new_col}': {in_events}")
         board_obj.apply_column_events(board_id, issue_id, in_events)
 
 
@@ -323,11 +323,11 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
             # não há baseline no snapshot para preservá-las.
             if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,
                                        board=board_id, fullsync=True)):
-                log.info("Sync", f"[{board_id}] #{issue_id} create-down")
+                log.trace("Sync", f"[{board_id}] #{issue_id} create-down")
         else:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id, board=board_id)):
                 known["status"] = SyncEvent.CHANGE_DOWN.value
-                log.info("Sync", f"[{board_id}] #{issue_id} change-down")
+                log.trace("Sync", f"[{board_id}] #{issue_id} change-down")
 
     if max_updated != since:
         snap.last_board_update = max_updated
@@ -379,7 +379,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
                         "body_mtime": str(body_file.stat().st_mtime),
                         "status": SyncEvent.CREATE_UP.value,
                     })
-                    log.info("Sync", f"[{board_id}] '{body_file.name}' create-up")
+                    log.trace("Sync", f"[{board_id}] '{body_file.name}' create-up")
 
     # Para cada issue no snapshot com id, verificar mudanças
     for issue in snap.issues:
@@ -398,7 +398,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if not local_file or not local_file.exists():
             if queue.add(ChangeItem.of(SyncEvent.DELETE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.DELETE_UP.value
-                log.info("Sync", f"[{board_id}] #{issue_id} delete-up")
+                log.trace("Sync", f"[{board_id}] #{issue_id} delete-up")
             continue
 
         # Change-up: mtime maior, coluna diferente, ou addcomment com conteúdo
@@ -423,7 +423,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if changed:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.CHANGE_UP.value
-                log.info("Sync", f"[{board_id}] #{issue_id} change-up")
+                log.trace("Sync", f"[{board_id}] #{issue_id} change-up")
 
     snap.save()
 
@@ -481,7 +481,7 @@ def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: C
     column = issue_data["column"]
 
     created = board_obj.create_issue(board_id, title, body, column)
-    log.info("Sync", f"[{board_id}] create-up '{title}' -> #{created.id}",
+    log.trace("Sync", f"[{board_id}] create-up '{title}' -> #{created.id}",
              issue_id=created.id, column=column)
 
     # Aplicar comandos (labels, relações, etc). Create parte de estado vazio:
@@ -560,7 +560,7 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     # Addcomment vazio
     files["addcomment"].write_text("", encoding="utf-8")
 
-    log.info("Sync", f"[{board_id}] create-down #{item.id} '{issue.title}' -> {column}",
+    log.trace("Sync", f"[{board_id}] create-down #{item.id} '{issue.title}' -> {column}",
              issue_id=item.id, column=column)
 
     # Atualizar snapshot
@@ -657,7 +657,7 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     history_file.write_text(_format_history(comments), encoding="utf-8")
 
     col_label = f"{old_col} -> {current_col}" if old_col and old_col != current_col else f"-> {current_col}"
-    log.info("Sync", f"[{board_id}] change-up #{item.id} {col_label}",
+    log.trace("Sync", f"[{board_id}] change-up #{item.id} {col_label}",
              issue_id=item.id, column=current_col, from_column=old_col)
 
     # Atualizar snapshot
@@ -731,7 +731,7 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     ac_file = body_path.parent / f"{slug}-addcomment.md"
     ac_file.write_text("", encoding="utf-8")
 
-    log.info("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
+    log.trace("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
              issue_id=item.id, column=current_col)
 
     # Gatilho de par recíproco: calcula deltas de deps ANTES de sobrescrever o
@@ -816,7 +816,7 @@ def _apply_delete_up(board_id: str, item: ChangeItem, board_obj: Board,
     snap.issues = [i for i in snap.issues if str(i.get("id")) != str(item.id)]
     snap.save()
 
-    log.info("Sync", f"[{board_id}] delete-up #{item.id} - issue fechada",
+    log.trace("Sync", f"[{board_id}] delete-up #{item.id} - issue fechada",
              issue_id=item.id)
 
 
@@ -843,7 +843,7 @@ def _apply_delete_down(board_id: str, item: ChangeItem, board_obj: Board,
     snap.issues = [i for i in snap.issues if str(i.get("id")) != str(item.id)]
     snap.save()
 
-    log.info("Sync", f"[{board_id}] delete-down #{item.id} - arquivos removidos",
+    log.trace("Sync", f"[{board_id}] delete-down #{item.id} - arquivos removidos",
              issue_id=item.id)
 
 
