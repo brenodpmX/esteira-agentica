@@ -85,47 +85,45 @@ python -m src
 
 ### Execução via Docker Compose (recomendado para produção)
 
+> Contrato arquitetural: [ADR-0173 — Arquitetura Docker canônica](doc/adr/0173-arquitetura-docker-canonica.md).
+> A imagem executa como usuário não-root `pipe` (UID/GID 1000) e instala uma
+> versão fixa do `kiro-cli` durante o build; não copie o binário do host.
+
 **Pré-requisitos:**
-- Docker e Docker Compose instalados
-- `gh auth login` executado no host (gera `~/.config/gh/`)
-- Chave SSH configurada no GitHub (`~/.ssh/id_ed25519`)
+- Docker Engine e Docker Compose V2 instalados
+- Chave SSH configurada no GitHub (`~/.ssh/id_ed25519` ou equivalente)
 - Token do GitHub com escopos `repo` e `project`
+- Chave de API do `kiro-cli`
 
-**1. Preparar o contexto de build (copia o binário kiro-cli):**
-
-```bash
-./prepare-docker.sh
-```
-
-**2. Criar o arquivo `.env` com o token do GitHub:**
+**1. Criar o arquivo `.env`:**
 
 ```bash
 cp .env.example .env
-# Editar .env e preencher GH_TOKEN (e opcionalmente SSH_KEY_FILE, GH_CONFIG_DIR)
+# Preencha GH_TOKEN, KIRO_API_KEY e SSH_KEY_FILE_HOST.
 ```
 
-**3. Garantir que o `pipe.yml` existe na raiz do projeto:**
+**2. Garantir que o `pipe.yml` existe na raiz do projeto:**
 
 ```bash
 # pipe.yml não é versionado — deve ser criado/copiado manualmente
-# Ver seção "Configuração → Arquivo pipe.yml" abaixo para o formato
+# Ver seção "Configuração → Arquivo pipe.yml" acima para o formato
 ```
 
-**4. Build e execução:**
+**3. Build e execução:**
 
 ```bash
 docker compose build
 docker compose up
 ```
 
-**5. Para rodar em background:**
+**4. Para rodar em background:**
 
 ```bash
 docker compose up -d
 docker compose logs -f   # acompanhar logs
 ```
 
-**6. Para parar:**
+**5. Para parar:**
 
 ```bash
 docker compose down
@@ -135,12 +133,14 @@ docker compose down
 
 | Volume | Caminho no container | Conteúdo |
 |--------|---------------------|----------|
-| `pipe_state` | `/app/.pipe` | Snapshots, fila de mudanças, índice de sessões |
-| `pipe_repos` | `/app/repo` | Clones dos repositórios git |
-| `pipe_logs` | `/app/logs` | Logs de execução |
+| `pipe-state` | `/app/.pipe` | Estado interno e continuidade da esteira |
+| `pipe-repo` | `/app/repo` | Clones dos repositórios git |
+| `pipe-logs` | `/app/logs` | Logs de execução |
+| `kiro-home` | `/home/pipe/.kiro` | Configuração do `kiro-cli` |
+| `kiro-local` | `/home/pipe/.local/share/kiro-cli` | Dados e sessões locais do `kiro-cli` |
 
 Os volumes são criados automaticamente pelo Docker na primeira execução.
-Para limpar o estado interno (forçar re-sync completo), remova os volumes:
+Para limpar todo o estado persistente, incluindo sessões do `kiro-cli`, remova os volumes:
 
 ```bash
 docker compose down -v
