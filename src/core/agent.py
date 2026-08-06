@@ -167,6 +167,7 @@ class AgentParams:
     work_dir: str          # diretório de trabalho do agente (clone em repo/<repo_id>)
     repo_id: str = None    # id do repositório alvo (chave em git.repo)
     issue_title: str = None  # título da issue (para logs)
+    col_name: str = None     # nome da coluna (para logs)
     context: str = None
 
 

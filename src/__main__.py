@@ -449,6 +449,7 @@ def call_agent(config: dict, task: dict | None):
         work_dir=str(work_dir),
         repo_id=repo_id,
         issue_title=issue_title,
+        col_name=col.get("name", col_id),
     )
 
     adapter = KiroCliAgent()

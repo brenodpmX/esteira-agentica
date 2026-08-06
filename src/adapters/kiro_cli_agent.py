@@ -3,7 +3,6 @@
 import os
 import re
 import subprocess
-import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -29,26 +28,26 @@ class KiroCliAgent(AgentPort):
 
     def execute(self, params: AgentParams) -> None:
         log_path = self._create_log(params)
-        issue_label = f"#{params.issue_id} '{params.issue_title}'" if params.issue_title else f"#{params.issue_id}"
-        log.info("Agent", f"[{params.board_id}] {issue_label} agent='{params.agent_name}' "
-                          f"model='{params.model}' log='{log_path}'")
+        col_name = params.col_name or params.col_id
+        title = f" - {params.issue_title}" if params.issue_title else ""
+        log.info("Agent", f"[{params.board_id}] [{col_name}] #{params.issue_id}{title} "
+                          f"Por: {params.agent_name} '{params.model}'")
         try:
             work_dir = Path(params.work_dir)
             if not work_dir.is_dir():
                 raise FileNotFoundError(
                     f"Diretório de trabalho (repo) não encontrado: {work_dir}"
                 )
-            start = time.time()
             output = self._run(params, work_dir)
-            elapsed = time.time() - start
             self._append_log(log_path, self._strip_ansi(output) + "\n")
-            duration = self._format_duration(elapsed)
-            tokens = self._extract_tokens(output)
-            tokens_str = f" | tokens: {tokens}" if tokens else ""
-            log.info("Agent", f"[{params.board_id}] {issue_label} concluída em {duration}{tokens_str}")
+            last_line = self._last_meaningful_line(output)
+            log.info("Agent", f"[{params.board_id}] [{col_name}] #{params.issue_id} "
+                     f"concluído: {last_line}", log=str(log_path))
         except Exception as e:
             self._append_log(log_path, f"\n**ERRO**: {e}\n")
-            log.error("Agent", f"[{params.board_id}] {issue_label} erro: {e}")
+            last_line = self._last_meaningful_line(str(e))
+            log.error("Agent", f"[{params.board_id}] [{col_name}] #{params.issue_id} "
+                      f"erro: {last_line}", log=str(log_path))
             raise
 
     def _run(self, params: AgentParams, work_dir: Path) -> str:
@@ -98,8 +97,8 @@ class KiroCliAgent(AgentPort):
         known_id = index.get(params.board_id, params.issue_id, params.agent_id)
         if known_id and self._session_exists(known_id, work_dir, env):
             cmd += ["--resume-id", known_id]
-            issue_label = f"#{params.issue_id} '{params.issue_title}'" if params.issue_title else f"#{params.issue_id}"
-            log.info("Agent", f"[{params.board_id}] {issue_label} "
+            col_name = params.col_name or params.col_id
+            log.info("Agent", f"[{params.board_id}] [{col_name}] #{params.issue_id} "
                      f"retomando sessão {known_id}",
                      session_id=known_id, agent=params.agent_id)
 
@@ -167,29 +166,15 @@ class KiroCliAgent(AgentPort):
         """Remove códigos ANSI do output."""
         return _ANSI.sub("", text)
 
-    def _format_duration(self, seconds: float) -> str:
-        """Formata duração em formato humano (ex: '2m30s', '1h05m')."""
-        s = int(seconds)
-        if s < 60:
-            return f"{s}s"
-        m, s = divmod(s, 60)
-        if m < 60:
-            return f"{m}m{s:02d}s"
-        h, m = divmod(m, 60)
-        return f"{h}h{m:02d}m"
+    def _last_meaningful_line(self, output: str) -> str:
+        """Retorna a última linha não-vazia do output (limpa ANSI).
 
-    def _extract_tokens(self, output: str) -> str | None:
-        """Tenta extrair contagem de tokens do output do kiro-cli.
-
-        Busca padrões como 'tokens: 1234' ou 'total_tokens: 5678' no output.
-        Retorna a string formatada ou None se não encontrar.
+        O kiro-cli tipicamente imprime um resumo na última linha com tempo
+        e tokens consumidos. Em caso de erro, a última linha contém a mensagem.
         """
         clean = self._strip_ansi(output)
-        # Padrão: "X input tokens" / "Y output tokens" / "total: Z tokens"
-        m = re.search(r'(\d[\d,]+)\s*(?:total[_ ])?tokens', clean, re.IGNORECASE)
-        if m:
-            return m.group(1).replace(",", "")
-        return None
+        lines = [l.strip() for l in clean.strip().splitlines() if l.strip()]
+        return lines[-1] if lines else "(sem output)"
 
     def _append_log(self, log_path: Path, content: str) -> None:
         """Adiciona conteúdo ao final do log."""
