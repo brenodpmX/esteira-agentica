@@ -2,7 +2,9 @@
 
 **Data:** 2026-08-06
 **Issue:** #149 — Verificação de integridade do snapshot na execução do agente
-**Branch:** `story149-149-verificacao_de_integridade_do_snapshot_na_execucao_do_agente`
+**Branch:** `story149-149-verificacao_de_integridade_do_snapshot_na_execucao_do_agente-correcao`
+(a branch original da story nasceu de `main` em vez de `epic` — bug #171; este
+Change File é entregue por branch de correção cortada de `epic`)
 **Épico:** #141 — Restaurar alterações indevidas no snapshot após execução do agente (US-04)
 **Status:** entregue via tasks filhas #153 e #154 (mergeadas em `epic`)
 
