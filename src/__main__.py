@@ -2,7 +2,7 @@ from src.core.log import log
 from src.core.config import check_config as validate_config, ConfigError, SSH_KEY_ENV
 from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
-from src.core.snapshot import Snapshot
+from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
 from src.core.change_queue import ChangeQueue, QUEUE_FILE
 from src.core.sync import sync_remote, detect_local_changes, apply_changes, migrate_agent_level_labels
 from src.core.version import VERSION
@@ -450,7 +450,8 @@ def call_agent(config: dict, task: dict | None):
 
     from src.core.agent_guard import AgentGuard
     with AgentGuard(board_id, col_id):
-        adapter.execute(params)
+        with SnapshotGuard(board_id):
+            adapter.execute(params)
 
 
 def sleep_time(config: dict):
@@ -563,6 +564,13 @@ def main():
         except _Shutdown:
             log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
             running = False
+        except SnapshotIntegrityError as e:
+            log.error(
+                "Pipe",
+                f"[{e.board_id}] Falha fatal ao restaurar integridade do snapshot "
+                f"- encerrando o processo: {e.cause}",
+            )
+            raise
         except Exception as e:
             log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
             time.sleep(config.get("sleep", 60))
