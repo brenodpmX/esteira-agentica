@@ -51,6 +51,10 @@ agents:
 
 boards:
   platform: github
+  rerun_cooldown: 300   # opcional: tempo mínimo (segundos) para reexecutar a
+                        # mesma issue (mesmo board + coluna + id). 0/ausente
+                        # desabilita. Se a issue muda de coluna, fica elegível
+                        # imediatamente.
   backlog:
     name: Backlog
     priority: 0

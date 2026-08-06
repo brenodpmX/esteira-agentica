@@ -69,8 +69,21 @@ def _validate_agents(agents: dict):
 def _validate_boards(boards: dict, known_agents: set[str] | None = None):
     known_agents = known_agents or set()
     _require(boards, "platform", "boards")
+
+    # boards.rerun_cooldown (opcional): tempo mínimo, em segundos, antes de
+    # reexecutar a mesma issue (mesmo board, coluna e id). 0 desabilita.
+    cooldown = boards.get("rerun_cooldown")
+    if cooldown is not None and (
+        isinstance(cooldown, bool) or not isinstance(cooldown, int) or cooldown < 0
+    ):
+        raise ConfigError("boards.rerun_cooldown: deve ser inteiro >= 0 (segundos)")
+
     for board_id, board in boards.items():
         if board_id == "platform":
+            continue
+        # Chaves escalares de configuração (ex.: rerun_cooldown) convivem com os
+        # boards dentro de 'boards'; só validamos entradas que são boards (dict).
+        if not isinstance(board, dict):
             continue
         _require(board, "name", f"boards.{board_id}")
         columns = _require(board, "columns", f"boards.{board_id}")
