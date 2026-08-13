@@ -15,6 +15,19 @@ Segue semântico: `MAJOR.MINOR.PATCH`.
 
 A versão é exibida no log ao iniciar a esteira.
 
+## Changelog
+
+### Preflight de Credenciais (v1.6.0 — US-02)
+
+Adição de comportamento novo: verificação de credenciais antes do startup
+principal (preflight). Implementado nas tasks #34 (kiro_cli_agent) e #35
+(startup), consolidado nesta task #36 com o bump MINOR correspondente.
+
+- Bump: `1.5.0` → `1.6.0` (MINOR — adição de comportamento, sem breaking change)
+- Funcionalidade: `preflight()` verifica SSH, GitHub CLI e permissões do repo
+  antes de qualquer operação destrutiva
+- Referências: ADR-04, `doc/arch/rodar-no-docker/us-02-autenticacao-headless.md`
+
 ## Visão Geral
 
 Esteira automatizada de agentes de IA com arquitetura hexagonal. Reescrita do projeto `oldversion/` para suportar múltiplas plataformas de board (GitHub Projects, ClickUp, etc) e múltiplos adapters de agente (kiro-cli, etc).
@@ -267,11 +280,29 @@ Cobertura em `tests/test_rate_limit_detection.py`.
 
 ### Substituição de agente por nível (`override-agent`)
 
-A coluna tem um `agent` default. Se a issue traz `/agent_level <nível>` no bloco
-`@---` e `<nível>` é chave de `override-agent`, usa o agente do valor; senão, o
-`agent` default. Como cada agente carrega o próprio `model`, a troca de agente
-também troca o model. Resolvido em `agent.py` (`agent_level` +
+A coluna tem um `agent` default. O nível de execução de uma issue é armazenado
+como label `agent-level-<nível>` no GitHub (ex.: `agent-level-low`,
+`agent-level-medium`, `agent-level-high`). Essa label é sincronizada
+nativamente pelo board, eliminando a dependência de estado local.
+
+Se a issue possuir uma label `agent-level-<nível>` e `<nível>` for chave de
+`override-agent`, usa o agente do valor; senão, o `agent` default. Como cada
+agente carrega o próprio `model`, a troca de agente também troca o model.
+
+Resolvido em `agent.py` (`agent_level` lê `issue["labels"]` diretamente +
 `resolve_agent_id`), validado em `config.py`.
+
+No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
+`@---` do body. O sync-up chama `all_labels()` (em `commands.py`), que emite
+`agent-level-<nível>` no conjunto de labels efetivas, gravando a label no board
+via `apply_commands`. A label `agent-level-*` é tratada como campo especial
+(análogo a `need_human`): extraída em `from_issue`, reemitida em `all_labels`,
+nunca sobrescrita pelo comando `/labels` do usuário.
+
+Migração de issues legadas: o `board_full_sync` chama
+`migrate_agent_level_labels` (em `sync.py`) que, para cada issue com
+`/agent_level` no body mas sem label `agent-level-*` no snapshot, enfileira um
+`change-up` para que o sync-up grave a label no board.
 
 ### Contexto do agente
 
@@ -402,7 +433,7 @@ de comandos separado por uma linha `@---`.
 - `split_body(raw)` → `(body_limpo, IssueCommands)`. Múltiplos `@---`: o último
   vence, anteriores removidos.
 - `compose_body(body, cmds)` → body completo com bloco.
-- `from_issue(issue)` → IssueCommands (extrai need_human das labels).
+- `from_issue(issue)` → IssueCommands (extrai `need_human` e `agent_level` das labels; ambos tratados como campos especiais — não aparecem em `cmds.labels`).
 - `annotations_doc()` → documentação compartilhada por prompts e contexts.
 
 Filosofia presença/ausência: o estado escrito é o estado final (SET). Sem

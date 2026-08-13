@@ -1,13 +1,59 @@
 """Sync core - sincronização entre local e board remoto."""
 
+import hashlib
+import json
 import re
+from dataclasses import asdict, dataclass, fields as dataclass_fields
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.core.board import Board, ChangeItem, Issue, PenaltyException, SyncEvent
 from src.core.change_queue import ChangeQueue
-from src.core.commands import apply_events_to_commands, compose_body, from_issue, split_body
+from src.core.commands import (AGENT_LEVEL_PREFIX, apply_events_to_commands,
+                               compose_body, from_issue, sanitize_relations,
+                               split_body)
+from src.core.config import resolve_max_attempts
+from src.core.dead_letter import DeadLetterEntry, DeadLetterQueue, sanitize_reason
 from src.core.log import log
 from src.core.snapshot import BOARDS_DIR, Snapshot
+
+PIPE_DIR = Path(".pipe")
+ORPHAN_FILE = PIPE_DIR / "orphanFiles.json"
+
+
+# Substrings estáveis de mensagens de exceção já tratadas como "definitivo"
+# em pontos específicos do sync (issue fantasma / isolamento de board). São
+# reconhecidas aqui de forma genérica para classify_error.
+_DEFINITIVE_MESSAGE_SUBSTRINGS = (
+    "Could not resolve to an issue or pull request",
+    "não pertence a este board",
+)
+
+# next_step: ação recomendada, curta e acionável, por categoria de dead-letter.
+_NEXT_STEP = {
+    "definitivo": "item não será retentado; revisar manualmente e, se aplicável, recriar a entrada",
+    "transitorio_esgotado": "limite de tentativas esgotado; verificar causa raiz antes de reenviar manualmente",
+}
+
+
+def classify_error(exc: Exception) -> str:
+    """Classifica um erro de sincronismo em categoria estável.
+
+    Retorna uma das três categorias:
+    - "rate_limit": PenaltyException (rate limit do board, tratado pelo
+      throttle/penalty — não é responsabilidade do item da fila).
+    - "definitivo": mensagens estáveis que indicam que o alvo não existe ou
+      nunca vai se resolver (issue fantasma, isolamento de board).
+    - "transitorio": qualquer outra exceção (default seguro).
+
+    Função pura: não faz I/O nem loga.
+    """
+    if isinstance(exc, PenaltyException):
+        return "rate_limit"
+    message = str(exc)
+    if any(substr in message for substr in _DEFINITIVE_MESSAGE_SUBSTRINGS):
+        return "definitivo"
+    return "transitorio"
 
 
 def _slugify(text: str) -> str:
@@ -29,27 +75,237 @@ def _issue_files(board_id: str, col_id: str, issue_id: str, slug: str) -> dict:
     }
 
 
+def _is_valid_registered_path(candidate: Path, board_id: str, issue_id: str,
+                              snap: Snapshot) -> bool:
+    """Valida se o body_path registrado no snapshot pode ser aceito de
+    imediato (passo 1 do ADR-01), sem varrer o filesystem.
+
+    Todas as condições abaixo precisam valer:
+    - o arquivo existe;
+    - está dentro do diretório do board (sem escape via `..`/symlink);
+    - o nome termina em '-body.md';
+    - o nome começa com '<issue_id>-';
+    - nenhuma outra issue do snapshot registra o mesmo body_path.
+    """
+    if not candidate.exists():
+        return False
+
+    board_dir = (BOARDS_DIR / board_id).resolve()
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(board_dir)
+    except ValueError:
+        return False
+
+    name = candidate.name
+    if not name.endswith("-body.md"):
+        return False
+    if not name.startswith(f"{issue_id}-"):
+        return False
+
+    for other in snap.issues:
+        if str(other.get("id")) == str(issue_id):
+            continue
+        if other.get("body_path") and Path(other["body_path"]) == candidate:
+            return False
+
+    return True
+
+
+@dataclass
+class OrphanEntry:
+    """Registro de isolamento de um arquivo local órfão (.pipe/orphanFiles.json).
+
+    Representa um arquivo com prefixo numérico que não corresponde de forma
+    confiável a nenhuma issue conhecida do snapshot (ID desconhecido, ou
+    ambíguo/conflitante). Deduplicado pela chave (board, apparent_id, reason,
+    content_fingerprint) — ver record_orphan().
+    """
+    board: str
+    apparent_id: str
+    reason: str
+    content_fingerprint: str
+    path: str
+    recorded_at: str  # timestamp ISO 8601 UTC
+
+
+def _orphan_key(entry: OrphanEntry) -> tuple:
+    return (entry.board, entry.apparent_id, entry.reason, entry.content_fingerprint)
+
+
+def _read_orphans() -> list[OrphanEntry]:
+    if not ORPHAN_FILE.exists():
+        return []
+    raw = json.loads(ORPHAN_FILE.read_text(encoding="utf-8"))
+    fields = {f.name for f in dataclass_fields(OrphanEntry)}
+    return [OrphanEntry(**{k: v for k, v in item.items() if k in fields}) for item in raw]
+
+
+def _write_orphans(entries: list[OrphanEntry]) -> None:
+    PIPE_DIR.mkdir(parents=True, exist_ok=True)
+    data = [asdict(entry) for entry in entries]
+    ORPHAN_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def record_orphan(board_id: str, path: Path, apparent_id: str, reason: str) -> None:
+    """Registra um arquivo local órfão (isolamento sem alterar issues).
+
+    Um arquivo é considerado órfão quando tem prefixo numérico mas não
+    corresponde de forma confiável a nenhuma issue conhecida do snapshot
+    (ID desconhecido, ou ambíguo/conflitante). Este registro:
+
+    - NÃO enfileira create-up/change-up/delete-up;
+    - NÃO altera o snapshot;
+    - persiste em .pipe/orphanFiles.json (memória interna da esteira, ver
+      PROTECTED_PATHS em src/core/agent.py), sobrevivendo entre ciclos e
+      processos, seguindo o mesmo padrão de leitura/escrita JSON de
+      src/core/change_queue.py e src/core/dead_letter.py;
+    - deduplica pela chave (board_id, apparent_id, reason,
+      content_fingerprint): só a primeira ocorrência da chave (ou quando a
+      causa/conteúdo mudar) gera um novo registro e um novo log.warning.
+
+    content_fingerprint é o SHA-256 do conteúdo do arquivo (bytes), calculado
+    apenas se o arquivo ainda existir.
+    """
+    try:
+        content = path.read_bytes()
+    except OSError:
+        content = b""
+    fingerprint = hashlib.sha256(content).hexdigest()
+
+    entry = OrphanEntry(
+        board=board_id,
+        apparent_id=apparent_id,
+        reason=reason,
+        content_fingerprint=fingerprint,
+        path=str(path),
+        recorded_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+    entries = _read_orphans()
+    key = _orphan_key(entry)
+    if any(_orphan_key(existing) == key for existing in entries):
+        return
+
+    entries.append(entry)
+    _write_orphans(entries)
+
+    log.warning(
+        "Sync",
+        f"[{board_id}] arquivo órfão detectado: '{path}' (ID aparente "
+        f"#{apparent_id}, motivo: {reason}) — verificar manualmente se o "
+        f"arquivo pertence a esta issue ou deve ser renomeado sem prefixo "
+        f"numérico",
+        board_id=board_id, path=str(path), apparent_id=apparent_id,
+        reason=reason,
+    )
+
+
 def _find_issue_files(board_id: str, issue_id: str) -> Path | None:
     """Encontra o arquivo body de uma issue em qualquer coluna do board.
 
-    Prioriza o path registrado no snapshot para evitar retornar um arquivo
-    órfão quando há colisão de IDs.
+    Resolução determinística por identidade (ADR-01 / RN-005 / RN-006):
+
+    1. O body_path registrado no snapshot é a fonte de verdade quando válido
+       (existe, dentro do board, sufixo/prefixo corretos, não reivindicado
+       por outra issue) — aceito imediatamente, sem varrer o filesystem.
+    2. Se o path registrado não for aceito, busca pelo nome completo do
+       arquivo (Path(body_path).name) em todas as colunas do board.
+    3. Aceita somente se exatamente 1 candidato for encontrado no passo 2 e
+       ele não pertencer (via body_path) a outra issue do snapshot.
+    4. Sem body_path registrado (issue legada): fallback por prefixo
+       numérico ('<issue_id>-*-body.md'), aceito somente com exatamente 1
+       candidato.
+
+    Qualquer recusa (zero ou múltiplos candidatos) retorna None e loga um
+    warning — nunca escolhe arbitrariamente. Função puramente local: não faz
+    chamada de rede/board.
     """
-    # Primeiro, verificar se o snapshot possui body_path registrado.
     snap = Snapshot(board_id).load()
     issue_data = snap.issue(issue_id)
-    if issue_data and issue_data.get("body_path"):
-        candidate = Path(issue_data["body_path"])
-        if candidate.exists():
-            return candidate
 
-    # Fallback: rglob
     board_dir = BOARDS_DIR / board_id
     if not board_dir.exists():
         return None
-    for body_file in board_dir.rglob(f"{issue_id}-*-body.md"):
-        return body_file
-    return None
+
+    registered = issue_data.get("body_path") if issue_data else None
+
+    if registered:
+        candidate = Path(registered)
+        if _is_valid_registered_path(candidate, board_id, issue_id, snap):
+            return candidate
+
+        # Passo 2/3: path registrado inválido/ausente — buscar pelo nome
+        # completo do arquivo em todas as colunas do board. O nome buscado
+        # só é uma identidade válida de body file se respeitar o mesmo
+        # contrato do passo 1 (sufixo '-body.md' e prefixo '<issue_id>-');
+        # caso contrário não há candidato válido possível (ex.: o próprio
+        # path registrado tinha sufixo/prefixo errado).
+        file_name = Path(registered).name
+        if not (file_name.endswith("-body.md") and file_name.startswith(f"{issue_id}-")):
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{issue_id} body_path registrado com nome "
+                f"inválido: '{file_name}'",
+                board_id=board_id, issue_id=issue_id,
+                reason="nome de body_path inválido",
+            )
+            return None
+
+        candidates = list(board_dir.rglob(file_name))
+
+        if len(candidates) == 0:
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{issue_id} zero candidatos ao buscar '{file_name}'",
+                board_id=board_id, issue_id=issue_id, reason="zero candidatos",
+            )
+            return None
+        if len(candidates) > 1:
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{issue_id} múltiplos candidatos: "
+                f"{[str(c) for c in candidates]}",
+                board_id=board_id, issue_id=issue_id,
+                reason=f"múltiplos candidatos: {[str(c) for c in candidates]}",
+            )
+            return None
+
+        candidate = candidates[0]
+        for other in snap.issues:
+            if str(other.get("id")) == str(issue_id):
+                continue
+            if other.get("body_path") and Path(other["body_path"]) == candidate:
+                log.warning(
+                    "Sync",
+                    f"[{board_id}] #{issue_id} candidato '{candidate}' "
+                    f"reivindicado por outra issue",
+                    board_id=board_id, issue_id=issue_id,
+                    reason="candidato reivindicado por outra issue",
+                )
+                return None
+        return candidate
+
+    # Passo 4: sem body_path registrado (issue legada) — fallback por
+    # prefixo numérico, aceito somente com exatamente 1 candidato.
+    candidates = list(board_dir.rglob(f"{issue_id}-*-body.md"))
+    if len(candidates) == 0:
+        log.warning(
+            "Sync",
+            f"[{board_id}] #{issue_id} zero candidatos por prefixo numérico",
+            board_id=board_id, issue_id=issue_id, reason="zero candidatos",
+        )
+        return None
+    if len(candidates) > 1:
+        log.warning(
+            "Sync",
+            f"[{board_id}] #{issue_id} múltiplos candidatos: "
+            f"{[str(c) for c in candidates]}",
+            board_id=board_id, issue_id=issue_id,
+            reason=f"múltiplos candidatos: {[str(c) for c in candidates]}",
+        )
+        return None
+    return candidates[0]
 
 
 def _col_from_path(file_path: Path, board_id: str) -> str:
@@ -67,12 +323,12 @@ def _fire_column_events(board_id: str, issue_id: str, board_obj: Board,
 
     out_events = (columns.get(old_col, {}) or {}).get("on_out") if old_col else None
     if out_events:
-        log.trace("Sync", f"[{board_id}] #{issue_id} on_out '{old_col}': {out_events}")
+        log.info("Sync", f"[{board_id}] #{issue_id} on_out '{old_col}': {out_events}")
         board_obj.apply_column_events(board_id, issue_id, out_events)
 
     in_events = (columns.get(new_col, {}) or {}).get("on_in") if new_col else None
     if in_events:
-        log.trace("Sync", f"[{board_id}] #{issue_id} on_in '{new_col}': {in_events}")
+        log.info("Sync", f"[{board_id}] #{issue_id} on_in '{new_col}': {in_events}")
         board_obj.apply_column_events(board_id, issue_id, in_events)
 
 
@@ -323,11 +579,11 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
             # não há baseline no snapshot para preservá-las.
             if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,
                                        board=board_id, fullsync=True)):
-                log.trace("Sync", f"[{board_id}] #{issue_id} create-down")
+                log.info("Sync", f"[{board_id}] #{issue_id} create-down")
         else:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id, board=board_id)):
                 known["status"] = SyncEvent.CHANGE_DOWN.value
-                log.trace("Sync", f"[{board_id}] #{issue_id} change-down")
+                log.info("Sync", f"[{board_id}] #{issue_id} change-down")
 
     if max_updated != since:
         snap.last_board_update = max_updated
@@ -339,30 +595,32 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def detect_local_changes(board_id: str, queue: ChangeQueue):
-    """Detecta criações, modificações e deleções locais."""
+    """Detecta criações, modificações e deleções locais.
+
+    Arquivos com prefixo numérico (`^(\\d+)-`) só são adotados como o body de
+    `issue_id` quando passam na mesma regra de "match confiável" usada por
+    `_find_issue_files`/`_is_valid_registered_path` (ADR-01): path já
+    registrado e válido no snapshot, ou único candidato por nome completo, ou
+    único candidato por prefixo quando a issue ainda não tem `body_path`
+    registrado. Qualquer arquivo com prefixo numérico que não passe nessa
+    regra (ID desconhecido no snapshot, ou ambíguo/conflitante) é isolado via
+    record_orphan() — nunca enfileira create-up/change-up/delete-up nem
+    altera o snapshot a partir dele.
+    """
     snap = Snapshot(board_id).load()
     board_dir = BOARDS_DIR / board_id
     snapshot_by_id = {str(i["id"]): i for i in snap.issues if i.get("id")}
 
-    # Conjunto de body_paths registrados no snapshot (para resolver colisões).
-    snapshot_paths = {Path(i["body_path"]).resolve()
-                      for i in snap.issues if i.get("body_path")}
-
-    # Scan de arquivos body locais
-    local_bodies = {}  # id -> Path
+    # Agrupa todos os arquivos body locais com prefixo numérico por ID
+    # aparente, para resolver cada grupo com a regra de match confiável.
+    numbered_candidates: dict[str, list[Path]] = {}
+    local_bodies = {}  # id -> Path (apenas matches confiáveis)
     for body_file in board_dir.rglob("*-body.md"):
         match = re.match(r"^(\d+)-", body_file.name)
         if match:
             issue_id = match.group(1)
-            # Em caso de colisão (dois arquivos com mesmo ID numérico),
-            # priorizar o que já está registrado no snapshot.
-            if issue_id in local_bodies:
-                if body_file.resolve() in snapshot_paths:
-                    local_bodies[issue_id] = body_file
-                # senão, manter o que já está (pode ser o do snapshot)
-            else:
-                local_bodies[issue_id] = body_file
-        else:
+            numbered_candidates.setdefault(issue_id, []).append(body_file)
+        elif body_file.name.count("-") >= 2:
             # Arquivo sem id numérico = issue criada localmente (sem id)
             body_path_str = str(body_file)
             # Verificar se já está no snapshot por body_path
@@ -379,7 +637,48 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
                         "body_mtime": str(body_file.stat().st_mtime),
                         "status": SyncEvent.CREATE_UP.value,
                     })
-                    log.trace("Sync", f"[{board_id}] '{body_file.name}' create-up")
+                    log.info("Sync", f"[{board_id}] '{body_file.name}' create-up")
+
+    # Resolve cada grupo de candidatos por ID aparente com a mesma regra de
+    # match confiável de _find_issue_files (reaproveitando _is_valid_registered_path
+    # para não duplicar a lógica de resolução).
+    for issue_id, candidates in numbered_candidates.items():
+        issue_data = snapshot_by_id.get(issue_id)
+
+        if issue_data is None:
+            # ID desconhecido no snapshot: todos os candidatos são órfãos.
+            for candidate in candidates:
+                record_orphan(board_id, candidate, issue_id,
+                             "issue desconhecida no snapshot")
+            continue
+
+        registered = issue_data.get("body_path")
+        accepted = None
+
+        if registered:
+            registered_path = Path(registered)
+            if _is_valid_registered_path(registered_path, board_id, issue_id, snap):
+                accepted = registered_path
+            else:
+                # Path registrado inválido: aceita somente se houver
+                # exatamente 1 candidato entre os encontrados localmente.
+                if len(candidates) == 1:
+                    accepted = candidates[0]
+        else:
+            # Issue legada sem body_path registrado: aceita somente com
+            # exatamente 1 candidato.
+            if len(candidates) == 1:
+                accepted = candidates[0]
+
+        for candidate in candidates:
+            if accepted is not None and candidate.resolve() == accepted.resolve():
+                continue
+            reason = ("ambíguo: múltiplos candidatos" if len(candidates) > 1
+                      else "conflita com body_path de outra issue")
+            record_orphan(board_id, candidate, issue_id, reason)
+
+        if accepted is not None:
+            local_bodies[issue_id] = accepted
 
     # Para cada issue no snapshot com id, verificar mudanças
     for issue in snap.issues:
@@ -391,14 +690,14 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         ):
             continue
 
-        body_path = Path(issue.get("body_path", ""))
+        body_path = Path(issue.get("body_path") or "")
         local_file = local_bodies.get(issue_id)
 
         # Delete-up: body não encontrado em nenhum diretório
         if not local_file or not local_file.exists():
             if queue.add(ChangeItem.of(SyncEvent.DELETE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.DELETE_UP.value
-                log.trace("Sync", f"[{board_id}] #{issue_id} delete-up")
+                log.info("Sync", f"[{board_id}] #{issue_id} delete-up")
             continue
 
         # Change-up: mtime maior, coluna diferente, ou addcomment com conteúdo
@@ -423,7 +722,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if changed:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.CHANGE_UP.value
-                log.trace("Sync", f"[{board_id}] #{issue_id} change-up")
+                log.info("Sync", f"[{board_id}] #{issue_id} change-up")
 
     snap.save()
 
@@ -433,11 +732,28 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
-    """Consome toda a fila e aplica mudanças. Para no primeiro PenaltyException."""
+    """Consome toda a fila e aplica mudanças. Para no primeiro PenaltyException.
+
+    Erros não classificados como rate limit nunca interrompem o processamento
+    dos demais itens (evita head-of-line blocking, ver incidente #97):
+    - "definitivo": item sai da fila já na primeira falha.
+    - "transitorio": item volta ao fim da fila com attempts incrementado, até
+      esgotar o limite configurado (sync.max_attempts); aí também sai da fila.
+    Cada item é tentado no máximo uma vez por chamada de apply_changes.
+    """
+    config = config or {}
+    max_attempts = resolve_max_attempts(config)
+    tried_targets = []
+
     while True:
         item = queue.getNext()
         if not item:
             return
+        if any(item.same_target(t) for t in tried_targets):
+            # Já tentamos este alvo nesta chamada (requeue ao fim da fila) —
+            # não reprocessar no mesmo ciclo, evita loop infinito.
+            return
+        tried_targets.append(item)
 
         board_id = item.board
         try:
@@ -458,6 +774,68 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
         except PenaltyException:
             log.warning("Sync", f"[{board_id}] Penalty - abandonando apply_changes")
             return
+        except Exception as exc:
+            category = classify_error(exc)
+            if category == "definitivo":
+                log.warning(
+                    "Sync",
+                    f"[{board_id}] #{item.id} erro definitivo em {item.event} - "
+                    f"removendo da fila: {exc}",
+                    board_id=board_id, issue_id=item.id, event=item.event,
+                    reason=sanitize_reason(str(exc)), attempts=item.attempts,
+                    category=category, next_step=_NEXT_STEP[category],
+                )
+                _isolate_in_dead_letter(board_id, item, category, exc)
+                queue.remove(item.uuid)
+                continue
+
+            # transitorio
+            item.attempts += 1
+            if item.attempts >= max_attempts:
+                category = "transitorio_esgotado"
+                log.warning(
+                    "Sync",
+                    f"[{board_id}] #{item.id} esgotou tentativas ({item.attempts}) "
+                    f"em {item.event} - removendo da fila: {exc}",
+                    board_id=board_id, issue_id=item.id, event=item.event,
+                    reason=sanitize_reason(str(exc)), attempts=item.attempts,
+                    category=category, next_step=_NEXT_STEP[category],
+                )
+                _isolate_in_dead_letter(board_id, item, category, exc)
+                queue.remove(item.uuid)
+                continue
+
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{item.id} erro transitório em {item.event} "
+                f"(tentativa {item.attempts}/{max_attempts}) - reenfileirando: {exc}",
+                issue_id=item.id, event=item.event, attempts=item.attempts,
+            )
+            queue.requeue(item)
+
+
+def _isolate_in_dead_letter(board_id: str, item: ChangeItem, category: str,
+                            exc: Exception) -> None:
+    """Persiste o item isolado em dead-letter antes de removê-lo da fila ativa.
+
+    add() é idempotente por alvo (board+id/identifier+event): se o processo
+    for interrompido entre esta chamada e o queue.remove() subsequente, o
+    pior caso é uma nova tentativa do mesmo item sobrescrever esta entrada
+    com dados atualizados — seguro, sem duplicar nem perder o registro.
+    """
+    entry = DeadLetterEntry(
+        uuid=item.uuid,
+        board=board_id,
+        id=item.id,
+        identifier=item.identifier,
+        event=item.event,
+        category=category,
+        reason=sanitize_reason(str(exc)),
+        attempts=item.attempts,
+        isolated_at=ChangeItem.now(),
+        next_step=_NEXT_STEP[category],
+    )
+    DeadLetterQueue().add(entry)
 
 
 def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None):
@@ -481,8 +859,9 @@ def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: C
     column = issue_data["column"]
 
     created = board_obj.create_issue(board_id, title, body, column)
-    log.trace("Sync", f"[{board_id}] create-up '{title}' -> #{created.id}",
+    log.info("Sync", f"[{board_id}] create-up '{title}' -> #{created.id}",
              issue_id=created.id, column=column)
+    cmds = sanitize_relations(created.id, cmds)
 
     # Aplicar comandos (labels, relações, etc). Create parte de estado vazio:
     # known=_empty_state() garante que os deltas 'added' reflitam tudo que foi
@@ -560,7 +939,7 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     # Addcomment vazio
     files["addcomment"].write_text("", encoding="utf-8")
 
-    log.trace("Sync", f"[{board_id}] create-down #{item.id} '{issue.title}' -> {column}",
+    log.info("Sync", f"[{board_id}] create-down #{item.id} '{issue.title}' -> {column}",
              issue_id=item.id, column=column)
 
     # Atualizar snapshot
@@ -601,6 +980,7 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     raw_body = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
     # Separar comandos do body real
     body, cmds = split_body(raw_body)
+    cmds = sanitize_relations(item.id, cmds)
 
     # Remédio 1: se a issue está sendo arquivada (comando /archive no body OU
     # coluna de destino com on_in:[archive]), remove TODOS os bloqueios antes
@@ -657,7 +1037,7 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     history_file.write_text(_format_history(comments), encoding="utf-8")
 
     col_label = f"{old_col} -> {current_col}" if old_col and old_col != current_col else f"-> {current_col}"
-    log.trace("Sync", f"[{board_id}] change-up #{item.id} {col_label}",
+    log.info("Sync", f"[{board_id}] change-up #{item.id} {col_label}",
              issue_id=item.id, column=current_col, from_column=old_col)
 
     # Atualizar snapshot
@@ -731,7 +1111,7 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     ac_file = body_path.parent / f"{slug}-addcomment.md"
     ac_file.write_text("", encoding="utf-8")
 
-    log.trace("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
+    log.info("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
              issue_id=item.id, column=current_col)
 
     # Gatilho de par recíproco: calcula deltas de deps ANTES de sobrescrever o
@@ -816,7 +1196,7 @@ def _apply_delete_up(board_id: str, item: ChangeItem, board_obj: Board,
     snap.issues = [i for i in snap.issues if str(i.get("id")) != str(item.id)]
     snap.save()
 
-    log.trace("Sync", f"[{board_id}] delete-up #{item.id} - issue fechada",
+    log.info("Sync", f"[{board_id}] delete-up #{item.id} - issue fechada",
              issue_id=item.id)
 
 
@@ -843,8 +1223,66 @@ def _apply_delete_down(board_id: str, item: ChangeItem, board_obj: Board,
     snap.issues = [i for i in snap.issues if str(i.get("id")) != str(item.id)]
     snap.save()
 
-    log.trace("Sync", f"[{board_id}] delete-down #{item.id} - arquivos removidos",
+    log.info("Sync", f"[{board_id}] delete-down #{item.id} - arquivos removidos",
              issue_id=item.id)
+
+
+def migrate_agent_level_labels(board_id: str, queue: ChangeQueue) -> int:
+    """Migra issues abertas com /agent_level no @--- para label agent-level-<nível>.
+
+    Para cada issue rastreada no snapshot que:
+    - não possui nenhuma label agent-level-* no estado conhecido, E
+    - possui /agent_level no bloco @--- do arquivo body local
+
+    … enfileira um change-up para que o ciclo de sync-up grave a label correta
+    no board via all_labels(). A reescrita do body não é necessária: o
+    serialize_commands já emite /agent_level, e o all_labels() já emite a label
+    correspondente — basta que o item suba.
+
+    Retorna o número de issues migradas (enfileiradas).
+    """
+    snap = Snapshot(board_id).load()
+    migrated = 0
+
+    for issue_data in snap.issues:
+        issue_id = str(issue_data.get("id") or "")
+        if not issue_id:
+            continue
+        if issue_data.get("status", "ok") != "ok":
+            continue
+
+        # Verifica se o estado conhecido já tem label agent-level-*
+        known_labels = issue_data.get("labels") or []
+        has_level_label = any(
+            str(lbl).startswith(AGENT_LEVEL_PREFIX) for lbl in known_labels
+        )
+        if has_level_label:
+            continue  # já migrada ou nível já presente no board
+
+        # Verifica se o body local possui /agent_level no bloco @---
+        body_path = Path(issue_data.get("body_path", ""))
+        if not body_path.exists():
+            continue
+
+        content = body_path.read_text(encoding="utf-8")
+        # Remove a primeira linha (título)
+        raw_body = content.split("\n", 1)[1] if "\n" in content else ""
+        _, cmds = split_body(raw_body)
+
+        if not cmds.agent_level:
+            continue  # sem /agent_level no body — nada a migrar
+
+        # Enfileira change-up para que o sync-up grave a label no board
+        if queue.add(ChangeItem.of(SyncEvent.CHANGE_UP, id=issue_id, board=board_id)):
+            issue_data["status"] = SyncEvent.CHANGE_UP.value
+            log.info("Migrate", f"[{board_id}] #{issue_id} agent_level='{cmds.agent_level}' "
+                     f"→ enfileirado change-up para gravar label agent-level-{cmds.agent_level}")
+            migrated += 1
+
+    if migrated:
+        snap.save()
+
+    return migrated
 
 
 def _format_history(comments: list[dict]) -> str:

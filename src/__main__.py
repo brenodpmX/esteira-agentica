@@ -1,11 +1,14 @@
 from src.core.log import log
 from src.core.config import check_config as validate_config, ConfigError, SSH_KEY_ENV
+from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
-from src.core.snapshot import Snapshot
+from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
 from src.core.change_queue import ChangeQueue, QUEUE_FILE
-from src.core.sync import sync_remote, detect_local_changes, apply_changes
+from src.core.sync import sync_remote, detect_local_changes, apply_changes, migrate_agent_level_labels
 from src.core.version import VERSION
+from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
 from src.adapters.github_board import GitHubBoardAdapter
+from src.adapters.kiro_cli_agent import KiroCliAgent
 from pathlib import Path
 from datetime import datetime, timedelta
 import subprocess
@@ -24,9 +27,8 @@ class _Shutdown(Exception):
     """Sinaliza SIGTERM recebido: encerra o loop de forma limpa.
 
     Erguida a partir do handler de SIGTERM para interromper o time.sleep do
-    loop ocioso (pela PEP 475 o sleep é reiniciado se o handler retorna sem
-    levantar exceção), garantindo shutdown rápido em vez de esperar o grace
-    period do Docker estourar e escalar para SIGKILL/137."""
+    loop ocioso (PEP 475 só reergue o sleep se o handler não levanta exceção),
+    garantindo shutdown rápido em vez de esperar o grace period estourar."""
     pass
 
 
@@ -52,11 +54,32 @@ def check_config():
         raise SystemExit(1)
 
 
+def _normalize_key_bytes(data: bytes) -> bytes:
+    """Normaliza o material da chave privada para o formato que o OpenSSH aceita.
+
+    O erro "Load key ...: error in libcrypto" ocorre quando o parser do OpenSSH
+    rejeita o arquivo da chave por questões de formatação — mesmo quando o
+    material da chave é válido. As duas causas mais comuns são:
+
+      1. Ausência de quebra de linha final após a linha "-----END ... KEY-----".
+      2. Terminadores de linha CRLF (\\r\\n) herdados de edição/transporte em
+         ambientes Windows.
+
+    Cópia byte-a-byte (read_bytes/write_bytes) preserva esses defeitos vindos da
+    origem (secret montado, copy/paste, etc.). Aqui normalizamos: removemos os
+    \\r e garantimos exatamente uma quebra de linha final.
+    """
+    normalized = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if normalized and not normalized.endswith(b"\n"):
+        normalized += b"\n"
+    return normalized
+
+
 def _setup_ssh():
     SSH_DIR.mkdir(mode=0o700, exist_ok=True)
     key_file = SSH_DIR / "id_pipe"
     source_key = Path(os.environ[SSH_KEY_ENV]).expanduser()
-    key_file.write_bytes(source_key.read_bytes())
+    key_file.write_bytes(_normalize_key_bytes(source_key.read_bytes()))
     key_file.chmod(0o600)
     
     # Configura SSH para usar essa chave no github
@@ -73,6 +96,7 @@ def _setup_ssh():
 def startup(config: dict):
     log.info("Startup", "Verificando repositórios")
     _setup_ssh()
+    preflight()
     REPO_DIR.mkdir(exist_ok=True)
 
     # Gerar CONTEXT.md para instruir agentes sobre regras e estrutura do sistema
@@ -127,7 +151,7 @@ def board_full_sync(config: dict):
         try:
             attempt += 1
             if attempt > 1:
-                log.warning("Board", f"Sincronizando boards remotos - tentativa {attempt}")
+                log.info("Board", f"Sincronizando boards remotos - tentativa {attempt}")
             board.sync_boards(config)
             break
         except PenaltyException as e:
@@ -153,6 +177,18 @@ def board_full_sync(config: dict):
     if recovered:
         log.info("Board", f"{recovered} item(ns) recuperado(s) de execução anterior")
 
+    # Migração one-shot: issues com /agent_level no body mas sem label no board.
+    # DEVE ocorrer ANTES de detect_board_changes para garantir que o CHANGE_UP
+    # de migração entre na fila antes de qualquer CHANGE_DOWN da mesma issue.
+    # Assim o sync-up grava a label no board antes do sync-down reescrever o
+    # body — evitando perda silenciosa do agent_level em issues legadas que
+    # foram alteradas remotamente no mesmo ciclo de full sync.
+    total_migrated = 0
+    for board_id in board.board_ids(config):
+        total_migrated += migrate_agent_level_labels(board_id, queue)
+    if total_migrated:
+        log.info("Board", f"Migração agent_level: {total_migrated} issue(s) enfileirada(s) para gravar label")
+
     # Detectar mudanças remotas
     log.info("Board", "Detectando mudanças remotas")
     total = 0
@@ -162,15 +198,13 @@ def board_full_sync(config: dict):
         while True:
             try:
                 attempt += 1
-                if attempt > 1:
-                    log.warning("Board", f"Analisando board '{board_id}' - tentativa {attempt}")
-                else:
-                    log.info("Board", f"Analisando board '{board_id}'")
+                log.info("Board", f"Analisando board '{board_id}'"
+                         + (f" - tentativa {attempt}" if attempt > 1 else ""))
                 total += board.detect_board_changes(board_id, snap, queue)
                 break
             except PenaltyException as e:
                 back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
-                log.warning("Board", f"Rate limit em '{board_id}' - retorna às {back_at}")
+                log.warning("Board", f"Rate limit em '{board_id}' - retoma às {back_at}")
                 time.sleep(e.wait_seconds)
     log.info("Board", f"{total} mudança(s) remota(s) adicionada(s) à fila")
 
@@ -179,65 +213,28 @@ def get_board_ids(config: dict) -> list[str]:
     """Retorna lista de board_ids ordenados por prioridade (menor = mais prioritário)."""
     boards_cfg = config["boards"]
     return sorted(
-        (bid for bid, cfg in boards_cfg.items()
-         if bid != "platform" and isinstance(cfg, dict)),
+        (bid for bid in boards_cfg if bid != "platform"),
         key=lambda bid: boards_cfg[bid].get("priority", 999),
     )
 
 
-def detect_local_all(config: dict) -> bool:
-    """Descoberta local (up) em TODOS os boards a cada ciclo.
+def sync_board(board_id: str, config: dict) -> bool:
+    """Descobre mudanças (remotas e locais) de um único board.
 
-    Os efeitos colaterais de um agente são cross-board: atuando em um board
-    ele pode criar/editar/remover arquivos em outro (ex.: abrir uma issue
-    bloqueante em outro board). Se a descoberta local ficasse presa ao board
-    da rotação priorizada, esses artefatos só seriam vistos quando a rotação
-    chegasse lá — e boards de baixa prioridade podem ser inanidos enquanto os
-    de cima têm atividade, atrasando indefinidamente a criação (inclusive de
-    bloqueios). Por isso a descoberta local é global e desacoplada da rotação
-    usada para o sync remoto e a execução.
-
-    Retorna True se alguma mudança local foi enfileirada.
-    """
-    queue = ChangeQueue()
-    before = queue.size()
-    for board_id in get_board_ids(config):
-        detect_local_changes(board_id, queue)
-    return queue.size() > before
-
-
-def sync_remote_board(board_id: str) -> bool:
-    """Descoberta remota (down) de um único board (rotação priorizada).
-
-    O sync remoto consome API do provider (sujeito a rate limit), então
-    permanece por board, na ordem de prioridade da rotação — diferente da
-    descoberta local, que é global por ser barata (varredura de filesystem).
-
-    Retorna True se houve mudança remota enfileirada para este board.
+    Retorna True se houve qualquer mudança detectada para este board.
     Penalty não propaga — apenas interrompe e retorna o que já descobriu.
     """
     global board
     queue = ChangeQueue()
+
     try:
         sync_remote(board_id, board, queue)
     except PenaltyException:
         log.warning("Sync", f"[{board_id}] Penalty no sync remoto")
 
+    detect_local_changes(board_id, queue)
+
     return queue.has_board(board_id)
-
-
-def sync_board(board_id: str, config: dict) -> bool:
-    """Descoberta combinada de um board: local global (up) + remota (down).
-
-    Mantida por compatibilidade. O loop principal usa `detect_local_all` +
-    `sync_remote_board` diretamente para desacoplar as duas fases.
-
-    Retorna True se houve qualquer mudança detectada (up global ou down deste
-    board).
-    """
-    local = detect_local_all(config)
-    remote = sync_remote_board(board_id)
-    return local or remote
 
 
 def process_queue(config: dict):
@@ -261,67 +258,6 @@ def process_queue(config: dict):
 AUTO_ADVANCED = object()
 
 
-# Cache de cooldown de reexecução.
-#
-# Mapeia (board_id, col_id, issue_id) -> timestamp (time.time()) da última vez
-# que a issue foi entregue para execução pelo keep_task. Enquanto não decorrer
-# boards.rerun_cooldown segundos, a mesma issue (no mesmo board E coluna) é
-# pulada e o keep_task busca a próxima elegível. Passado o período, a entrada é
-# removida e a issue volta a ser elegível.
-#
-# A chave inclui a coluna de propósito: se a issue anda no board, o par
-# (board, id) se mantém mas col_id muda, gerando uma chave nova — portanto a
-# issue fica imediatamente elegível na nova coluna, sem esperar o cooldown.
-_rerun_cache: dict[tuple[str, str, str], float] = {}
-
-
-def _cooldown_seconds(config: dict) -> int:
-    """Lê boards.rerun_cooldown (segundos). 0/ausente = desabilitado."""
-    boards_cfg = config.get("boards", {})
-    return boards_cfg.get("rerun_cooldown", 0) or 0
-
-
-def _in_rerun_cooldown(board_id: str, col_id: str, issue_id, cooldown: int) -> bool:
-    """True se a issue foi executada há menos de `cooldown` segundos.
-
-    Efeito colateral: remove a entrada expirada (retornando False) para manter
-    o cache enxuto e liberar a issue para reexecução.
-    """
-    if cooldown <= 0:
-        return False
-    key = (board_id, col_id, str(issue_id))
-    ts = _rerun_cache.get(key)
-    if ts is None:
-        return False
-    if (time.time() - ts) >= cooldown:
-        del _rerun_cache[key]
-        return False
-    return True
-
-
-def _mark_rerun(board_id: str, col_id: str, issue_id) -> None:
-    """Registra que a issue foi entregue para execução agora."""
-    _rerun_cache[(board_id, col_id, str(issue_id))] = time.time()
-
-
-def _purge_expired_rerun(cooldown: int) -> None:
-    """Remove TODAS as entradas expiradas do cache de cooldown.
-
-    Chamado a cada acionamento do keep_task. Sem isso, entradas de issues que
-    saíram do board (fechadas/arquivadas/removidas) nunca seriam reavaliadas e
-    permaneceriam no cache indefinidamente, fazendo-o crescer sem limite.
-
-    Com cooldown desabilitado (<= 0) o cache é esvaziado por completo.
-    """
-    if cooldown <= 0:
-        _rerun_cache.clear()
-        return
-    now = time.time()
-    expired = [k for k, ts in _rerun_cache.items() if (now - ts) >= cooldown]
-    for k in expired:
-        del _rerun_cache[k]
-
-
 def keep_task(board_id: str, config: dict) -> dict | object | None:
     """Seleciona a próxima tarefa elegível no board indicado.
 
@@ -342,10 +278,6 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
     """
     boards_cfg = config["boards"]
     board_cfg = boards_cfg[board_id]
-    cooldown = _cooldown_seconds(config)
-    # A cada acionamento, limpa entradas expiradas para o cache não crescer
-    # indefinidamente (issues que saíram do board nunca seriam reavaliadas).
-    _purge_expired_rerun(cooldown)
 
     snap = Snapshot(board_id).load()
     columns = board_cfg.get("columns", {})
@@ -389,13 +321,8 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
             continue
         if _is_blocked(issue):
             continue
-        # Cooldown: pula a issue se foi reexecutada há pouco (mesmo board+coluna).
-        if _in_rerun_cooldown(board_id, col_id, issue["id"], cooldown):
-            continue
 
         log.info("KeepTask", f"[{board_id}] #{issue['id']} selecionada em '{col_id}'")
-        if cooldown > 0:
-            _mark_rerun(board_id, col_id, issue["id"])
         return {
             "board_id": board_id,
             "issue": issue,
@@ -471,10 +398,6 @@ def call_agent(config: dict, task: dict | None):
     col = task["column"]
     issue = task["issue"]
 
-    from src.core.agent import (AgentParams, build_prompt,
-                                resolve_agent_id, resolve_repo_id,
-                                resolve_work_dir)
-    from src.adapters.kiro_cli_agent import KiroCliAgent
     from src.core.config import CONTEXTS_DIR
 
     agent_id = resolve_agent_id(col, issue)
@@ -489,7 +412,7 @@ def call_agent(config: dict, task: dict | None):
             break
 
     if not platform:
-        log.trace("Agent", f"Agente '{agent_id}' não encontrado na config")
+        log.warning("Agent", f"Agente '{agent_id}' não encontrado na config")
         return
 
     # Resolução de model (definido na config do agente)
@@ -501,12 +424,12 @@ def call_agent(config: dict, task: dict | None):
 
     prompt = build_prompt(config, task)
 
-    # Extrair título da issue do body_path
+    # Extrair título da issue (primeira linha não-vazia do body, sem prefixo '# ')
+    title = ""
     body_path = Path(issue.get("body_path", ""))
-    issue_title = ""
     if body_path.exists():
         first_line = body_path.read_text(encoding="utf-8").split("\n", 1)[0]
-        issue_title = first_line.lstrip("# ").strip()
+        title = first_line.lstrip("# ").strip()
 
     params = AgentParams(
         platform=platform,
@@ -519,12 +442,16 @@ def call_agent(config: dict, task: dict | None):
         prompt=prompt,
         work_dir=str(work_dir),
         repo_id=repo_id,
-        issue_title=issue_title,
         col_name=col.get("name", col_id),
+        title=title,
     )
 
     adapter = KiroCliAgent()
-    adapter.execute(params)
+
+    from src.core.agent_guard import AgentGuard
+    with AgentGuard(board_id, col_id):
+        with SnapshotGuard(board_id):
+            adapter.execute(params)
 
 
 def sleep_time(config: dict):
@@ -536,12 +463,11 @@ def sleep_time(config: dict):
 
 
 _BANNER = r"""
-            ___     ___    _____    ___     ___     ___     ___             ___     ___     ___    _  _    _____    ___     ___     ___   
-    o O O  | __|   / __|  |_   _|  | __|   |_ _|   | _ \   /   \    ___    /   \   / __|   | __|  | \| |  |_   _|  |_ _|   / __|   /   \  
-   o       | _|    \__ \    | |    | _|     | |    |   /   | - |   |___|   | - |  | (_ |   | _|   | .` |    | |     | |   | (__    | - |  
-  TS__[O]  |___|   |___/   _|_|_   |___|   |___|   |_|_\   |_|_|   _____   |_|_|   \___|   |___|  |_|\_|   _|_|_   |___|   \___|   |_|_|  
- {======|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|     |_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****| 
-./o--000´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´ 
+ _____ ____ _____ _____ ___ ____      _
+| ____/ ___|_   _| ____|_ _|  _ \   / \
+|  _| \___ \ | | |  _|  | || |_) | / _ \
+| |___ ___) || | | |___ | ||  _ < / ___ \
+|_____|____/ |_| |_____|___|_| \_/_/   \_\
 """
 
 
@@ -580,10 +506,9 @@ def main():
     log.info("Pipe", "Esteira agêntica iniciada")
 
     # Handler de SIGTERM: docker compose down/stop envia SIGTERM. Como o Python
-    # roda como PID 1 (ou sob tini via init:true), sem handler instalado o sinal
-    # é ignorado e o container morre sujo (SIGKILL/137). Aqui encerramos o loop
-    # de forma limpa, simétrico ao tratamento de SIGINT (KeyboardInterrupt).
-    # Ver issue #70.
+    # roda como PID 1 (ou sob tini via init:true), sem handler o sinal é
+    # ignorado/mata sujo (SIGKILL/137). Aqui encerramos o loop de forma limpa,
+    # simétrico ao tratamento de SIGINT (KeyboardInterrupt). Ver issue #70.
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     running = True
@@ -596,13 +521,8 @@ def main():
 
             current_board = board_ids[index]
 
-            # Fase 1: Descoberta
-            # 1a. Local (up) em TODOS os boards — efeitos colaterais de agentes
-            #     são cross-board (ex.: issue bloqueante criada em outro board).
-            local_changes = detect_local_all(config)
-            # 1b. Remota (down) apenas no board atual da rotação priorizada.
-            remote_changes = sync_remote_board(current_board)
-            had_changes = local_changes or remote_changes
+            # Fase 1: Descoberta no board atual
+            had_changes = sync_board(current_board, config)
 
             # Fase 2: Processamento global da fila
             process_queue(config)
@@ -618,10 +538,10 @@ def main():
 
             if task is AUTO_ADVANCED:
                 # Auto-advance local: mantém o board atual (não avança nem
-                # reinicia em 0). A próxima iteração força a descoberta deste
-                # board (detect_local_all + sync_remote_board + process_queue),
-                # propagando o movimento ao board e reconciliando o estado —
-                # deixando-o realmente pronto antes de selecionar a tarefa.
+                # reinicia em 0). A próxima iteração força o sync deste board
+                # (sync_board + process_queue), propagando o movimento ao
+                # board e reconciliando o estado — deixando-o realmente pronto
+                # antes de selecionar a tarefa avançada.
                 continue
             elif task:
                 call_agent(config, task)
@@ -644,6 +564,13 @@ def main():
         except _Shutdown:
             log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
             running = False
+        except SnapshotIntegrityError as e:
+            log.error(
+                "Pipe",
+                f"[{e.board_id}] Falha fatal ao restaurar integridade do snapshot "
+                f"- encerrando o processo: {e.cause}",
+            )
+            raise
         except Exception as e:
             log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
             time.sleep(config.get("sleep", 60))
