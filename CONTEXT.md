@@ -628,3 +628,96 @@ repassar sinais e handler de `SIGTERM` para shutdown limpo. O serviço usa
 `restart: unless-stopped`. A arquitetura implementada, limitações e evidências
 de homologação estão em `doc/architecture/rodar-no-docker/arquitetura.md`; o
 guia operacional está no `README.md`.
+
+
+## Fluxo de Integração: Feature → Epic → Main (Débito #165)
+
+**Correção em: v1.8.0 — #165. Estado: Implementado.**
+
+### Problema Original
+
+O fluxo de integração de branches estava incompleto:
+- Features (`feature/*`) eram mergeadas em `epic` via PR.
+- PRs eram marcadas como "closed" no board quando o merge em `epic` era feito.
+- A branch `epic` **nunca era mergeada em `main`**, deixando funcionalidade completada "offline".
+
+Consequências:
+- Testes e planejamento subsequentes operavam sobre `main` que **não tinha** o código "fechado".
+- Dependências entre tasks (Planning Poker #148 depends-on #146 e #147) partiam de premissa falsa: código estava apenas em `epic`, não em `main`.
+- Risco composto: cada PR adicional em `epic` aumentava o diff a resolver.
+
+### Cenário
+
+Antes do débito:
+```
+* HEAD (main)     — 45 commits atrás de origin/epic
+|
+o Commit X        — último antes de divergência
+|\
+| \--- epic (121 commits à frente)
+|       |-- Merge #159 (feature146)  ← #146 fechada aqui
+|       |-- Merge #160 (feature147)  ← #147 fechada aqui
+|       |-- ...mais 40 merges
+|       └-- HEAD epic
+```
+
+Validação:
+```bash
+git merge-base --is-ancestor 498674b main  # NOT ancestor ✗
+git merge-base --is-ancestor 498674b epic  # is ancestor ✓
+git rev-list --count main..epic            # 121 commits
+```
+
+### Solução
+
+1. **Merge de `epic` em `main` (#165)**
+   - Resolvidos 8 arquivos em conflito (Dockerfile, docker-compose.yml, .env.example, etc)
+   - Todos os 121 commits de `epic` agora são ancestors de `main`.
+   - Testes de versionamento atualizados (eram históricos para v1.6.0, agora adaptados para v1.8.0).
+
+2. **Fluxo Corrigido (permanente)**
+   - Feature branches (`feature/*`) continuam apontando para origem definida em `pipe.yml`.
+   - Padrão esperado (conforme `README.md`):
+     - Para flows de integração simples: `feature/* → main` direto (gitevents: `create-merge`).
+     - Para flows multi-tier (se necessário): `feature/* → epic → main` (gitevents: `create-merge` em ambos os estágios, com base diferente).
+   - **Regra crítica**: Toda branch de integração intermediária (ex.: `epic`) deve ser **explicitamente mergeada em `main`** antes de ser considerada completa.
+
+3. **Salvaguardas Adicionadas**
+   - Validação em `config.py` pode ser estendida (não implementada neste débito, foi sugerido pela Camila como futuro):
+     - Verificar que toda chain `flow → ... → base` termina em `main`.
+     - Previne novos flows que não alcançam `main`.
+
+### Validação Pós-Merge
+
+```bash
+# Critério 1: Ancestralidade
+git merge-base --is-ancestor 498674b main  # is ancestor ✓
+git merge-base --is-ancestor 9572409 main  # is ancestor ✓
+
+# Critério 2: Sem divergência material de código
+git rev-list --count main..epic            # 0 (idênticos)
+git diff main epic -- src/                 # sem diffs
+
+# Critério 3: Testes passam
+python -m pytest tests/ -q                 # 981 passed (código)
+
+# Critério 4: Documentação disponível
+grep -i "epic\|fluxo de branch" CONTEXT.md  # Seção presente
+```
+
+### Impacto
+
+- Issues #146 e #147 agora têm seus commits em `main` (issue #148 pode retomar Planning Poker com premissa verdadeira).
+- Novo desenvolvimento não repete o padrão: fluxos devem ser configurados em `pipe.yml` com `merge` apontando para `main` (ou para branch intermediária que eventualmente alcança `main`).
+- Histórico preservado: todos os 121 commits de `epic` estão agora em `main` com attributions e autores originais.
+
+### Referências
+
+- **Débito**: Issue #165 (este documento)
+- **Issues Bloqueadas**: #148 (Planning Poker regressão)
+- **Pull Requests Resolvidos**: 44 PRs mergeadas de `epic` agora em `main`
+- **Commits Críticos**:
+  - `498674b` — Resolução determinística do body da issue (#146)
+  - `9572409` — Detecção de arquivos órfãos (#147)
+  - `c27f813` — Merge final (débito #165)
+- **Arquivos Alterados**: 8 em conflito (Dockerfile, docker-compose.yml, etc), +20k/-3k linhas
