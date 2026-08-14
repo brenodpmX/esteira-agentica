@@ -1,0 +1,26 @@
+# compose.dev.yml — override para ESTADO EM BIND MOUNT (acesso pelo host)
+#
+# Uso: docker compose -f docker-compose.yml -f compose.dev.yml up
+#   (ou defina COMPOSE_FILE=docker-compose.yml:compose.dev.yml no .env para que
+#    o `docker compose up` normal já use os dois arquivos)
+#
+# Substitui os named volumes de estado (US-03) por bind mounts em diretórios do
+# host, configuráveis via .env (US-04). Assim os logs e o estado ficam
+# acessíveis diretamente no host — e, como o container roda como uid 1000, os
+# arquivos criados pertencem ao usuário de mesmo uid no host (não ao root),
+# ficando fáceis de inspecionar e remover.
+#
+# Os diretórios do host precisam existir com posse do seu usuário ANTES do `up`
+# (o Makefile os cria; ou rode `mkdir -p .pipe repo logs`). Se não existirem, o
+# Docker os cria como root, reintroduzindo o problema de permissão.
+
+services:
+  pipe:
+    # init: true NÃO é redeclarado — é herdado do docker-compose.yml base
+    # (campo escalar preservado no merge), mantendo tini/SIGTERM ativos.
+    # Merge de volumes por destino (/app/...): estes bind mounts substituem os
+    # named volumes de mesmo destino definidos no compose base.
+    volumes:
+      - ${PIPE_STATE_DIR:-./.pipe}:/app/.pipe
+      - ${PIPE_REPO_DIR:-./repo}:/app/repo
+      - ${PIPE_LOGS_DIR:-./logs}:/app/logs

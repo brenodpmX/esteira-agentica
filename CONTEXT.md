@@ -17,6 +17,56 @@ A versão é exibida no log ao iniciar a esteira.
 
 ## Changelog
 
+### compose.dev.yml — estado/logs em bind mount no host (v1.8.3 — US-04)
+
+Cria o override `compose.dev.yml` (previsto na US-04, até então inexistente — os
+testes ficavam em `skip`). Substitui os named volumes de estado por bind mounts
+configuráveis, dando acesso a logs/estado pelo host. Como o container roda como
+uid 1000, os arquivos criados no host pertencem ao usuário de mesmo uid (não ao
+root), ficando fáceis de inspecionar e apagar.
+
+- Bump: `1.8.2` → `1.8.3` (PATCH — adição de override de dev, sem breaking change
+  no compose base de produção)
+- `compose.dev.yml`: `${PIPE_STATE_DIR:-./.pipe}:/app/.pipe`,
+  `${PIPE_REPO_DIR:-./repo}:/app/repo`, `${PIPE_LOGS_DIR:-./logs}:/app/logs`;
+  merge por destino substitui os named volumes do base; `init: true` herdado.
+- Uso: `docker compose -f docker-compose.yml -f compose.dev.yml up` ou
+  `COMPOSE_FILE=docker-compose.yml:compose.dev.yml` no `.env`.
+- **Operação:** os diretórios do host (`.pipe`, `repo`, `logs`) devem existir com
+  posse do usuário antes do `up` — se não existirem, o Docker os cria como root.
+- Testes US-04 (`TestBindMountsEstado`, `TestDefaultsInline`) saíram do `skip`;
+  `tests/test_docker_compose.py` passa 107/107.
+
+### Fix: posse dos named volumes com usuário não-root (v1.8.2)
+
+Correção de `PermissionError` no arranque em Docker: o container roda como `pipe`
+(uid 1000), mas os mountpoints dos named volumes (`/app/logs`, `/app/.pipe`,
+`/app/repo`, `/home/pipe/.kiro`) não existiam na imagem — o Docker os criava como
+`root`, impedindo a escrita (ex.: `logs/<data>.json`).
+
+- Bump: `1.8.1` → `1.8.2` (PATCH — correção de bug)
+- `Dockerfile`: pré-cria esses diretórios como `pipe` (`mkdir -p` após `USER pipe`),
+  para que cada volume — vazio na primeira criação — herde a posse `pipe:pipe`.
+- **Operação:** volumes já criados com posse `root` precisam ser recriados
+  (`docker compose down -v`) para a correção surtir efeito.
+
+### Correções: get_board_ids + build Docker canônico (v1.8.1)
+
+Bump PATCH consolidando correção de bug de arranque e ajustes no build Docker.
+
+- Bump: `1.8.0` → `1.8.1` (PATCH — correção de bug + ajustes de build)
+- **Fix `get_board_ids`** (`src/__main__.py`): passou a ignorar chaves escalares
+  dentro de `boards` (ex.: `rerun_cooldown`) via `isinstance(cfg, dict)`,
+  corrigindo `AttributeError: 'int' object has no attribute 'get'` no arranque.
+  Alinha o comportamento com `board.board_ids` e a validação de `config.py`.
+- **`docker-compose.yml`**: `build` na forma longa com `build.secrets: [ssh_key]`,
+  para que `docker compose build` injete a chave SSH como secret de build (usado
+  pelo `git clone` da última camada do Dockerfile). Alinha com o runbook.
+- **`docker/versions.env` + `Dockerfile`**: pins atualizados para desbloquear o
+  build — `gh 2.96.0 → 2.97.0` e `kiro-cli 2.13.1 → 2.18.0` (SHA-256 repinado).
+  Build canônico validado ponta a ponta (`docker build` completo). A fragilidade
+  recorrente desses pins ficou registrada em **Pendências**.
+
 ### Preflight de Credenciais (v1.6.0 — US-02)
 
 Adição de comportamento novo: verificação de credenciais antes do startup
@@ -609,25 +659,43 @@ destrutiva (dentro da quota de 5000 pontos/hora).
 ## Pendências
 
 - [ ] Implementar adapter ClickUp
+- [ ] **Fragilidade dos pins Docker — tratar na próxima intervenção nas
+  configurações Docker.** O `gh` é instalado do canal `stable` do repo APT, que
+  serve **apenas a última versão** publicada; e o `kiro-cli` é baixado de uma URL
+  `/latest/` com `KIRO_CLI_SHA256` pinado. Como consequência, a cada novo release
+  upstream o build canônico quebra (`gh=X.Y.Z was not found` ou
+  `sha256 did NOT match`), exigindo bump manual em `docker/versions.env` + o
+  `Dockerfile`. Em 2026-08-14 foram repinados `gh 2.96.0 → 2.97.0` e
+  `kiro-cli 2.13.1 → 2.18.0` só para desbloquear. Avaliar como resolver de forma
+  durável: usar o `gh` empacotado no Debian (`2.46.0-3`, estável no `trixie`) e/ou
+  uma URL versionada do kiro-cli (em vez de `/latest/`), fixando também o digest da
+  imagem base.
 
-## Distribuição Docker (v1.6.0)
+## Distribuição Docker (v1.6.0; build canônico revisado em v1.8.1)
 
-A distribuição homologada usa `Dockerfile` e `docker-compose.yml` na raiz.
-Antes do build, `prepare-docker.sh` copia da instalação local os binários
-`kiro-cli` (launcher) e `kiro-cli-chat` (implementação do subcomando `chat`).
-Ambos são obrigatórios; a ausência do segundo reproduz o erro corrigido na
-issue #120.
+O build canônico usa `Dockerfile` e `docker-compose.yml` na raiz. O `kiro-cli`
+**não** é copiado do host: ele é baixado no build a partir de `KIRO_CLI_URL`
+(versão em `docker/versions.env`, validada por `KIRO_CLI_SHA256`). O `gh` é
+instalado via APT na versão pinada (`GH_VERSION`), e o código-fonte é clonado no
+build (última camada) usando a chave SSH como **secret do BuildKit** — a chave
+nunca persiste em nenhuma camada da imagem. A imagem roda como usuário não-root
+`pipe` (uid 1000). `prepare-docker.sh` é legado do modelo antigo (COPY do host) e
+não faz parte do build canônico.
 
-Credenciais e configuração entram apenas em runtime: `GH_TOKEN` e
-`KIRO_API_KEY` por ambiente, chave SSH e `pipe.yml` por bind, e contextos pelo
-diretório `contexts/`. O estado é persistido nos volumes `pipe_state`,
-`pipe_repos` e `pipe_logs`.
+Credenciais e configuração entram via `.env` (`env_file`): `GH_TOKEN` e
+`KIRO_API_KEY` como variáveis, e a chave SSH como Docker secret alimentado por
+`SSH_KEY_FILE_HOST` (caminho absoluto no host), montada em `/run/secrets/ssh_key`
+— `PIPE_SSH_KEY_FILE` é fixado pelo compose nesse caminho. O `pipe.yml` e os
+`contexts/` entram como bind read-only. O estado é persistido nos volumes
+`pipe-state`, `pipe-repo`, `pipe-logs`, `kiro-home` e `kiro-local`.
 
-A operação usa `PYTHONUNBUFFERED=1` para logs em tempo real, `init: true` para
-repassar sinais e handler de `SIGTERM` para shutdown limpo. O serviço usa
-`restart: unless-stopped`. A arquitetura implementada, limitações e evidências
-de homologação estão em `doc/architecture/rodar-no-docker/arquitetura.md`; o
-guia operacional está no `README.md`.
+`docker compose build` ativa o BuildKit e passa o secret de build via
+`build.secrets` (ver v1.8.1). A operação usa `PYTHONUNBUFFERED=1` para logs em
+tempo real, `init: true` para repassar sinais e handler de `SIGTERM` para
+shutdown limpo. O serviço usa `restart: unless-stopped`. A arquitetura, limitações
+e evidências de homologação estão em
+`doc/architecture/rodar-no-docker/arquitetura.md`; o guia operacional está no
+`README.md` e no `doc/runbook/docker.md`.
 
 
 ## Fluxo de Integração: Feature → Epic → Main (Débito #165)
@@ -646,34 +714,13 @@ Consequências:
 - Dependências entre tasks (Planning Poker #148 depends-on #146 e #147) partiam de premissa falsa: código estava apenas em `epic`, não em `main`.
 - Risco composto: cada PR adicional em `epic` aumentava o diff a resolver.
 
-### Cenário
-
-Antes do débito:
-```
-* HEAD (main)     — 45 commits atrás de origin/epic
-|
-o Commit X        — último antes de divergência
-|\
-| \--- epic (121 commits à frente)
-|       |-- Merge #159 (feature146)  ← #146 fechada aqui
-|       |-- Merge #160 (feature147)  ← #147 fechada aqui
-|       |-- ...mais 40 merges
-|       └-- HEAD epic
-```
-
-Validação:
-```bash
-git merge-base --is-ancestor 498674b main  # NOT ancestor ✗
-git merge-base --is-ancestor 498674b epic  # is ancestor ✓
-git rev-list --count main..epic            # 121 commits
-```
-
 ### Solução
 
 1. **Merge de `epic` em `main` (#165)**
-   - Resolvidos 8 arquivos em conflito (Dockerfile, docker-compose.yml, .env.example, etc)
-   - Todos os 121 commits de `epic` agora são ancestors de `main`.
-   - Testes de versionamento atualizados (eram históricos para v1.6.0, agora adaptados para v1.8.0).
+   - Merge realizado em dois estágios: commit `c27f813` (merge inicial de 133
+     commits com resolução de 8 conflitos conforme arquitetura Docker não-root)
+     e merge complementar dos commits pós-merge (v1.8.1, v1.8.2, v1.8.3, PR #178).
+   - Todos os commits de `epic` são agora ancestrais de `main`.
 
 2. **Fluxo Corrigido (permanente)**
    - Feature branches (`feature/*`) continuam apontando para origem definida em `pipe.yml`.
@@ -682,10 +729,11 @@ git rev-list --count main..epic            # 121 commits
      - Para flows multi-tier (se necessário): `feature/* → epic → main` (gitevents: `create-merge` em ambos os estágios, com base diferente).
    - **Regra crítica**: Toda branch de integração intermediária (ex.: `epic`) deve ser **explicitamente mergeada em `main`** antes de ser considerada completa.
 
-3. **Salvaguardas Adicionadas**
-   - Validação em `config.py` pode ser estendida (não implementada neste débito, foi sugerido pela Camila como futuro):
-     - Verificar que toda chain `flow → ... → base` termina em `main`.
-     - Previne novos flows que não alcançam `main`.
+3. **Salvaguardas**
+   - Validação em `config.py` pode ser estendida (sugestão da Camila Rocha, TC-04):
+     verificar que toda cadeia `flow → ... → base` termina em `main`.
+   - Testes de regressão em `tests/test_epic_merge_ausente_146_147.py` (TC-04)
+     validam que nenhuma cadeia de flow fica "presa" sem alcançar `base`.
 
 ### Validação Pós-Merge
 
@@ -695,29 +743,20 @@ git merge-base --is-ancestor 498674b main  # is ancestor ✓
 git merge-base --is-ancestor 9572409 main  # is ancestor ✓
 
 # Critério 2: Sem divergência material de código
-git rev-list --count main..epic            # 0 (idênticos)
-git diff main epic -- src/                 # sem diffs
+git diff main epic -- src/                 # sem diffs relevantes
 
 # Critério 3: Testes passam
-python -m pytest tests/ -q                 # 981 passed (código)
+python -m pytest tests/ -q
 
 # Critério 4: Documentação disponível
 grep -i "epic\|fluxo de branch" CONTEXT.md  # Seção presente
 ```
 
-### Impacto
-
-- Issues #146 e #147 agora têm seus commits em `main` (issue #148 pode retomar Planning Poker com premissa verdadeira).
-- Novo desenvolvimento não repete o padrão: fluxos devem ser configurados em `pipe.yml` com `merge` apontando para `main` (ou para branch intermediária que eventualmente alcança `main`).
-- Histórico preservado: todos os 121 commits de `epic` estão agora em `main` com attributions e autores originais.
-
 ### Referências
 
-- **Débito**: Issue #165 (este documento)
-- **Issues Bloqueadas**: #148 (Planning Poker regressão)
-- **Pull Requests Resolvidos**: 44 PRs mergeadas de `epic` agora em `main`
+- **Débito**: Issue #165
+- **Issues Desbloqueadas**: #148 (Planning Poker pode retomar)
 - **Commits Críticos**:
   - `498674b` — Resolução determinística do body da issue (#146)
   - `9572409` — Detecção de arquivos órfãos (#147)
-  - `c27f813` — Merge final (débito #165)
-- **Arquivos Alterados**: 8 em conflito (Dockerfile, docker-compose.yml, etc), +20k/-3k linhas
+  - `c27f813` — Merge inicial (débito #165)
