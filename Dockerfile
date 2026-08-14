@@ -36,7 +36,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends gh=2.96.0 \
+    && apt-get install -y --no-install-recommends gh=2.97.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -59,9 +59,9 @@ USER pipe
 # Instalado como usuário pipe → ~/.local/bin (PATH ainda não inclui esse dir)
 # Smoke test usa path absoluto: ENV PATH só é definido na camada seguinte
 # ---------------------------------------------------------------------------
-ARG KIRO_CLI_VERSION=2.13.1
+ARG KIRO_CLI_VERSION=2.18.0
 ARG KIRO_CLI_URL=https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-x86_64-linux.zip
-ARG KIRO_CLI_SHA256=49d712558cc930d3570387ce468887ca0b510ba8b5f08e2f3c7a7a55d44e677f
+ARG KIRO_CLI_SHA256=05c880af3ce6b7c78e1eb23f7a90b4e29536e91989a92e2c7e960a74b80fe63d
 
 RUN curl --proto '=https' --tlsv1.2 -fsSL "$KIRO_CLI_URL" -o /tmp/kirocli.zip \
     && echo "${KIRO_CLI_SHA256}  /tmp/kirocli.zip" | sha256sum -c - \

@@ -3,7 +3,13 @@
 
 services:
   pipe:
-    build: .
+    build:
+      context: .
+      # Passa a chave SSH como secret de BUILD (BuildKit) para o git clone da
+      # Camada 8 do Dockerfile (ADR-06/ADR-07). 'docker compose build' injeta
+      # o secret 'ssh_key' definido abaixo — a chave nunca persiste na imagem.
+      secrets:
+        - ssh_key
     env_file:
       - .env
     environment:

@@ -89,41 +89,24 @@ python -m src
 
 ### Execução via Docker Compose (recomendado para produção)
 
-A distribuição Docker foi homologada na versão 1.6.0. Ela executa o loop da
-esteira sem prompts no container; intervenções de negócio continuam sendo feitas
-no board do GitHub e são capturadas pelo sincronismo seguinte.
+A distribuição Docker executa o loop da esteira sem prompts no container;
+intervenções de negócio continuam sendo feitas no board do GitHub e são
+capturadas pelo sincronismo seguinte. O passo a passo detalhado (verificação de
+saúde e gestão do container) está em
+[`doc/runbook/docker.md`](doc/runbook/docker.md).
 
 **Pré-requisitos no host:**
 - Docker Engine com Docker Compose V2 (`docker compose`);
-- `kiro-cli` instalado por completo no `PATH` — o build copia o launcher e o
-  executável de chat da instalação local;
-- chave SSH registrada no GitHub (por padrão, `~/.ssh/id_ed25519`);
+- chave SSH registrada no GitHub (usada como Docker secret no build e no runtime);
 - token do GitHub com escopos `repo` e `project`;
 - API key do Kiro (plano Pro/Pro+ ou superior), gerada em
   https://app.kiro.dev → **API Keys**.
 
-O login local do `gh` é opcional quando `GH_TOKEN` está preenchido. O diretório
-`~/.config/gh` também é montado por padrão e pode ser alterado por
-`GH_CONFIG_DIR`.
+O `kiro-cli` **não** precisa estar instalado no host: o build o baixa na versão
+pinada em `docker/versions.env` (validada por SHA-256). O login local do `gh`
+também não é necessário — a autenticação usa `GH_TOKEN`.
 
-**1. Preparar o contexto de build:**
-
-```bash
-./prepare-docker.sh
-```
-
-O script copia **dois** binários do host: `kiro-cli` (launcher, ~109 MB) e
-`kiro-cli-chat` (~665 MB), que implementa o subcomando `chat` usado pela
-esteira. Copiar somente o launcher causa
-`No such file or directory (os error 2)` durante a execução do agente
-(issue #120). O script resolve symlinks da instalação, valida os dois arquivos e
-não copia `kiro-cli-term`, que não é usado.
-
-Os binários são ignorados pelo Git e usados apenas no contexto local de build.
-A imagem resultante ocupa aproximadamente 1,7 GB; a maior parte vem do Kiro CLI,
-que não possui distribuição pública instalável pela imagem.
-
-**2. Configurar credenciais e caminhos:**
+**1. Configurar credenciais:**
 
 ```bash
 cp .env.example .env
@@ -134,49 +117,38 @@ Preencha no `.env`:
 ```env
 GH_TOKEN=ghp_seu_token
 KIRO_API_KEY=kiro_sua_api_key
-SSH_KEY_FILE=~/.ssh/id_ed25519       # opcional; este é o padrão
-GH_CONFIG_DIR=~/.config/gh           # opcional; este é o padrão
+SSH_KEY_FILE_HOST=/caminho/absoluto/para/id_ed25519   # alimenta o Docker secret
 ```
 
-Não versione o `.env`. Para rotacionar a API key, atualize `KIRO_API_KEY` e
-recrie o serviço com `docker compose up -d --force-recreate`.
+`PIPE_SSH_KEY_FILE` é fixado pelo compose como `/run/secrets/ssh_key` — não o
+defina no `.env`. Use caminho **absoluto** em `SSH_KEY_FILE_HOST` (o compose não
+expande `~` em `secrets.file`). Não versione o `.env`. Para rotacionar a API key,
+atualize `KIRO_API_KEY` e recrie o serviço com
+`docker compose up -d --force-recreate`.
 
-**3. Criar a configuração da esteira:**
+**2. Criar a configuração da esteira:**
 
 Crie `pipe.yml` na raiz (ele não é versionado) usando o exemplo da seção
 [Configuração](#configuração). Preencha também os contextos requeridos em
 `contexts/<plataforma>/<agente>.md`; o startup cria arquivos ausentes, mas exige
 conteúdo antes de executar os agentes.
 
-**4. Construir e iniciar:**
+**3. Construir e iniciar:**
 
 ```bash
 docker compose build
-docker compose up
-```
-
-Para executar em background e acompanhar os logs:
-
-```bash
 docker compose up -d
 docker compose logs -f
 ```
 
-Os logs são emitidos em tempo real (`PYTHONUNBUFFERED=1`). O Compose usa um
-processo init e a aplicação trata `SIGTERM`, portanto `down`/`stop` encerram o
-loop de forma limpa, sem aguardar `SIGKILL` (issue #70).
+O `docker compose build` ativa o BuildKit e injeta a chave SSH como **secret de
+build** (`build.secrets`) para o `git clone` do código na última camada do
+Dockerfile; a chave nunca persiste em nenhuma camada da imagem. Os logs são
+emitidos em tempo real (`PYTHONUNBUFFERED=1`). O Compose usa um processo init e a
+aplicação trata `SIGTERM`, portanto `down`/`stop` encerram o loop de forma limpa,
+sem aguardar `SIGKILL` (issue #70).
 
-**5. Verificar a execução:**
-
-Uma inicialização saudável registra, nesta ordem geral: validação do
-`pipe.yml`, verificação dos repositórios, sincronização dos boards, início da
-esteira e seleção/execução de tarefas. Para validar os binários embarcados:
-
-```bash
-docker compose run --rm pipe kiro-cli chat --help
-```
-
-**6. Parar ou reiniciar:**
+**4. Parar ou reiniciar:**
 
 ```bash
 docker compose down       # preserva os volumes
@@ -191,25 +163,25 @@ host, mas permanecendo parado após uma interrupção explícita.
 
 | Volume | Caminho no container | Conteúdo |
 |--------|---------------------|----------|
-| `pipe_state` | `/app/.pipe` | Snapshots, fila de mudanças e índice de sessões |
-| `pipe_repos` | `/app/repo` | Clones dos repositórios Git |
-| `pipe_logs` | `/app/logs` | Logs da esteira e das execuções de agentes |
+| `pipe-state` | `/app/.pipe` | Snapshots, fila de mudanças e índice de sessões |
+| `pipe-repo` | `/app/repo` | Clones dos repositórios Git |
+| `pipe-logs` | `/app/logs` | Logs da esteira e das execuções de agentes |
+| `kiro-home` | `/home/pipe/.kiro` | Configuração do kiro-cli |
+| `kiro-local` | `/home/pipe/.local/share/kiro-cli` | Dados locais do kiro-cli |
 
 ### Solução de problemas do Docker
 
 | Sintoma | Verificação / correção |
 |---------|------------------------|
-| `kiro-cli não encontrado no PATH` | Instale o Kiro CLI completo no host e rode novamente `./prepare-docker.sh`. |
-| `kiro-cli-chat não encontrado` | Reinstale/atualize o Kiro CLI; launcher e binário de chat devem estar no mesmo diretório real. |
-| `No such file or directory (os error 2)` ao chamar o agente | Remova `kiro-cli` e `kiro-cli-chat` da raiz, execute `./prepare-docker.sh` e refaça o build sem cache. |
+| Build falha ao instalar `gh` (`Version 'X.Y.Z' for 'gh' was not found`) | O repo APT do `gh` serve apenas a última versão; atualize `GH_VERSION` em `docker/versions.env` e o `Dockerfile`. |
+| Build falha no kiro-cli (`sha256 … did NOT match`) | A URL `/latest/` mudou de build; atualize `KIRO_CLI_VERSION`/`KIRO_CLI_SHA256` em `docker/versions.env` e no `Dockerfile`. |
 | Falha de autenticação do agente | Confirme `KIRO_API_KEY` no `.env` e recrie o serviço. |
 | Falha de API/projeto do GitHub | Confirme os escopos `repo` e `project` de `GH_TOKEN`. |
-| Falha ao clonar via SSH | Confirme `SSH_KEY_FILE`, o arquivo `.pub` correspondente e o cadastro da chave no GitHub. |
+| Falha ao clonar via SSH | Confirme `SSH_KEY_FILE_HOST` (caminho absoluto) e o cadastro da chave no GitHub. |
 | Configuração ou contexto inválido | Consulte `docker compose logs`; o startup encerra com mensagem explícita. |
 
-> A imagem atual é construída para Linux `amd64`, pois o Dockerfile baixa o
-> binário do GitHub CLI para essa arquitetura e copia binários nativos do Kiro
-> CLI instalados no host.
+> A imagem é construída para Linux `amd64`: o Dockerfile baixa o GitHub CLI e o
+> Kiro CLI (binário nativo glibc `x86_64`) para essa arquitetura.
 
 ## Estrutura
 
