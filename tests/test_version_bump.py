@@ -1,15 +1,15 @@
-"""Testes de verificação do bump de versão MINOR — US-02 (preflight).
+"""Testes de verificação do bump de versão — US-02 (preflight) + evolução.
 
 Confirma que:
-1. src/core/version.py contém VERSION semântica válida (após evoluções, agora 1.8.0).
+1. src/core/version.py contém VERSION semântica válida (>= 1.6.0 baseline US-02).
 2. A versão segue o padrão semântico MAJOR.MINOR.PATCH.
 3. O CONTEXT.md contém documentação de changelog da US-02 (preflight).
 4. A versão é exibida no log de inicialização via __main__.
 
 Histórico:
   - Bump original #36: 1.5.0 → 1.6.0 pela adição do preflight (US-02).
-  - Evolução posterior: 1.6.0 → 1.7.0 → 1.8.0 por novas features após merge epic→main (#165).
-  - Atualizado em #165 para refletir versão atual (1.8.0) em vez de milestone histórico (1.6.0).
+  - Evolução posterior: 1.6.0 → 1.7.0 → 1.8.0 → 1.8.1 → 1.8.2 → 1.8.3.
+  - Atualizado em #165 para usar baseline >= 1.6.0 em vez de versão exata fixa.
 """
 
 import sys
@@ -56,38 +56,33 @@ class TestVersionFile:
         )
 
     def test_version_is_target(self):
-        """VERSION deve ser semântica válida (atual: 1.8.0 após merge epic→main #165)."""
+        """VERSION deve ser semântica válida >= 1.6.0 (baseline US-02 preflight)."""
         from src.core.version import VERSION
-        # Nota: Este teste foi originalmente validado em 1.6.0 (US-02 preflight).
-        # Após merge epic→main (#165) e novas features, avançou para 1.8.0.
-        # Validação mantida: versão deve ser semanticamente válida e >= 1.6.0.
         parts = VERSION.split(".")
         assert len(parts) == 3, f"VERSION deve ser MAJOR.MINOR.PATCH, mas é '{VERSION}'"
-        major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+        major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
         assert major >= 1, f"MAJOR deve ser >= 1. Atual: {major}"
         assert minor >= 6, f"MINOR deve ser >= 6 (baseline US-02). Atual: {minor}"
-        assert patch == 0, f"PATCH deve ser 0. Atual: {patch}"
 
     def test_version_minor_incremented(self):
         """MINOR deve ser >= 6 (baseline após US-02 preflight)."""
         from src.core.version import VERSION
-        # Nota: Baseline era MINOR=6 (US-02). Após merge epic→main, pode ser >= 6.
         parts = VERSION.split(".")
         assert len(parts) == 3, f"Formato inválido: '{VERSION}'"
-        major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+        major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
         assert major == 1, f"MAJOR deve ser 1. Atual: {major}"
         assert minor >= 6, (
             f"MINOR deve ser >= 6 (bump de 5 pela adição do preflight em US-02). Atual: {minor}"
         )
 
-    def test_version_patch_zeroed(self):
-        """PATCH deve ser 0 após bump MINOR."""
+    def test_version_patch_valid(self):
+        """PATCH deve ser um inteiro não-negativo."""
         from src.core.version import VERSION
         parts = VERSION.split(".")
         assert len(parts) == 3, f"Formato inválido: '{VERSION}'"
         patch = int(parts[2])
-        assert patch == 0, (
-            f"PATCH deve ser 0 após bump MINOR. Atual: {patch}"
+        assert patch >= 0, (
+            f"PATCH deve ser >= 0. Atual: {patch}"
         )
 
 
@@ -141,11 +136,9 @@ class TestVersionInBootLog:
         import importlib
         import src.core.version as version_mod
         importlib.reload(version_mod)
-        # Nota: Baseline era 1.6.0 (US-02 preflight). Após merge epic→main (#165),
-        # versão evoluiu para 1.8.0. Validação mantém baseline como lower bound.
         parts = version_mod.VERSION.split(".")
         assert len(parts) == 3, f"Formato inválido: '{version_mod.VERSION}'"
-        major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+        major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
         assert major >= 1 and minor >= 6, (
             f"__main__ usará VERSION >= 1.6.0 (baseline US-02). Atual: '{version_mod.VERSION}'"
         )
