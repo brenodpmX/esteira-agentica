@@ -1,8 +1,16 @@
 # Épicos — Rodar no Docker
 
-Status: draft
+Status: entregues e homologados
 Owner: product
-Last updated: 2026-07-02
+Last updated: 2026-08-03
+
+## Resultado final
+
+Os três recortes foram entregues: imagem containerizada, configuração/segredos
+por fora e operação autônoma do runtime. O Compose inclui persistência, restart
+automático, logs em tempo real e shutdown limpo. O Kiro autentica por
+`KIRO_API_KEY`; seus binários `kiro-cli` e `kiro-cli-chat` são copiados da
+instalação do host durante a preparação do build.
 
 ## Inputs
 - Issue #1 "Rodar no Docker"
@@ -33,8 +41,8 @@ via `docker-compose`, sem nada sensível fixo na imagem.
   necessidade do usuário.
 **Fora de escopo:**
 - Escolha da tecnologia de gestão de segredos (decisão de arquitetura).
-- Definição de como o `kiro-cli` autentica em ambiente headless (a validar —
-  ver Não objetivos e dúvidas).
+- Autenticação headless do `kiro-cli` definida por `KIRO_API_KEY`; detalhes e
+  pré-requisitos estão na arquitetura e no guia operacional.
 
 ## Épico: Operação autônoma sem humano
 

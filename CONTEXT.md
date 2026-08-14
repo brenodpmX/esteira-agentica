@@ -17,6 +17,56 @@ A versão é exibida no log ao iniciar a esteira.
 
 ## Changelog
 
+### compose.dev.yml — estado/logs em bind mount no host (v1.8.3 — US-04)
+
+Cria o override `compose.dev.yml` (previsto na US-04, até então inexistente — os
+testes ficavam em `skip`). Substitui os named volumes de estado por bind mounts
+configuráveis, dando acesso a logs/estado pelo host. Como o container roda como
+uid 1000, os arquivos criados no host pertencem ao usuário de mesmo uid (não ao
+root), ficando fáceis de inspecionar e apagar.
+
+- Bump: `1.8.2` → `1.8.3` (PATCH — adição de override de dev, sem breaking change
+  no compose base de produção)
+- `compose.dev.yml`: `${PIPE_STATE_DIR:-./.pipe}:/app/.pipe`,
+  `${PIPE_REPO_DIR:-./repo}:/app/repo`, `${PIPE_LOGS_DIR:-./logs}:/app/logs`;
+  merge por destino substitui os named volumes do base; `init: true` herdado.
+- Uso: `docker compose -f docker-compose.yml -f compose.dev.yml up` ou
+  `COMPOSE_FILE=docker-compose.yml:compose.dev.yml` no `.env`.
+- **Operação:** os diretórios do host (`.pipe`, `repo`, `logs`) devem existir com
+  posse do usuário antes do `up` — se não existirem, o Docker os cria como root.
+- Testes US-04 (`TestBindMountsEstado`, `TestDefaultsInline`) saíram do `skip`;
+  `tests/test_docker_compose.py` passa 107/107.
+
+### Fix: posse dos named volumes com usuário não-root (v1.8.2)
+
+Correção de `PermissionError` no arranque em Docker: o container roda como `pipe`
+(uid 1000), mas os mountpoints dos named volumes (`/app/logs`, `/app/.pipe`,
+`/app/repo`, `/home/pipe/.kiro`) não existiam na imagem — o Docker os criava como
+`root`, impedindo a escrita (ex.: `logs/<data>.json`).
+
+- Bump: `1.8.1` → `1.8.2` (PATCH — correção de bug)
+- `Dockerfile`: pré-cria esses diretórios como `pipe` (`mkdir -p` após `USER pipe`),
+  para que cada volume — vazio na primeira criação — herde a posse `pipe:pipe`.
+- **Operação:** volumes já criados com posse `root` precisam ser recriados
+  (`docker compose down -v`) para a correção surtir efeito.
+
+### Correções: get_board_ids + build Docker canônico (v1.8.1)
+
+Bump PATCH consolidando correção de bug de arranque e ajustes no build Docker.
+
+- Bump: `1.8.0` → `1.8.1` (PATCH — correção de bug + ajustes de build)
+- **Fix `get_board_ids`** (`src/__main__.py`): passou a ignorar chaves escalares
+  dentro de `boards` (ex.: `rerun_cooldown`) via `isinstance(cfg, dict)`,
+  corrigindo `AttributeError: 'int' object has no attribute 'get'` no arranque.
+  Alinha o comportamento com `board.board_ids` e a validação de `config.py`.
+- **`docker-compose.yml`**: `build` na forma longa com `build.secrets: [ssh_key]`,
+  para que `docker compose build` injete a chave SSH como secret de build (usado
+  pelo `git clone` da última camada do Dockerfile). Alinha com o runbook.
+- **`docker/versions.env` + `Dockerfile`**: pins atualizados para desbloquear o
+  build — `gh 2.96.0 → 2.97.0` e `kiro-cli 2.13.1 → 2.18.0` (SHA-256 repinado).
+  Build canônico validado ponta a ponta (`docker build` completo). A fragilidade
+  recorrente desses pins ficou registrada em **Pendências**.
+
 ### Preflight de Credenciais (v1.6.0 — US-02)
 
 Adição de comportamento novo: verificação de credenciais antes do startup
@@ -73,17 +123,25 @@ main()
 │   └── detect_board_changes() por board
 │
 └── while running:
-    ├── board_full_sync()    # Re-executa se mudou o dia (daily full sync)
-    ├── sync_board() → bool  # True se houve movimentação (up ou down)
+    ├── board_full_sync()          # Re-executa se mudou o dia (daily full sync)
+    ├── detect_local_all() → bool  # Descoberta local (up) em TODOS os boards
+    ├── sync_remote_board() → bool # Descoberta remota (down) no board atual
+    ├── process_queue()            # Aplica a fila global de mudanças
     ├── keep_task() → task | AUTO_ADVANCED | None
-    ├── call_agent()         # Resolve adapter, build_prompt, executa
-    └── sleep_time()         # Dorme se !had_changes AND task==None
+    ├── call_agent()               # Resolve adapter, build_prompt, executa
+    └── sleep_time()               # Dorme se !had_changes AND task==None
 ```
+
+> **Descoberta desacoplada:** a detecção local (`up`) é **global** — roda em
+> todos os boards a cada ciclo, pois um agente atuando em um board pode criar
+> artefatos (ex.: issue bloqueante) em outro. O sync remoto (`down`) permanece
+> **por board**, na rotação priorizada, por ser o lado caro (API do provider,
+> sujeito a rate limit). `had_changes = local (qualquer board) OR remoto (board atual)`.
 
 ### sleep_time
 
 Controle de ociosidade condicional:
-- Se `sync_board()` retornou `False` (fila vazia, nenhuma movimentação) **E** `keep_task()` retornou `None` (nenhuma tarefa elegível) → dorme `config["sleep"]` segundos.
+- Se a descoberta não movimentou nada (`detect_local_all()` + `sync_remote_board()` → `False`) **E** `keep_task()` retornou `None` (nenhuma tarefa elegível) → dorme `config["sleep"]` segundos.
 - Se houve qualquer atividade → prossegue imediatamente.
 
 O campo `sleep` é obrigatório no `pipe.yml` (número > 0, em segundos).
@@ -249,7 +307,7 @@ Cobertura em `tests/test_rate_limit_detection.py`.
 - Dentro de cada coluna, seleciona a mais antiga elegível (`created_at` / `updated_at`)
 - Retorno tri-estado:
   - `dict` → tarefa elegível para execução imediata (`call_agent`)
-  - `AUTO_ADVANCED` → nenhuma tarefa pronta, mas uma issue do `todo` foi avançada; o loop **mantém o board atual** e força um novo `sync_board` + `process_queue` (não avança de board nem reinicia em 0)
+  - `AUTO_ADVANCED` → nenhuma tarefa pronta, mas uma issue do `todo` foi avançada; o loop **mantém o board atual** e força uma nova descoberta (`detect_local_all` + `sync_remote_board`) + `process_queue` (não avança de board nem reinicia em 0)
   - `None` → nada a fazer neste board; o loop avança para o próximo
 - Auto-advance: coluna `todo` → próxima coluna; só dispara se nenhuma coluna posterior tiver tarefa elegível. Move os 3 arquivos, atualiza o snapshot (marca `status=change-up`, `body_path` na nova coluna, `column` permanece a de origem) e **enfileira o `change-up`** na ChangeQueue para o sync propagar ao board
 - `parallel: false` → bloqueia auto-advance se issue ativa fora de terminais
@@ -504,6 +562,36 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
+## Post mortem: sub-issues propagadas entre boards (documentação v1.6.1 — #99)
+
+O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o
+vínculo hierárquico é criado, mas esses itens podem nascer sem `Status`. O core
+atual interpreta um `create-down` sem coluna como issue nova e pode materializar
+uma cópia local no board errado.
+
+A correção #98 foi implementada e homologada no commit `01f9e83`, com cinco
+camadas: `remove_from_board` via `deleteProjectV2Item`, limpeza pós-vínculo,
+guard no `create-down`, fallback de coluna e reconciliação de coluna vazia. A
+suíte da hotfix terminou com 208 testes aprovados e 3 ignorados. Contudo, o PR
+#103 foi fechado sem merge em 03/08/2026; o commit não pertence a `main` nem a
+esta branch documental. Logo, a correção não está disponível no runtime desta
+versão e não deve ser anunciada como implantada.
+
+### Regra de acesso à API de GitHub Projects V2
+
+Operações sobre projects, `projectItems`, campos de project e remoção de item
+devem usar GraphQL via `self._gql`. REST via `self._gh` fica restrito às APIs
+tradicionais de issues e pull requests. Um endpoint REST de `projectitems` foi
+inventado em duas tentativas de correção e passou pelos mocks; qualquer exceção
+a essa regra exige validação contra a documentação oficial e teste de integração
+gated.
+
+O registro completo, os fatores de reincidência e as ações preventivas estão em
+`doc/incidente/sub-issues-propagadas/ticket.md`. O conteúdo funcional planejado
+e o estado de integração estão em
+`doc/changes/98-sub-issues-propagadas-entre-boards.md`; a entrega documental
+v1.6.1 está em `doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
+
 ## Robustez e Segurança do Estado (v1.5.0 — Incidente "Issue Fantasma")
 
 Pacote de correções derivado do incidente "Issue Fantasma" (registro completo
@@ -571,3 +659,40 @@ destrutiva (dentro da quota de 5000 pontos/hora).
 ## Pendências
 
 - [ ] Implementar adapter ClickUp
+- [ ] **Fragilidade dos pins Docker — tratar na próxima intervenção nas
+  configurações Docker.** O `gh` é instalado do canal `stable` do repo APT, que
+  serve **apenas a última versão** publicada; e o `kiro-cli` é baixado de uma URL
+  `/latest/` com `KIRO_CLI_SHA256` pinado. Como consequência, a cada novo release
+  upstream o build canônico quebra (`gh=X.Y.Z was not found` ou
+  `sha256 did NOT match`), exigindo bump manual em `docker/versions.env` + o
+  `Dockerfile`. Em 2026-08-14 foram repinados `gh 2.96.0 → 2.97.0` e
+  `kiro-cli 2.13.1 → 2.18.0` só para desbloquear. Avaliar como resolver de forma
+  durável: usar o `gh` empacotado no Debian (`2.46.0-3`, estável no `trixie`) e/ou
+  uma URL versionada do kiro-cli (em vez de `/latest/`), fixando também o digest da
+  imagem base.
+
+## Distribuição Docker (v1.6.0; build canônico revisado em v1.8.1)
+
+O build canônico usa `Dockerfile` e `docker-compose.yml` na raiz. O `kiro-cli`
+**não** é copiado do host: ele é baixado no build a partir de `KIRO_CLI_URL`
+(versão em `docker/versions.env`, validada por `KIRO_CLI_SHA256`). O `gh` é
+instalado via APT na versão pinada (`GH_VERSION`), e o código-fonte é clonado no
+build (última camada) usando a chave SSH como **secret do BuildKit** — a chave
+nunca persiste em nenhuma camada da imagem. A imagem roda como usuário não-root
+`pipe` (uid 1000). `prepare-docker.sh` é legado do modelo antigo (COPY do host) e
+não faz parte do build canônico.
+
+Credenciais e configuração entram via `.env` (`env_file`): `GH_TOKEN` e
+`KIRO_API_KEY` como variáveis, e a chave SSH como Docker secret alimentado por
+`SSH_KEY_FILE_HOST` (caminho absoluto no host), montada em `/run/secrets/ssh_key`
+— `PIPE_SSH_KEY_FILE` é fixado pelo compose nesse caminho. O `pipe.yml` e os
+`contexts/` entram como bind read-only. O estado é persistido nos volumes
+`pipe-state`, `pipe-repo`, `pipe-logs`, `kiro-home` e `kiro-local`.
+
+`docker compose build` ativa o BuildKit e passa o secret de build via
+`build.secrets` (ver v1.8.1). A operação usa `PYTHONUNBUFFERED=1` para logs em
+tempo real, `init: true` para repassar sinais e handler de `SIGTERM` para
+shutdown limpo. O serviço usa `restart: unless-stopped`. A arquitetura, limitações
+e evidências de homologação estão em
+`doc/architecture/rodar-no-docker/arquitetura.md`; o guia operacional está no
+`README.md` e no `doc/runbook/docker.md`.

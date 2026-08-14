@@ -250,6 +250,8 @@ class Board:
         for board_id, board_cfg in config.get("boards", {}).items():
             if board_id == "platform":
                 continue
+            if not isinstance(board_cfg, dict):
+                continue
             columns = list(board_cfg.get("columns", {}).keys())
             boards.append({
                 "id": board_id,
@@ -461,7 +463,10 @@ class Board:
 
     def board_ids(self, config: dict) -> list[str]:
         """Retorna os ids dos boards configurados (ignora 'platform')."""
-        return [bid for bid in config.get("boards", {}) if bid != "platform"]
+        return [
+            bid for bid, cfg in config.get("boards", {}).items()
+            if bid != "platform" and isinstance(cfg, dict)
+        ]
 
     def detect_board_changes(self, board_id: str, snapshot, queue) -> int:
         """Detecta mudanças de um board comparando com o snapshot e registra na fila.

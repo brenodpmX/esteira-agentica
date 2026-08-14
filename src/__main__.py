@@ -213,7 +213,10 @@ def get_board_ids(config: dict) -> list[str]:
     """Retorna lista de board_ids ordenados por prioridade (menor = mais prioritário)."""
     boards_cfg = config["boards"]
     return sorted(
-        (bid for bid in boards_cfg if bid != "platform"),
+        (
+            bid for bid, cfg in boards_cfg.items()
+            if bid != "platform" and isinstance(cfg, dict)
+        ),
         key=lambda bid: boards_cfg[bid].get("priority", 999),
     )
 

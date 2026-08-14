@@ -14,8 +14,10 @@ venv/
 pipe.yml
 .env
 
-# Docker — binário kiro-cli (copiado via prepare-docker.sh, não versionado)
+# Docker — binários kiro-cli (copiados via prepare-docker.sh, não versionados)
+# kiro-cli é o launcher; kiro-cli-chat implementa o subcomando `chat`
 kiro-cli
+kiro-cli-chat
 
 # Variáveis de ambiente (segredos — nunca versionar)
 .env
