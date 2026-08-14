@@ -696,3 +696,67 @@ shutdown limpo. O serviço usa `restart: unless-stopped`. A arquitetura, limita�
 e evidências de homologação estão em
 `doc/architecture/rodar-no-docker/arquitetura.md`; o guia operacional está no
 `README.md` e no `doc/runbook/docker.md`.
+
+
+## Fluxo de Integração: Feature → Epic → Main (Débito #165)
+
+**Correção em: v1.8.0 — #165. Estado: Implementado.**
+
+### Problema Original
+
+O fluxo de integração de branches estava incompleto:
+- Features (`feature/*`) eram mergeadas em `epic` via PR.
+- PRs eram marcadas como "closed" no board quando o merge em `epic` era feito.
+- A branch `epic` **nunca era mergeada em `main`**, deixando funcionalidade completada "offline".
+
+Consequências:
+- Testes e planejamento subsequentes operavam sobre `main` que **não tinha** o código "fechado".
+- Dependências entre tasks (Planning Poker #148 depends-on #146 e #147) partiam de premissa falsa: código estava apenas em `epic`, não em `main`.
+- Risco composto: cada PR adicional em `epic` aumentava o diff a resolver.
+
+### Solução
+
+1. **Merge de `epic` em `main` (#165)**
+   - Merge realizado em dois estágios: commit `c27f813` (merge inicial de 133
+     commits com resolução de 8 conflitos conforme arquitetura Docker não-root)
+     e merge complementar dos commits pós-merge (v1.8.1, v1.8.2, v1.8.3, PR #178).
+   - Todos os commits de `epic` são agora ancestrais de `main`.
+
+2. **Fluxo Corrigido (permanente)**
+   - Feature branches (`feature/*`) continuam apontando para origem definida em `pipe.yml`.
+   - Padrão esperado (conforme `README.md`):
+     - Para flows de integração simples: `feature/* → main` direto (gitevents: `create-merge`).
+     - Para flows multi-tier (se necessário): `feature/* → epic → main` (gitevents: `create-merge` em ambos os estágios, com base diferente).
+   - **Regra crítica**: Toda branch de integração intermediária (ex.: `epic`) deve ser **explicitamente mergeada em `main`** antes de ser considerada completa.
+
+3. **Salvaguardas**
+   - Validação em `config.py` pode ser estendida (sugestão da Camila Rocha, TC-04):
+     verificar que toda cadeia `flow → ... → base` termina em `main`.
+   - Testes de regressão em `tests/test_epic_merge_ausente_146_147.py` (TC-04)
+     validam que nenhuma cadeia de flow fica "presa" sem alcançar `base`.
+
+### Validação Pós-Merge
+
+```bash
+# Critério 1: Ancestralidade
+git merge-base --is-ancestor 498674b main  # is ancestor ✓
+git merge-base --is-ancestor 9572409 main  # is ancestor ✓
+
+# Critério 2: Sem divergência material de código
+git diff main epic -- src/                 # sem diffs relevantes
+
+# Critério 3: Testes passam
+python -m pytest tests/ -q
+
+# Critério 4: Documentação disponível
+grep -i "epic\|fluxo de branch" CONTEXT.md  # Seção presente
+```
+
+### Referências
+
+- **Débito**: Issue #165
+- **Issues Desbloqueadas**: #148 (Planning Poker pode retomar)
+- **Commits Críticos**:
+  - `498674b` — Resolução determinística do body da issue (#146)
+  - `9572409` — Detecção de arquivos órfãos (#147)
+  - `c27f813` — Merge inicial (débito #165)
