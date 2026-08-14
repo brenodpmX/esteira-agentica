@@ -17,6 +17,19 @@ A versão é exibida no log ao iniciar a esteira.
 
 ## Changelog
 
+### Fix: posse dos named volumes com usuário não-root (v1.8.2)
+
+Correção de `PermissionError` no arranque em Docker: o container roda como `pipe`
+(uid 1000), mas os mountpoints dos named volumes (`/app/logs`, `/app/.pipe`,
+`/app/repo`, `/home/pipe/.kiro`) não existiam na imagem — o Docker os criava como
+`root`, impedindo a escrita (ex.: `logs/<data>.json`).
+
+- Bump: `1.8.1` → `1.8.2` (PATCH — correção de bug)
+- `Dockerfile`: pré-cria esses diretórios como `pipe` (`mkdir -p` após `USER pipe`),
+  para que cada volume — vazio na primeira criação — herde a posse `pipe:pipe`.
+- **Operação:** volumes já criados com posse `root` precisam ser recriados
+  (`docker compose down -v`) para a correção surtir efeito.
+
 ### Correções: get_board_ids + build Docker canônico (v1.8.1)
 
 Bump PATCH consolidando correção de bug de arranque e ajustes no build Docker.

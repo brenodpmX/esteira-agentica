@@ -54,6 +54,12 @@ WORKDIR /app
 RUN chown pipe:pipe /app
 USER pipe
 
+# Diretórios montados como named volumes em runtime (ver docker-compose.yml).
+# Criados como 'pipe' para que cada volume — vazio na primeira criação — herde a
+# posse pipe:pipe. Sem isto, o Docker cria o mountpoint como root e o usuário
+# não-root falha ao escrever (PermissionError em logs/, .pipe/, repo/, ~/.kiro).
+RUN mkdir -p /app/.pipe /app/repo /app/logs /home/pipe/.kiro
+
 # ---------------------------------------------------------------------------
 # Camada 6 — kiro-cli (ADR-03)
 # Instalado como usuário pipe → ~/.local/bin (PATH ainda não inclui esse dir)
