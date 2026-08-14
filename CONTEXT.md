@@ -17,6 +17,26 @@ A versão é exibida no log ao iniciar a esteira.
 
 ## Changelog
 
+### compose.dev.yml — estado/logs em bind mount no host (v1.8.3 — US-04)
+
+Cria o override `compose.dev.yml` (previsto na US-04, até então inexistente — os
+testes ficavam em `skip`). Substitui os named volumes de estado por bind mounts
+configuráveis, dando acesso a logs/estado pelo host. Como o container roda como
+uid 1000, os arquivos criados no host pertencem ao usuário de mesmo uid (não ao
+root), ficando fáceis de inspecionar e apagar.
+
+- Bump: `1.8.2` → `1.8.3` (PATCH — adição de override de dev, sem breaking change
+  no compose base de produção)
+- `compose.dev.yml`: `${PIPE_STATE_DIR:-./.pipe}:/app/.pipe`,
+  `${PIPE_REPO_DIR:-./repo}:/app/repo`, `${PIPE_LOGS_DIR:-./logs}:/app/logs`;
+  merge por destino substitui os named volumes do base; `init: true` herdado.
+- Uso: `docker compose -f docker-compose.yml -f compose.dev.yml up` ou
+  `COMPOSE_FILE=docker-compose.yml:compose.dev.yml` no `.env`.
+- **Operação:** os diretórios do host (`.pipe`, `repo`, `logs`) devem existir com
+  posse do usuário antes do `up` — se não existirem, o Docker os cria como root.
+- Testes US-04 (`TestBindMountsEstado`, `TestDefaultsInline`) saíram do `skip`;
+  `tests/test_docker_compose.py` passa 107/107.
+
 ### Fix: posse dos named volumes com usuário não-root (v1.8.2)
 
 Correção de `PermissionError` no arranque em Docker: o container roda como `pipe`

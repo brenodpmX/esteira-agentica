@@ -169,6 +169,26 @@ host, mas permanecendo parado após uma interrupção explícita.
 | `kiro-home` | `/home/pipe/.kiro` | Configuração do kiro-cli |
 | `kiro-local` | `/home/pipe/.local/share/kiro-cli` | Dados locais do kiro-cli |
 
+Por padrão o estado fica em **named volumes** (geridos pelo Docker, em
+`/var/lib/docker/volumes/`). Para ter logs e estado **acessíveis no host** — e
+com posse do seu usuário, não do root — use o override `compose.dev.yml`, que
+troca esses volumes por bind mounts configuráveis:
+
+```bash
+docker compose -f docker-compose.yml -f compose.dev.yml up -d
+```
+
+Para que o `docker compose up` normal já use os dois arquivos, defina no `.env`:
+
+```env
+COMPOSE_FILE=docker-compose.yml:compose.dev.yml
+```
+
+Os caminhos no host são configuráveis (`PIPE_STATE_DIR`, `PIPE_REPO_DIR`,
+`PIPE_LOGS_DIR`; padrão `./.pipe`, `./repo`, `./logs`). Crie os diretórios com o
+seu usuário antes do `up` (`mkdir -p .pipe repo logs`) — se não existirem, o
+Docker os cria como root.
+
 ### Solução de problemas do Docker
 
 | Sintoma | Verificação / correção |
