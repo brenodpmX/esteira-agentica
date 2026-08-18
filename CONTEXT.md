@@ -17,6 +17,70 @@ A versão é exibida no log ao iniciar a esteira.
 
 ## Changelog
 
+### Restauração das mudanças perdidas no merge `c27f813` (v1.9.0 — #181)
+
+Recupera funcionalidade que existia apenas em `main` e foi descartada na
+resolução de conflitos do merge `c27f813` (integração de `epic` em `main`). Os
+dois lados do merge eram legítimos; o conflito foi resolvido adotando `epic` por
+inteiro nos arquivos em disputa, sem reconciliar o que era exclusivo de `main`.
+
+A `merge-base` das pontas era `26d863e`, muito anterior aos commits manuais de
+`main` — por isso o three-way não tinha como preservá-los automaticamente.
+
+- Bump: `1.8.3` → `1.9.0` (MINOR — retorno de comportamento ausente, sem
+  breaking change; `pipe.yml` e schema inalterados)
+
+**Perdas restauradas:**
+
+| Origem | Perda | Gravidade |
+|--------|-------|-----------|
+| `28fea7e` | `boards.rerun_cooldown` sem efeito | alta — issue que falha reexecuta em loop apertado |
+| `6176819` | `create-up` de body com slug em underscore | alta — falha silenciosa |
+| `d8d85d9` | descoberta local presa à rotação de boards | média — inanição de boards de baixa prioridade |
+| `3a1196a` | falha do kiro-cli logada como sucesso | média — diagnóstico cego |
+| `7ed7bf0`/`45c8b14` | banner da locomotiva substituído | cosmética — mas foi o que revelou o incidente |
+
+**Detalhamento:**
+
+- **`boards.rerun_cooldown` voltou a funcionar** (`src/__main__.py`). A validação
+  em `config.py` sobreviveu ao merge, mas o comportamento não: `pipe.yml` aceitava
+  a chave sem erro e ela não tinha efeito nenhum. Restaurados `_rerun_cache`,
+  `_cooldown_seconds`, `_in_rerun_cooldown`, `_mark_rerun`, `_purge_expired_rerun`
+  e os pontos de chamada em `keep_task`.
+- **`create-up` de slug em underscore** (`src/core/sync.py`). O merge reintroduziu
+  a heurística `elif body_file.name.count("-") >= 2` em `detect_local_changes`.
+  Como `_slugify` converte hífens e espaços em underscore, **todo** arquivo
+  nomeado pelo próprio sistema tem exatamente um hífen (o de `-body`) e era
+  descartado em silêncio — a issue criada localmente nunca subia ao board. Voltou
+  a ser `else`: todo `*-body.md` sem prefixo numérico é issue local nova.
+- **Descoberta local global** (`src/__main__.py`). Restaurados `detect_local_all`
+  (varre todos os boards; barato, só filesystem) e `sync_remote_board` (um board,
+  consome API do provider). `sync_board` permanece como wrapper de
+  compatibilidade. Motivo: efeitos colaterais de agente são cross-board.
+- **Detecção da falha real do kiro-cli** (`src/adapters/kiro_cli_agent.py`).
+  Restaurados `_detect_failure` e `_last_meaningful_line`. O exit-code não reflete
+  toda falha: erros de modelo/servidor voltam como texto com exit 0. A linha de
+  **início** do log mantém o formato do `epic` (mais informativo, com `title`,
+  `col_name` e path do log); as linhas de **conclusão/erro** recuperam a
+  classificação e a causa real.
+- **Banner da locomotiva** (`src/__main__.py`) restaurado byte a byte.
+- **`AgentParams` saneado** (`src/core/agent.py`). O merge manteve campos dos dois
+  lados, deixando `col_name` declarado duas vezes e `issue_title` sem consumidor.
+
+**Testes:**
+
+- Restaurados (deletados pelo merge): `tests/test_detect_local_all.py`,
+  `tests/test_create_up_underscore_slug.py`.
+- Novos: `tests/test_rerun_cooldown.py` (32), `tests/test_agent_failure_detection.py`,
+  `tests/test_banner.py`.
+- `tests/test_sigterm_shutdown.py` corrigido: amarrava o stop do loop em
+  `sync_board` e, quando o loop deixou de chamá-lo, `main()` passou a rodar
+  indefinidamente (o `except Exception` dorme e continua) — **travando** a suíte
+  em vez de falhar. O stop passou a cobrir as três funções de descoberta.
+
+Documentação: [change #181](doc/changes/181-restauracao-mudancas-perdidas-merge-c27f813.md)
+e [changelog](doc/changelogs/181-restauracao-mudancas-perdidas-merge-c27f813.md).
+
 ### compose.dev.yml — estado/logs em bind mount no host (v1.8.3 — US-04)
 
 Cria o override `compose.dev.yml` (previsto na US-04, até então inexistente — os
@@ -721,6 +785,20 @@ Consequências:
      commits com resolução de 8 conflitos conforme arquitetura Docker não-root)
      e merge complementar dos commits pós-merge (v1.8.1, v1.8.2, v1.8.3, PR #178).
    - Todos os commits de `epic` são agora ancestrais de `main`.
+   - ⚠️ **Perda colateral, corrigida em v1.9.0 (#181):** a resolução dos
+     conflitos adotou o lado `epic` por inteiro em `src/__main__.py`,
+     `src/core/agent.py`, `src/core/sync.py`, `src/adapters/kiro_cli_agent.py` e
+     `tests/`, descartando trabalho que existia **apenas** em `main`
+     (`rerun_cooldown`, `create-up` de slug em underscore, descoberta local
+     global, detecção de falha do kiro-cli, banner). Os commits perdidos
+     permaneciam ancestrais de `main` — logo `git log` e `--is-ancestor` não
+     denunciavam nada — mas seu **conteúdo** havia sido revertido pela árvore do
+     merge. Ver o changelog da v1.9.0.
+
+   **Lição para merges futuros de branch longa:** commit ancestral não garante
+   conteúdo presente. Após integrar uma branch com `merge-base` antiga, verificar
+   cada arquivo em conflito com `git diff <parent-main> <merge> -- <arquivo>` e
+   confirmar que nenhum hunk reverte trabalho exclusivo do lado `main`.
 
 2. **Fluxo Corrigido (permanente)**
    - Feature branches (`feature/*`) continuam apontando para origem definida em `pipe.yml`.

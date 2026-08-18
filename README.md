@@ -275,6 +275,29 @@ Se houve qualquer atividade (sync movimentou algo OU existe tarefa para executar
 - Auto-advance de coluna `todo` para próxima coluna (só ocorre se nenhuma coluna posterior tiver tarefa pronta); move os arquivos, atualiza o snapshot e enfileira o `change-up` para o sync propagar ao board
 - `parallel: false` → bloqueia auto-advance se já existe issue ativa
 - Issues com `/need_human` ou `/blocked_by` no body são ignoradas
+- Issues reexecutadas há menos de `boards.rerun_cooldown` segundos são puladas
+  (ver abaixo)
+
+### Cooldown de reexecução (`boards.rerun_cooldown`)
+
+Impede que a mesma issue seja reentregue ao agente em loop apertado quando falha
+repetidamente. Sem isso, uma issue que não avança consome quota do modelo a cada
+ciclo sem progresso.
+
+- Cache interno em memória: `(board, coluna, id)` → instante da última entrega.
+- A chave **inclui a coluna** de propósito: se a issue avança no board, é
+  trabalho novo e fica elegível imediatamente, sem esperar o cooldown.
+- Entradas expiradas são purgadas a cada acionamento do `keep_task`, para o cache
+  não crescer indefinidamente com issues que saíram do board.
+- `0` ou ausente desabilita e esvazia o cache.
+
+O cooldown é por processo (não persiste entre reinícios): reiniciar a esteira
+libera todas as issues imediatamente.
+
+> **Atenção ao atualizar de 1.8.x:** nas versões 1.8.0–1.8.3 essa chave era
+> validada mas **não tinha efeito** (regressão do merge `c27f813`, corrigida na
+> 1.9.0). Se o seu `pipe.yml` já a declara, o comportamento muda ao atualizar.
+> Para manter o comportamento anterior, remova a chave ou defina `0`.
 
 ### Resolução automática de bloqueios
 

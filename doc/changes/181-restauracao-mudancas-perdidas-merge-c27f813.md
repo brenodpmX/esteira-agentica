@@ -163,12 +163,48 @@ passando.
 
 | Passo | Estado | Commit | Observações |
 |-------|--------|--------|-------------|
-| P1 | pendente | — | |
-| P2 | pendente | — | |
-| P3 | pendente | — | |
-| P4 | pendente | — | |
-| P5 | pendente | — | |
-| P6 | pendente | — | |
+| P1 | concluído | `fa395ff` | 175 testes de agente passando |
+| P2 | concluído | `1414e4d` | +`tests/test_agent_failure_detection.py`; formato do `epic` preservado |
+| P3 | concluído | `94194d6` | +`tests/test_rerun_cooldown.py` (32 testes) |
+| P4 | concluído | `16ef37d` | inclui a perda extra em `sync.py` (ver abaixo) |
+| P5 | concluído | `8416793` | +`tests/test_banner.py` (9 testes) |
+| P6 | concluído | `16ef37d` | ambos os testes restaurados passam sem adaptação |
 | P7 | concluído | — | sem ação: cobertura relocada, verificada |
-| P8 | pendente | — | |
-| P9 | pendente | — | |
+| P8 | concluído | — | 1.9.0 + `CONTEXT.md` + `README.md` + changelog |
+| P9 | — | — | suíte completa + MR |
+
+## Achados não previstos no plano
+
+### Perda extra: `create-up` de body com slug em underscore
+
+Descoberta ao restaurar `tests/test_detect_local_all.py`, que falhou. O merge
+reintroduziu a heurística `elif body_file.name.count("-") >= 2` em
+`detect_local_changes` (`src/core/sync.py`); `main` já havia corrigido para
+`else` (commit `6176819`).
+
+Gravidade alta e silenciosa: `_slugify` converte hífens e espaços em underscore,
+então **todo** arquivo nomeado pelo próprio sistema tem exatamente um hífen — o
+de `-body`. A condição descartava esses nomes sem log algum, e a issue criada
+localmente nunca subia ao board.
+
+Foi o que ligou os dois testes deletados: `test_create_up_underscore_slug.py`
+existia justamente para travar essa correção.
+
+### `tests/test_sigterm_shutdown.py` travava a suíte
+
+O teste do lado `epic` instalava o stop do loop em `sync_board`. Ao restaurar as
+duas fases de descoberta (P4), o loop deixou de chamar essa função, o monkeypatch
+parou de interceptar e `main()` passou a rodar indefinidamente — o
+`except Exception` do loop dorme e continua, então a suíte **travava** em vez de
+falhar (timeout, não erro).
+
+Corrigido instalando o stop nas três funções de descoberta, o que preserva a
+intenção original (#70) e torna o teste robusto a refactor do loop.
+
+### A documentação estava à frente do código
+
+`README.md` já descrevia `detect_local_all`, `sync_remote_board` e
+`boards.rerun_cooldown` — porque o merge preservou o lado `main` no README
+enquanto adotava o lado `epic` no código. A documentação descrevia
+comportamento inexistente desde 12/08/2026. Após esta restauração, voltou a ser
+verdadeira.

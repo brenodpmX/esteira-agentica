@@ -239,21 +239,27 @@ class TestLoopPrincipalNaoCapturaSnapshotIntegrityError:
         # tratada por um handler dedicado (bug), ela cai no `except
         # Exception` genérico do loop, que também engoliria qualquer outra
         # exceção usada como sentinela de parada — o teste travaria o
-        # runner. Por isso o limite de iterações é imposto em `sync_board`
-        # (chamado antes de call_agent em todo ciclo, inclusive nos que
-        # apenas reexecutam após o `except Exception` genérico) levantando
-        # `RuntimeError` — que também seria potencialmente engolida pelo
-        # `except Exception`, então usamos KeyboardInterrupt (não coberto
-        # pelo genérico) como sentinela segura de parada.
+        # runner. Por isso o limite de iterações é imposto na fase de
+        # descoberta (chamada antes de call_agent em todo ciclo, inclusive nos
+        # que apenas reexecutam após o `except Exception` genérico) levantando
+        # `KeyboardInterrupt`, que não é coberta pelo genérico e por isso é
+        # sentinela segura de parada.
+        #
+        # O guard é instalado em TODAS as funções de descoberta —
+        # `detect_local_all`, `sync_remote_board` e o wrapper `sync_board` — de
+        # propósito: qualquer uma que o loop chame primeiro encerra a iteração.
+        # Amarrado a uma só, um refactor do loop faz este teste **travar** em
+        # loop infinito (o `except Exception` dorme e continua) em vez de
+        # falhar — foi o que ocorreu ao restaurar a descoberta local global.
         sync_board_calls = []
 
         def fake_sync_board(*_a, **_k):
             sync_board_calls.append(True)
             if len(sync_board_calls) > 3:
                 raise KeyboardInterrupt(
-                    "sync_board chamado múltiplas vezes: SnapshotIntegrityError "
-                    "não encerrou o loop (foi capturada pelo `except Exception` "
-                    "genérico e o ciclo continuou)."
+                    "fase de descoberta chamada múltiplas vezes: "
+                    "SnapshotIntegrityError não encerrou o loop (foi capturada "
+                    "pelo `except Exception` genérico e o ciclo continuou)."
                 )
             return False
 
@@ -267,6 +273,8 @@ class TestLoopPrincipalNaoCapturaSnapshotIntegrityError:
         monkeypatch.setattr(m, "startup", lambda cfg: None)
         monkeypatch.setattr(m, "board_full_sync", lambda cfg: None)
         monkeypatch.setattr(m, "get_board_ids", lambda cfg: [BOARD_ID])
+        monkeypatch.setattr(m, "detect_local_all", fake_sync_board)
+        monkeypatch.setattr(m, "sync_remote_board", fake_sync_board)
         monkeypatch.setattr(m, "sync_board", fake_sync_board)
         monkeypatch.setattr(m, "keep_task", fake_keep_task)
         monkeypatch.setattr(m, "call_agent", fake_call_agent)
