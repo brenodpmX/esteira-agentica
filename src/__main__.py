@@ -261,6 +261,67 @@ def process_queue(config: dict):
 AUTO_ADVANCED = object()
 
 
+# Cache de cooldown de reexecução.
+#
+# Mapeia (board_id, col_id, issue_id) -> timestamp (time.time()) da última vez
+# que a issue foi entregue para execução pelo keep_task. Enquanto não decorrer
+# boards.rerun_cooldown segundos, a mesma issue (no mesmo board E coluna) é
+# pulada e o keep_task busca a próxima elegível. Passado o período, a entrada é
+# removida e a issue volta a ser elegível.
+#
+# A chave inclui a coluna de propósito: se a issue anda no board, o par
+# (board, id) se mantém mas col_id muda, gerando uma chave nova — portanto a
+# issue fica imediatamente elegível na nova coluna, sem esperar o cooldown.
+_rerun_cache: dict[tuple[str, str, str], float] = {}
+
+
+def _cooldown_seconds(config: dict) -> int:
+    """Lê boards.rerun_cooldown (segundos). 0/ausente = desabilitado."""
+    boards_cfg = config.get("boards", {})
+    return boards_cfg.get("rerun_cooldown", 0) or 0
+
+
+def _in_rerun_cooldown(board_id: str, col_id: str, issue_id, cooldown: int) -> bool:
+    """True se a issue foi executada há menos de `cooldown` segundos.
+
+    Efeito colateral: remove a entrada expirada (retornando False) para manter
+    o cache enxuto e liberar a issue para reexecução.
+    """
+    if cooldown <= 0:
+        return False
+    key = (board_id, col_id, str(issue_id))
+    ts = _rerun_cache.get(key)
+    if ts is None:
+        return False
+    if (time.time() - ts) >= cooldown:
+        del _rerun_cache[key]
+        return False
+    return True
+
+
+def _mark_rerun(board_id: str, col_id: str, issue_id) -> None:
+    """Registra que a issue foi entregue para execução agora."""
+    _rerun_cache[(board_id, col_id, str(issue_id))] = time.time()
+
+
+def _purge_expired_rerun(cooldown: int) -> None:
+    """Remove TODAS as entradas expiradas do cache de cooldown.
+
+    Chamado a cada acionamento do keep_task. Sem isso, entradas de issues que
+    saíram do board (fechadas/arquivadas/removidas) nunca seriam reavaliadas e
+    permaneceriam no cache indefinidamente, fazendo-o crescer sem limite.
+
+    Com cooldown desabilitado (<= 0) o cache é esvaziado por completo.
+    """
+    if cooldown <= 0:
+        _rerun_cache.clear()
+        return
+    now = time.time()
+    expired = [k for k, ts in _rerun_cache.items() if (now - ts) >= cooldown]
+    for k in expired:
+        del _rerun_cache[k]
+
+
 def keep_task(board_id: str, config: dict) -> dict | object | None:
     """Seleciona a próxima tarefa elegível no board indicado.
 
@@ -278,9 +339,14 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
     - Elegível se: status=='ok', coluna tem 'agent', coluna tem 'change.advance'
     - parallel:false → bloqueia auto-advance se já existe issue ativa
     - /need_human ou /blocked_by no body → bloqueada
+    - boards.rerun_cooldown → pula issue reexecutada há pouco (mesmo board+coluna)
     """
     boards_cfg = config["boards"]
     board_cfg = boards_cfg[board_id]
+    cooldown = _cooldown_seconds(config)
+    # A cada acionamento, limpa entradas expiradas para o cache não crescer
+    # indefinidamente (issues que saíram do board nunca seriam reavaliadas).
+    _purge_expired_rerun(cooldown)
 
     snap = Snapshot(board_id).load()
     columns = board_cfg.get("columns", {})
@@ -324,8 +390,13 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
             continue
         if _is_blocked(issue):
             continue
+        # Cooldown: pula a issue se foi reexecutada há pouco (mesmo board+coluna).
+        if _in_rerun_cooldown(board_id, col_id, issue["id"], cooldown):
+            continue
 
         log.info("KeepTask", f"[{board_id}] #{issue['id']} selecionada em '{col_id}'")
+        if cooldown > 0:
+            _mark_rerun(board_id, col_id, issue["id"])
         return {
             "board_id": board_id,
             "issue": issue,
