@@ -620,8 +620,14 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if match:
             issue_id = match.group(1)
             numbered_candidates.setdefault(issue_id, []).append(body_file)
-        elif body_file.name.count("-") >= 2:
-            # Arquivo sem id numérico = issue criada localmente (sem id)
+        else:
+            # Arquivo sem id numérico = issue criada localmente (sem id).
+            #
+            # NÃO usar heurística de contagem de hífens aqui. `_slugify`
+            # converte hífens e espaços em underscore, então todo arquivo
+            # nomeado pelo próprio sistema tem exatamente UM hífen — o do
+            # sufixo `-body`. A condição `count("-") >= 2` descartava
+            # silenciosamente esses nomes e o create-up nunca era gerado.
             body_path_str = str(body_file)
             # Verificar se já está no snapshot por body_path
             known = any(

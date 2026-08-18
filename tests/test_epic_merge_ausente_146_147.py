@@ -15,8 +15,10 @@ Este arquivo cobre os dois ângulos (estado pós-merge):
 
   TC-01  Commits `498674b`/`9572409` (#146/#147) SÃO ancestrais de HEAD
          após o merge de `epic` em `main` — confirma resolução do débito.
-  TC-02  Divergência de código em `src/` entre HEAD e `origin/epic` é zero —
-         o merge integrou todo o código de produção.
+  TC-02  Nenhum commit de `origin/epic` que toque `src/` ficou fora de HEAD —
+         o merge integrou todo o código de produção de `epic`. Verificado de
+         forma direcional (`HEAD..epic`), não por identidade textual: `main`
+         legitimamente avança à frente de `epic`.
   TC-03  Resolução de branch/merge em `build_prompt` honra `git.flow.merge`
          quando o alvo de merge é `main` (não há bug em `agent.py`; o gap era
          de configuração/processo).
@@ -130,20 +132,37 @@ class TestTC01CommitsAgoraEmMain:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestTC02SemDivergenciaDeCodigo:
-    """TC-02: confirma que após o merge de `epic`, não há divergência de
-    código de produção (`src/`) entre HEAD e `origin/epic`.
+    """TC-02: confirma que após o merge de `epic`, nenhum código de produção
+    (`src/`) de `epic` ficou para trás em relação a HEAD.
     """
 
-    def test_diff_src_vazio_contra_epic(self):
-        """Não deve haver diferença em src/ entre HEAD e origin/epic."""
+    def test_nenhum_commit_de_epic_em_src_falta_em_head(self):
+        """Nada de `src/` presente em `origin/epic` pode faltar em HEAD.
+
+        Direcional de propósito. A versão anterior deste teste exigia
+        `git diff HEAD origin/epic -- src/` **vazio**, isto é, identidade
+        textual entre os dois lados. Esse invariante é errado por dois motivos:
+
+        1. `main` legitimamente avança à frente de `epic` (v1.8.1, v1.8.2,
+           v1.8.3, PR #178, #181). Exigir identidade proíbe todo trabalho novo
+           em `main` — o teste quebraria a cada commit de mainline.
+        2. Pior: a asserção dava respaldo à perda de código do merge `c27f813`.
+           Enquanto `main` fosse idêntica a `epic`, o teste ficava verde —
+           inclusive no estado em que o merge havia descartado trabalho
+           exclusivo de `main` (`rerun_cooldown`, `create-up` de slug em
+           underscore, descoberta local global, detecção de falha do kiro-cli).
+           Ver o changelog da v1.9.0.
+
+        O critério real do débito #165 é que o merge não deixe nada de `epic`
+        para trás — verificado aqui pela ausência de commits em `HEAD..epic`.
+        """
         _requires_refs("origin/epic")
-        result = _git(
-            "diff", "--name-only", "HEAD", "origin/epic", "--", "src/"
-        )
-        changed = [line for line in result.stdout.splitlines() if line.strip()]
-        assert changed == [], (
-            f"HEAD diverge de origin/epic em src/: {changed}. "
-            "O merge deveria ter integrado todo o código de produção."
+        result = _git("log", "--oneline", "HEAD..origin/epic", "--", "src/")
+        faltando = [line for line in result.stdout.splitlines() if line.strip()]
+        assert faltando == [], (
+            f"commits de origin/epic que tocam src/ e não estão em HEAD: "
+            f"{faltando}. O merge deveria ter integrado todo o código de "
+            "produção de epic."
         )
 
     def test_epic_e_ancestral_de_head(self):
@@ -362,14 +381,18 @@ class TestTC05CriteriosDeAceitePosMerge:
         )
 
     def test_diff_head_epic_sem_divergencia_de_producao_apos_merge(self):
+        """Critério de aceite 2: nada de `src/` em `epic` ficou fora de HEAD.
+
+        Verificado de forma direcional (`HEAD..epic`), não por identidade
+        textual — ver a justificativa em
+        `TestTC02SemDivergenciaDeCodigo.test_nenhum_commit_de_epic_em_src_falta_em_head`.
+        """
         _requires_refs("origin/epic")
-        result = _git(
-            "diff", "--name-only", "HEAD", "origin/epic", "--", "src/"
-        )
-        changed = [line for line in result.stdout.splitlines() if line.strip()]
-        assert changed == [], (
-            "Critério de aceite 2 da issue: git diff HEAD epic não deve "
-            f"mais divergir em src/ após o merge. Divergente: {changed}"
+        result = _git("log", "--oneline", "HEAD..origin/epic", "--", "src/")
+        faltando = [line for line in result.stdout.splitlines() if line.strip()]
+        assert faltando == [], (
+            "Critério de aceite 2 da issue: nenhum commit de epic que toque "
+            f"src/ pode faltar em HEAD após o merge. Faltando: {faltando}"
         )
 
     def test_suite_de_testes_e_o_criterio_de_aceite_3(self):
