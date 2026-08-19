@@ -888,6 +888,22 @@ class GitHubBoardAdapter(BoardPort):
         item_id = add_data["addProjectV2ItemById"]["item"]["id"]
         # Mover para coluna correta
         option_id = meta["options"].get(column)
+        if not option_id:
+            # Fallback: coluna inexistente nas opções do project. Sem isso a issue
+            # nasceria sem `Status` e viraria candidata ao guard do create-down.
+            all_options = list(meta["options"].keys())
+            fallback_col = all_options[0] if all_options else None
+            if fallback_col:
+                log.warning("GitHub", f"Coluna '{column}' não encontrada no board "
+                            f"'{board_id}' — usando '{fallback_col}' como fallback",
+                            operation="create_issue", board_id=board_id,
+                            column=column, fallback=fallback_col)
+                option_id = meta["options"].get(fallback_col)
+                column = fallback_col
+            else:
+                log.warning("GitHub", f"Coluna '{column}' não encontrada e sem fallback "
+                            f"disponível no board '{board_id}'",
+                            operation="create_issue", board_id=board_id, column=column)
         if option_id:
             self._gql(
                 "mutation($pid:ID!,$itemId:ID!,$fieldId:ID!,$optionId:String!){updateProjectV2ItemFieldValue(input:{projectId:$pid,itemId:$itemId,fieldId:$fieldId,value:{singleSelectOptionId:$optionId}}){projectV2Item{id}}}",
@@ -1122,7 +1138,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         data = json.loads(result) if result else []
         return [str(i.get("number")) for i in data if i.get("number")]
 
-    def _add_sub_issue(self, parent_number: str, child_number: str) -> None:
+    def _add_sub_issue(self, parent_number: str, child_number: str, current_board_id: str = None) -> None:
         owner, repo = self._repo.split("/")
         child_db = self._get_issue_db_id(child_number)
         if not child_db:
@@ -1130,6 +1146,132 @@ query($owner:String!,$repo:String!,$number:Int!){
             return
         self._api("POST", f"/repos/{owner}/{repo}/issues/{parent_number}/sub_issues",
                   sub_issue_id=child_db, replace_parent=True)
+
+        # Pós-hook: remover itens duplicados propagados sem coluna (Status vazio)
+        # para boards distintos do board atual (current_board_id).
+        #
+        # ATENÇÃO (assimetria deliberada entre os call sites):
+        #   - set_parent  informa o board do FILHO  -> o item propagado (que
+        #     aparece no project do PAI) é candidato válido à remoção aqui.
+        #   - set_children informa o board do PAI   -> o item propagado aparece
+        #     justamente nesse project, que é excluído por segurança (controle 2:
+        #     o project informado nunca é removido). Nesse caminho a limpeza fica
+        #     por conta da camada 2 (guard do create-down em sync.py), que possui
+        #     a prova de presença da issue em outro board configurado.
+        if current_board_id:
+            self._remove_propagated_items_without_status(child_number, current_board_id)
+
+    _PROPAGATED_ITEMS_QUERY = """
+query($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    issue(number:$number){
+      projectItems(first:10){
+        nodes{
+          id
+          project{ id }
+          fieldValues(first:10){
+            nodes{
+              ...on ProjectV2ItemFieldSingleSelectValue{
+                field{...on ProjectV2SingleSelectField{name}}
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}"""
+
+    def _remove_propagated_items_without_status(self, issue_number: str, exclude_board_id: str) -> None:
+        """Remove items propagados automaticamente sem Status de outros projects.
+
+        Quando uma sub-issue é vinculada a um parent em outro board, o GitHub
+        propaga a sub-issue para todos os projects onde o parent está, mas SEM
+        definir coluna (Status vazio). Esses itens órfãos devem ser removidos.
+
+        Dados de Projects V2 (incluindo `Status`) só existem no GraphQL — não há
+        endpoint REST equivalente. A consulta segue o mesmo padrão já usado em
+        `_belongs_to_board`/`get_issue` (`projectItems`/`fieldValues`) e a remoção
+        usa a mutation `deleteProjectV2Item` com o `project_id`/`item_id` que a
+        própria query retorna (dispensa `_find_item_id`; o project alheio pode não
+        ser um board configurado, então `remove_from_board` não serve aqui).
+
+        Discriminadores de segurança:
+          - o project de `exclude_board_id` NUNCA é removido, mesmo sem Status;
+          - só remove quando Status estiver vazio (item com coluna própria é
+            sempre preservado, inclusive em uso multi-board intencional);
+          - se `exclude_board_id` foi informado mas seu project_id não resolve,
+            nada é removido (sem a exclusão garantida, o item de origem entraria
+            na lista de candidatos).
+        """
+        owner, repo = self._repo.split("/")
+
+        exclude_project_id = (
+            (self._projects or {}).get(exclude_board_id, {}).get("project_id")
+            if exclude_board_id else None
+        )
+        if exclude_board_id and not exclude_project_id:
+            log.warning("GitHub", f"#{issue_number} - project do board '{exclude_board_id}' "
+                        f"não resolvido; nenhuma remoção de item propagado",
+                        operation="remove_propagated_items_without_status",
+                        issue_number=issue_number, board_id=exclude_board_id)
+            return
+
+        try:
+            data = self._gql(
+                self._PROPAGATED_ITEMS_QUERY,
+                owner=owner,
+                repo=repo,
+                number=int(issue_number),
+            )
+        except Exception as e:
+            log.warning("GitHub", f"#{issue_number} - falha ao buscar projectItems: {e}",
+                        operation="remove_propagated_items_without_status",
+                        issue_number=issue_number)
+            return
+
+        nodes = (
+            (data.get("repository") or {})
+            .get("issue", {})
+            .get("projectItems", {})
+            .get("nodes", [])
+        )
+
+        for item in nodes:
+            project_id = (item.get("project") or {}).get("id")
+            item_id = item.get("id")
+            if not project_id or not item_id:
+                continue
+
+            # Project de origem: preservado sempre (controle 2).
+            if project_id == exclude_project_id:
+                continue
+
+            status_name = ""
+            for fv in (item.get("fieldValues", {}) or {}).get("nodes", []):
+                if (fv.get("field") or {}).get("name") == "Status":
+                    status_name = fv.get("name") or ""
+                    break
+
+            # Status definido = item legítimo (multi-board consciente): preservar.
+            if status_name.strip():
+                continue
+
+            log.info("GitHub", f"#{issue_number} - removendo item de project sem Status "
+                     f"(project_id: {project_id[:8]}...)",
+                     operation="remove_propagated_items_without_status",
+                     issue_number=issue_number)
+            try:
+                self._gql(
+                    "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
+                    pid=project_id, itemId=item_id,
+                )
+            except Exception as e:
+                log.warning("GitHub", f"#{issue_number} - falha ao remover item de project "
+                            f"{project_id[:8]}...: {e}",
+                            operation="remove_propagated_items_without_status",
+                            issue_number=issue_number)
 
     def _remove_sub_issue(self, parent_number: str, child_number: str) -> None:
         owner, repo = self._repo.split("/")
@@ -1154,7 +1296,7 @@ query($owner:String!,$repo:String!,$number:Int!){
         log.info("GitHub", f"{self._tp}#{issue_id} - children {sorted(desired)}",
                  operation="set_children", board_id=board_id, issue_id=issue_id)
         for child in desired - current:
-            self._add_sub_issue(issue_id, child)
+            self._add_sub_issue(issue_id, child, current_board_id=board_id)
         for child in current - desired:
             self._remove_sub_issue(issue_id, child)
 
@@ -1187,7 +1329,7 @@ query($owner:String!,$repo:String!,$number:Int!){
 
         if parent_id:
             if str(parent_id) != current_parent:
-                self._add_sub_issue(str(parent_id), issue_id)
+                self._add_sub_issue(str(parent_id), issue_id, current_board_id=board_id)
         elif current_parent:
             self._remove_sub_issue(current_parent, issue_id)
 
@@ -1340,5 +1482,25 @@ query($owner:String!,$repo:String!,$number:Int!){
                  operation="unarchive_issue", board_id=board_id, issue_id=issue_id)
         self._gql(
             "mutation($pid:ID!,$itemId:ID!){unarchiveProjectV2Item(input:{projectId:$pid,itemId:$itemId}){item{id}}}",
+            pid=meta["project_id"], itemId=item_id,
+        )
+
+    def remove_from_board(self, board_id: str, issue_id: str) -> None:
+        """Remove um item de um project usando deleteProjectV2Item.
+
+        Deve ser chamado APENAS para itens com Status vazio (propagação
+        automática sem coluna definida). Item legítimo com coluna própria
+        NÃO deve ser removido.
+        """
+        self._penalty_check()
+        meta = self._board_meta(board_id)
+        item_id = self._find_item_id(board_id, issue_id)
+        if not item_id:
+            log.warning("GitHub", f"#{issue_id} não encontrada no project para remoção")
+            return
+        log.info("GitHub", f"[{self._throttle_value}s] #{issue_id} - Removendo item do project",
+                 operation="remove_from_board", board_id=board_id, issue_id=issue_id)
+        self._gql(
+            "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
             pid=meta["project_id"], itemId=item_id,
         )

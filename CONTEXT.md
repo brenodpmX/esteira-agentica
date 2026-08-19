@@ -573,6 +573,66 @@ comandos de "remover".
 - Arquivamento: GraphQL `archiveProjectV2Item` / `unarchiveProjectV2Item`.
 - `need_human` é label comum no GitHub, tratada em campo próprio no domínio.
 
+## Proteção contra propagação de sub-issues entre boards (v1.6.1)
+
+O GitHub Projects V2 possui um efeito colateral ao registrar relações de
+sub-issue: ao executar `POST /repos/{owner}/{repo}/issues/{parent}/sub_issues`,
+o filho pode ser propagado para todos os projects do parent sem valor no campo
+`Status`. Antes da v1.6.1, o sync interpretava esse item sem coluna como uma
+issue nova no board e materializava arquivos locais duplicados.
+
+A correção usa defesa em profundidade:
+
+1. **Primitiva da porta:** `BoardPort.remove_from_board` e
+   `Board.remove_from_board` expõem a remoção de item do project. O adapter
+   GitHub resolve o item e executa a mutation `deleteProjectV2Item`.
+2. **Pós-hook do vínculo:** `_add_sub_issue` recebe o board de origem e chama
+   `_remove_propagated_items_without_status`. Dados de Projects V2 (inclusive
+   `Status`) só existem no GraphQL — não há endpoint REST equivalente —, então o
+   pós-hook consulta `projectItems`/`fieldValues` no mesmo padrão de `get_issue`
+   e `_belongs_to_board` e remove por `deleteProjectV2Item` usando o
+   `project_id`/`item_id` retornados pela própria query. Ignora o project
+   informado e remove somente itens de **outros** projects com `Status` vazio; um
+   item com coluna definida é considerado intencional e é preservado. Se o
+   project informado não puder ser resolvido, nada é removido (sem a exclusão
+   garantida, o item de origem entraria na lista de candidatos).
+   Assimetria deliberada: `set_parent` informa o board do filho (o item
+   propagado, que aparece no project do pai, é removido aqui), enquanto
+   `set_children` informa o board do pai — nesse caminho o item propagado está
+   justamente no project excluído e a limpeza fica com o guard do `create-down`,
+   que possui a prova de presença no snapshot.
+3. **Guard no `create-down`:** `_apply_create_down` só descarta um item sem
+   coluna quando há **prova** de propagação automática: a própria issue já
+   registrada em outro board **configurado** no `pipe.yml`, com coluna conhecida
+   naquele board. `parent` isolado é apenas contexto de log — uma sub-issue nova
+   e legítima do board atual também pode chegar sem coluna, e removê-la seria
+   perda de dado. Snapshots de diretórios fora da configuração não contam como
+   prova (`_find_snapshot_issue` aceita um filtro opcional de boards). A remoção
+   precisa concluir antes do descarte: falha propaga e a fila reprocessa,
+   preservando a garantia *at-least-once*.
+4. **Reconciliação:** `detect_board_changes` considera `Status` vazio diferente
+   da coluna conhecida. `_apply_change_down` reaplica no board a coluna do
+   snapshot antes de decidir sobre os arquivos locais — se dependesse da
+   movimentação local, o caso comum (arquivo já na coluna certa) deixaria o item
+   remoto sem `Status` e a divergência voltaria em todo full sync. Movimentação
+   remota legítima não escreve de volta no board. Issues realmente novas, sem
+   prova de presença em outro board, continuam usando a primeira coluna
+   configurada como fallback local, e `create_issue` também aplica fallback para
+   a primeira opção do project (com warning) quando a coluna pedida não existe —
+   antes o `Status` era pulado em silêncio, criando a própria "issue sem coluna".
+
+O discriminador crítico é a ausência de `Status`: a correção não remove
+sub-issues legitimamente mantidas em múltiplos boards quando cada item possui
+coluna própria. Resíduos já materializados antes da v1.6.1 não são limpos
+automaticamente e exigem operação manual com a esteira parada.
+
+Cobertura de regressão: `tests/test_sub_issue_propagation_fix.py` exercita a
+implementação real (sem substituir o método sob teste por fake) — pós-hook em
+GraphQL com `_gh`/`_api` proibidos, preservação do project de origem e de itens
+com `Status`, fail-safe de project não resolvido, fallback de `create_issue`,
+prova exigida pelo guard do `create-down`, falha de remoção que não consome o
+evento, reconciliação do `change-down` e detecção de coluna vazia.
+
 ## Eventos de coluna (`on_in` / `on_out`)
 
 Cada coluna pode declarar `on_in` e `on_out` (listas). Em uma mudança de
@@ -626,35 +686,40 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
-## Post mortem: sub-issues propagadas entre boards (documentação v1.6.1 — #99)
+## Post mortem: sub-issues propagadas entre boards (#88/#99/#106)
 
 O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o
-vínculo hierárquico é criado, mas esses itens podem nascer sem `Status`. O core
-atual interpreta um `create-down` sem coluna como issue nova e pode materializar
-uma cópia local no board errado.
+vínculo hierárquico é criado, e esses itens podem nascer sem `Status`. Antes da
+correção, o core interpretava um `create-down` sem coluna como issue nova e
+podia materializar uma cópia local no board errado.
 
-A correção #98 foi implementada e homologada no commit `01f9e83`, com cinco
-camadas: `remove_from_board` via `deleteProjectV2Item`, limpeza pós-vínculo,
-guard no `create-down`, fallback de coluna e reconciliação de coluna vazia. A
-suíte da hotfix terminou com 208 testes aprovados e 3 ignorados. Contudo, o PR
-#103 foi fechado sem merge em 03/08/2026; o commit não pertence a `main` nem a
-esta branch documental. Logo, a correção não está disponível no runtime desta
-versão e não deve ser anunciada como implantada.
+A primeira tentativa de correção (issue #98, PR #103, commit `01f9e83`) foi
+homologada, mas cancelada pela decisão do débito #110, que definiu #88/PR #102
+como veículo único — o PR #103 foi fechado sem merge. A implementação
+entregue é a do #106 no commit `a00ba7c`, integrada à branch do PR #102, com
+cinco camadas: `remove_from_board` via `deleteProjectV2Item`; pós-hook
+`_remove_propagated_items_without_status` por GraphQL; preservação explícita
+do project de origem e de itens com `Status`; guard no `create-down` com prova
+de propagação; e fallback/reconciliação de coluna vazia. A suíte canônica não
+faz `monkeypatch` do código sob teste. A homologação foi aprovada em
+19/08/2026; merge e deploy ainda são necessários para disponibilidade em
+produção.
 
 ### Regra de acesso à API de GitHub Projects V2
 
 Operações sobre projects, `projectItems`, campos de project e remoção de item
 devem usar GraphQL via `self._gql`. REST via `self._gh` fica restrito às APIs
 tradicionais de issues e pull requests. Um endpoint REST de `projectitems` foi
-inventado em duas tentativas de correção e passou pelos mocks; qualquer exceção
-a essa regra exige validação contra a documentação oficial e teste de integração
-gated.
+inventado na primeira tentativa do PR #102 e passou pelos mocks; qualquer
+exceção a essa regra exige validação contra a documentação oficial e teste de
+integração gated.
 
 O registro completo, os fatores de reincidência e as ações preventivas estão em
-`doc/incidente/sub-issues-propagadas/ticket.md`. O conteúdo funcional planejado
-e o estado de integração estão em
-`doc/changes/98-sub-issues-propagadas-entre-boards.md`; a entrega documental
-v1.6.1 está em `doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
+`doc/incidente/sub-issues-propagadas/ticket.md`. A entrega efetiva está em
+`doc/changes/88-sub-issues-propagadas-entre-boards.md`; o histórico da tentativa
+cancelada está em `doc/changes/98-sub-issues-propagadas-entre-boards.md`; e a
+entrega documental do post mortem está em
+`doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
 
 ## Robustez e Segurança do Estado (v1.5.0 — Incidente "Issue Fantasma")
 
