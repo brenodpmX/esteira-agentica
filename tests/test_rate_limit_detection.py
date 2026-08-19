@@ -26,8 +26,14 @@ from src.adapters.github_board import GitHubBoardAdapter
 
 
 @pytest.fixture
-def adapter(monkeypatch):
+def adapter(monkeypatch, tmp_path):
+    # Muda para o diretório temporário para isolar o path relativo _throttle_file
+    monkeypatch.chdir(tmp_path)
+    
     a = GitHubBoardAdapter()
+    # Injeta o path do arquivo throttle para o tmp
+    a._throttle_file = str(tmp_path / ".pipe" / "throttle")
+    
     # Neutraliza qualquer espera real para os testes rodarem instantaneamente.
     monkeypatch.setattr("src.adapters.github_board.time.sleep", lambda *_: None)
     # Evita fallback que chamaria a rede (/rate_limit).

@@ -504,8 +504,10 @@ class TestContextGeneratorListaDeadLetter(unittest.TestCase):
         from src.core.context_generator import generate_context
 
         ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
+        agent_file = self.cwd / ".kiro" / "agents" / "pipe_context.json"
         with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
+             patch("src.core.context_generator.CONTEXT_FILE", ctx_file), \
+             patch("src.core.context_generator.AGENT_FILE", agent_file, create=True):
             generate_context({
                 "git": {"repo": {"main": "x"}, "flow": {"base": "main"}},
                 "boards": {"platform": "github"},

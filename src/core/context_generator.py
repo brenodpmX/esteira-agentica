@@ -14,6 +14,8 @@ Regra de regeneração: recria se não existir OU se pipe.yml for mais novo.
 import json
 from pathlib import Path
 
+from src.core.protected_paths import PROTECTED_PATHS
+
 # Caminhos usados como variáveis de módulo para facilitar o mock em testes.
 PIPE_FILE: Path = Path("pipe.yml")
 CONTEXT_FILE: Path = Path(".pipe") / "CONTEXT.md"
@@ -22,22 +24,12 @@ AGENT_FILE: Path = Path(".kiro") / "agents" / "pipe_context.json"
 # Nome do agente kiro-cli registrado no arquivo JSON.
 _AGENT_NAME = "pipe_context"
 
-# Arquivos internos da esteira que o agente NUNCA deve tocar.
-_PROTECTED_FILES = [
-    ".pipe/boards/*/snapshot.json",
-    ".pipe/changeQueue.json",
-    ".pipe/throttle.json",
-    ".pipe/throttle",
-    ".pipe/sessions.json",
-    ".pipe/deadLetter.json",
-    ".pipe/orphanFiles.json",
-    ".pipe/pipe.lock",
-]
-
 
 def _needs_regeneration() -> bool:
     """Retorna True se o CONTEXT.md precisa ser (re)criado."""
     if not CONTEXT_FILE.exists():
+        return True
+    if not AGENT_FILE.exists():
         return True
     if not PIPE_FILE.exists():
         return False
@@ -53,7 +45,7 @@ def _section_restrictions() -> list[str]:
         "NUNCA leia, escreva, crie ou modifique esses arquivos protegidos:",
         "",
     ]
-    for path in _PROTECTED_FILES:
+    for path in PROTECTED_PATHS:
         lines.append(f"- `{path}`")
     lines += [
         "",

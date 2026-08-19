@@ -18,6 +18,9 @@ from src.core.sync import detect_local_changes
 @pytest.fixture
 def boards_dir(tmp_path, monkeypatch):
     """Cria estrutura de board com snapshot e dois arquivos 37-...-body.md."""
+    # Muda para o diretório temporário para isolar qualquer path relativo
+    monkeypatch.chdir(tmp_path)
+    
     boards_base = tmp_path / ".pipe" / "boards"
     board_dir = boards_base / "task"
     backlog = board_dir / "backlog"
@@ -70,8 +73,10 @@ def boards_dir(tmp_path, monkeypatch):
 
     pipe_dir = tmp_path / ".pipe"
     queue_file = pipe_dir / "changeQueue.json"
+    orphan_file = pipe_dir / "orphanFiles.json"
     monkeypatch.setattr("src.core.change_queue.PIPE_DIR", pipe_dir)
     monkeypatch.setattr("src.core.change_queue.QUEUE_FILE", queue_file)
+    monkeypatch.setattr("src.core.sync.ORPHAN_FILE", orphan_file)
 
     return board_dir
 

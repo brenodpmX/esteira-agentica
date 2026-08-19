@@ -8,31 +8,11 @@ from pathlib import Path
 
 from src.core.commands import annotations_doc, AGENT_LEVEL_PREFIX
 from src.core.snapshot import BOARDS_DIR
+from src.core.protected_paths import PROTECTED_PATHS
 
 REPO_DIR = Path("repo")
 
 CONTEXTS_DIR = Path("contexts")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Proteção de arquivos de estado interno
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Lista centralizada de padrões glob de arquivos de estado interno da esteira.
-# Nenhum desses paths deve jamais aparecer em prompts enviados a agentes.
-# Padrões seguem a sintaxe fnmatch (glob simples, sem separadores de diretório
-# implícitos). Para paths absolutos, a verificação é feita comparando o
-# sufixo do path com o padrão sem o prefixo de diretório variável.
-#
-# Referência: [Incidente Issue Fantasma] Correção 1 — issue #8.
-PROTECTED_PATHS: list[str] = [
-    ".pipe/boards/*/snapshot.json",
-    ".pipe/changeQueue.json",
-    ".pipe/throttle.json",
-    ".pipe/throttle-*.json",
-    ".pipe/deadLetter.json",
-    ".pipe/orphanFiles.json",
-    ".pipe/pipe.lock",
-]
 
 
 def _matches_protected(token: str, pattern: str) -> bool:

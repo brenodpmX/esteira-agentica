@@ -98,6 +98,11 @@ class KiroCliAgent(AgentPort):
         # O arquivo .kiro/agents/pipe_context.json foi gerado pelo startup a
         # partir do pipe.yml e contém as instruções explícitas para o agente.
         if CONTEXT_FILE.exists():
+            if not AGENT_FILE.exists():
+                raise FileNotFoundError(
+                    f"CONTEXT.md existe mas AGENT_FILE ausente: {AGENT_FILE}. "
+                    f"Regenere o contexto do sistema (touch pipe.yml + restart)."
+                )
             cmd += ["--agent", "pipe_context"]
 
         # Retoma a sessão anterior se ainda existir.

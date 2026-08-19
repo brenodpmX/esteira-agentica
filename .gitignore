@@ -3,12 +3,14 @@
 logs/
 contexts/
 repo/
+.kiro/agents/pipe_context.json
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+.pytest_cache/
 
 # Configuração local
 pipe.yml
