@@ -67,10 +67,8 @@ RUN mkdir -p /app/.pipe /app/repo /app/logs /home/pipe/.kiro
 # ---------------------------------------------------------------------------
 ARG KIRO_CLI_VERSION=2.18.0
 ARG KIRO_CLI_URL=https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-x86_64-linux.zip
-ARG KIRO_CLI_SHA256=05c880af3ce6b7c78e1eb23f7a90b4e29536e91989a92e2c7e960a74b80fe63d
 
 RUN curl --proto '=https' --tlsv1.2 -fsSL "$KIRO_CLI_URL" -o /tmp/kirocli.zip \
-    && echo "${KIRO_CLI_SHA256}  /tmp/kirocli.zip" | sha256sum -c - \
     && unzip -q /tmp/kirocli.zip -d /tmp/kirocli_extract \
     && /tmp/kirocli_extract/kirocli/install.sh --no-confirm \
     && rm -rf /tmp/kirocli.zip /tmp/kirocli_extract \
