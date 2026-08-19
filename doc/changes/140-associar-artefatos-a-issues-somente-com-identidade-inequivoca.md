@@ -7,7 +7,13 @@
   no `CONTEXT.md` gerado
 - **Implementação:** entregue via decomposição em 3 tasks técnicas, todas
   mergeadas em `main`
-- **Integração:** disponível em `main`
+- **Integração:** `#146` e `#147` foram mergeadas em `epic` (PRs #159 e #160);
+  `#148` foi mergeada em **`main`** (PR #188), fora do `flow.feature.merge`
+  configurado (`epic`). Por isso o estado completo desta story — incluindo
+  `tests/test_regressao_colisao_76.py` — só chegou a `epic` através da
+  reconciliação `main → epic` executada no bug **#190**, e não pelo merge das
+  tasks. Antes dessa reconciliação, `epic` era ancestral estrito de `main` (36
+  commits atrás) e não continha o teste que fecha o critério de aceite.
 
 ## Problema
 
@@ -61,9 +67,22 @@ Entregues pelas 3 tasks filhas da story (todas mergeadas em `main`):
 
 A story #140 dependia das 3 tasks acima (`/blocked_by #146, #147, #148`,
 registrado no histórico em 2026-08-04). As três estão hoje na coluna
-`encerrado`/mergeadas em `main` (PRs #159, #160 e #188), e o bloco `@---`
-atual do body de #140 não lista mais `/blocked_by` — os bloqueios foram
-resolvidos. A story está desbloqueada e pronta para avançar.
+`encerrado` e mergeadas: `#146` e `#147` em `epic` (PRs #159 e #160), `#148` em
+`main` (PR #188). O bloco `@---` atual do body de #140 não lista mais
+`/blocked_by` — os bloqueios foram resolvidos. A story está desbloqueada e
+pronta para avançar.
+
+### Divergência de branch de destino (bug #190)
+
+O PR #188 (`#148`) foi aberto com base `main` em vez de `epic`, contrariando
+`flow.feature.merge` do board. Consequência: o merge desta story em `epic` não
+levaria `tests/test_regressao_colisao_76.py` nem ~138 linhas de
+`src/core/sync.py` para a branch de integração, e a story fecharia declarando
+um critério de aceite que `epic` não podia comprovar. O bug **#190** reconciliou
+`main → epic` (fast-forward, 33 arquivos / ~4.296 linhas) por dentro do fluxo do
+board, via branch de correção derivada da branch da story. A base da
+`feature148` estava correta (`954e5ea` tem como pai o HEAD de `epic`) — o desvio
+foi apenas o destino do PR.
 
 ## Pendência observada (fora de escopo desta etapa)
 

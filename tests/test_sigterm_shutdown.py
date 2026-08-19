@@ -52,8 +52,15 @@ class TestRegistroDoHandler:
         """Ao chegar no loop, signal.signal(SIGTERM, _handle_sigterm) foi chamado.
 
         Forçamos a saída imediata do loop erguendo _Shutdown na primeira
-        iteração (via sync_board), e verificamos que o handler de SIGTERM foi
-        registrado logo antes.
+        iteração (na fase de descoberta), e verificamos que o handler de SIGTERM
+        foi registrado logo antes.
+
+        O stop é instalado em TODAS as funções de descoberta — `detect_local_all`,
+        `sync_remote_board` e o wrapper `sync_board` — de propósito: qualquer uma
+        que o loop chame primeiro encerra a iteração. Sem isso, o teste fica
+        acoplado ao nome da função da fase 1 e um refactor do loop faz o teste
+        **travar** (loop infinito, pois `except Exception` dorme e continua) em
+        vez de falhar — foi o que ocorreu ao restaurar a descoberta local global.
         """
         import src.__main__ as m
 
@@ -71,6 +78,8 @@ class TestRegistroDoHandler:
         monkeypatch.setattr(m, "startup", lambda cfg: None)
         monkeypatch.setattr(m, "board_full_sync", lambda cfg: None)
         monkeypatch.setattr(m, "get_board_ids", lambda cfg: ["b1"])
+        monkeypatch.setattr(m, "detect_local_all", stop)
+        monkeypatch.setattr(m, "sync_remote_board", stop)
         monkeypatch.setattr(m, "sync_board", stop)
         monkeypatch.setattr(m, "ADAPTERS", {"github": lambda: object()})
 

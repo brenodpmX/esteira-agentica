@@ -275,6 +275,29 @@ Se houve qualquer atividade (sync movimentou algo OU existe tarefa para executar
 - Auto-advance de coluna `todo` para próxima coluna (só ocorre se nenhuma coluna posterior tiver tarefa pronta); move os arquivos, atualiza o snapshot e enfileira o `change-up` para o sync propagar ao board
 - `parallel: false` → bloqueia auto-advance se já existe issue ativa
 - Issues com `/need_human` ou `/blocked_by` no body são ignoradas
+- Issues reexecutadas há menos de `boards.rerun_cooldown` segundos são puladas
+  (ver abaixo)
+
+### Cooldown de reexecução (`boards.rerun_cooldown`)
+
+Impede que a mesma issue seja reentregue ao agente em loop apertado quando falha
+repetidamente. Sem isso, uma issue que não avança consome quota do modelo a cada
+ciclo sem progresso.
+
+- Cache interno em memória: `(board, coluna, id)` → instante da última entrega.
+- A chave **inclui a coluna** de propósito: se a issue avança no board, é
+  trabalho novo e fica elegível imediatamente, sem esperar o cooldown.
+- Entradas expiradas são purgadas a cada acionamento do `keep_task`, para o cache
+  não crescer indefinidamente com issues que saíram do board.
+- `0` ou ausente desabilita e esvazia o cache.
+
+O cooldown é por processo (não persiste entre reinícios): reiniciar a esteira
+libera todas as issues imediatamente.
+
+> **Atenção ao atualizar de 1.8.x:** nas versões 1.8.0–1.8.3 essa chave era
+> validada mas **não tinha efeito** (regressão do merge `c27f813`, corrigida na
+> 1.9.0). Se o seu `pipe.yml` já a declara, o comportamento muda ao atualizar.
+> Para manter o comportamento anterior, remova a chave ou defina `0`.
 
 ### Resolução automática de bloqueios
 
@@ -459,30 +482,43 @@ Validar credenciais e retornar JWT.
 /agent_level high
 ```
 
-### Incidente: sub-issues propagadas entre boards (#98/#99)
+### Incidente: sub-issues propagadas entre boards (#88/#98/#99/#106)
 
-**Versão desta documentação: 1.6.1.** Ao vincular uma sub-issue a um parent
-presente em outro GitHub Project, o GitHub Projects V2 pode propagar a filha
-para o project do parent sem preencher o campo `Status`. O sync então pode
-interpretar o item sem coluna como uma issue nova daquele board, criar arquivos
-locais duplicados e executar o agente no contexto errado.
+Ao vincular uma sub-issue a um parent presente em outro GitHub Project, o
+GitHub Projects V2 pode propagar a filha para o project do parent sem
+preencher o campo `Status`. O sync então pode interpretar o item sem coluna
+como uma issue nova daquele board, criar arquivos locais duplicados e
+executar o agente no contexto errado.
 
-A correção homologada para o incidente é composta por cinco proteções:
+A correção é composta por cinco proteções:
 
 1. operação `remove_from_board` via GraphQL `deleteProjectV2Item`;
-2. pós-hook de `_add_sub_issue` para remover propagação sem `Status`;
-3. guard em `create-down` para não materializar a duplicata local;
+2. pós-hook de `_add_sub_issue` (`_remove_propagated_items_without_status`)
+   que consulta `projectItems`/`fieldValues` via GraphQL (mesmo padrão de
+   `_belongs_to_board`/`get_issue`) e remove propagação sem `Status`;
+3. guard em `create-down` que exige prova de propagação — a issue já
+   registrada em outro board **configurado** com coluna conhecida — antes de
+   descartar o evento e remover o item; `parent` isolado, sem essa prova, não
+   basta (evita remover sub-issue legítima e nova);
 4. fallback de coluna para issues realmente novas ou já rastreadas; e
 5. detecção de coluna vazia como divergência a reconciliar.
 
-**Estado em 04/08/2026:** a implementação final está no commit `01f9e83` e foi
-homologada com 208 testes aprovados e 3 ignorados, mas o PR #103 foi fechado sem
-merge. Portanto, essa proteção ainda não está disponível em `main` nem deve ser
-considerada implantada em produção. Até a integração, evite criar novos
-vínculos hierárquicos entre boards sem monitorar itens sem `Status`; resíduos
-anteriores (#84/#85/#86) exigem limpeza manual com a esteira parada.
+**Histórico:** a primeira tentativa (PR #102 original) usava endpoints REST
+inexistentes para Projects V2 e um teste que fazia `monkeypatch` do próprio
+método sob teste, mascarando a ausência de cobertura real — reprovada em code
+review (issue #106). Uma segunda tentativa concorrente (sub-issue #98, PR
+#103) foi cancelada pela decisão do débito #110, que definiu #88/PR #102 como
+veículo único da correção. A implementação corrigida (GraphQL real, guard com
+prova de propagação, suíte sem monkeypatch do código sob teste) foi entregue
+no commit `a00ba7c` e integrada à branch do PR #102.
 
-Documentação: [change #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
+**Estado da entrega:** homologação aprovada em 19/08/2026. O merge do PR #102
+e o deploy continuam sendo necessários para disponibilizar a correção em
+produção. A correção previne novas duplicações, mas não remove resíduos
+anteriores (#84/#85/#86), que exigem limpeza manual com a esteira parada.
+
+Documentação: [change #88](doc/changes/88-sub-issues-propagadas-entre-boards.md),
+[registro da tentativa cancelada #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
 e [post mortem #99](doc/incidente/sub-issues-propagadas/ticket.md).
 
 ## Eventos de coluna (`on_in` / `on_out`)
@@ -548,6 +584,47 @@ detectar uma relação adicionada/removida numa issue, o sync enfileira um
 `change-down fullsync` do alvo **apenas se o snapshot do alvo ainda não
 refletir o par recíproco**. Essa checagem é a condição de parada e evita
 reação em cadeia infinita.
+
+### Sub-issues propagadas entre boards sem coluna
+
+Ao vincular uma sub-issue a um parent que está em outro GitHub Project, o
+GitHub Projects V2 pode adicionar automaticamente a filha aos projects do pai
+sem preencher o campo `Status`. Sem tratamento, esse item seria interpretado
+como uma nova issue do board e criaria arquivos locais duplicados.
+
+A sincronização trata esse efeito colateral em duas camadas:
+
+1. **Prevenção após o vínculo:** depois de criar a relação parent/child, o
+   adapter consulta via GraphQL os `projectItems` da sub-issue (com o `Status`
+   de cada item em `fieldValues`) e remove, por `deleteProjectV2Item`, os itens
+   de **outros** projects cujo `Status` está vazio. Dados de Projects V2 não
+   existem na REST API — a consulta usa o mesmo padrão de `get_issue` e
+   `_belongs_to_board`. Itens com coluna definida são preservados, inclusive
+   participações multi-board intencionais.
+2. **Defesa no `create-down`:** se um item sem coluna já está registrado em
+   outro board configurado com coluna conhecida, o core o remove do board atual
+   via `deleteProjectV2Item`, descarta o evento e não cria arquivos locais. A
+   simples presença de `parent` não basta para remover: sem prova de presença em
+   outro board, a issue pode ser uma sub-issue legítima e nova do board atual, e
+   segue o fluxo normal com o fallback da primeira coluna.
+
+O project informado ao pós-hook é sempre preservado, mesmo temporariamente sem
+`Status`; se esse project não puder ser resolvido, nada é removido. Como
+`set_children` informa o project do pai — justamente onde o item propagado
+aparece —, esse caminho é coberto deliberadamente pela camada 2, que tem a prova
+de presença no snapshot.
+
+A remoção precisa concluir antes de o evento ser descartado; falhas propagam e
+são reprocessadas pela fila. Snapshots de boards ausentes do `pipe.yml` não
+servem como prova. Além disso, uma coluna remota vazia passa a ser detectada
+como divergência: em issues já rastreadas, o `change-down` reaplica no board a
+coluna conhecida do snapshot (evitando que a mesma divergência retorne em todo
+full sync), e `create_issue` nunca deixa uma issue nascer sem `Status` — coluna
+inexistente cai na primeira opção do project com warning.
+
+> A correção previne novas duplicações, mas não remove automaticamente resíduos
+> que já haviam sido materializados localmente antes da atualização. Esses itens
+> devem ser removidos manualmente do project indevido, com a esteira parada.
 
 ### Incidente conhecido: parent recursivo (#97)
 
@@ -639,4 +716,5 @@ penalty indevidamente.
 
 ## Documentação Técnica
 
-Ver [CONTEXT.md](CONTEXT.md) para decisões técnicas e estado do projeto.
+- [Contexto e decisões técnicas](CONTEXT.md)
+- [Changelog](CHANGELOG.md)

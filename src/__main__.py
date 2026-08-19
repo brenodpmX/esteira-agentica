@@ -221,23 +221,61 @@ def get_board_ids(config: dict) -> list[str]:
     )
 
 
-def sync_board(board_id: str, config: dict) -> bool:
-    """Descobre mudanças (remotas e locais) de um único board.
+def detect_local_all(config: dict) -> bool:
+    """Descoberta local (up) em TODOS os boards a cada ciclo.
 
-    Retorna True se houve qualquer mudança detectada para este board.
+    Os efeitos colaterais de um agente são cross-board: atuando em um board
+    ele pode criar/editar/remover arquivos em outro (ex.: abrir uma issue
+    bloqueante em outro board). Se a descoberta local ficasse presa ao board
+    da rotação priorizada, esses artefatos só seriam vistos quando a rotação
+    chegasse lá — e boards de baixa prioridade podem ser inanidos enquanto os
+    de cima têm atividade, atrasando indefinidamente a criação (inclusive de
+    bloqueios). Por isso a descoberta local é global e desacoplada da rotação
+    usada para o sync remoto e a execução.
+
+    É barata (varredura de filesystem), sem custo de API do provider.
+
+    Retorna True se alguma mudança local foi enfileirada.
+    """
+    queue = ChangeQueue()
+    before = queue.size()
+    for board_id in get_board_ids(config):
+        detect_local_changes(board_id, queue)
+    return queue.size() > before
+
+
+def sync_remote_board(board_id: str) -> bool:
+    """Descoberta remota (down) de um único board (rotação priorizada).
+
+    O sync remoto consome API do provider (sujeito a rate limit), então
+    permanece por board, na ordem de prioridade da rotação — diferente da
+    descoberta local, que é global por ser barata.
+
+    Retorna True se houve mudança remota enfileirada para este board.
     Penalty não propaga — apenas interrompe e retorna o que já descobriu.
     """
     global board
     queue = ChangeQueue()
-
     try:
         sync_remote(board_id, board, queue)
     except PenaltyException:
         log.warning("Sync", f"[{board_id}] Penalty no sync remoto")
 
-    detect_local_changes(board_id, queue)
-
     return queue.has_board(board_id)
+
+
+def sync_board(board_id: str, config: dict) -> bool:
+    """Descoberta combinada de um board: local global (up) + remota (down).
+
+    Mantida por compatibilidade. O loop principal usa `detect_local_all` +
+    `sync_remote_board` diretamente para desacoplar as duas fases.
+
+    Retorna True se houve qualquer mudança detectada (up global ou down deste
+    board).
+    """
+    local = detect_local_all(config)
+    remote = sync_remote_board(board_id)
+    return local or remote
 
 
 def process_queue(config: dict):
@@ -261,6 +299,67 @@ def process_queue(config: dict):
 AUTO_ADVANCED = object()
 
 
+# Cache de cooldown de reexecução.
+#
+# Mapeia (board_id, col_id, issue_id) -> timestamp (time.time()) da última vez
+# que a issue foi entregue para execução pelo keep_task. Enquanto não decorrer
+# boards.rerun_cooldown segundos, a mesma issue (no mesmo board E coluna) é
+# pulada e o keep_task busca a próxima elegível. Passado o período, a entrada é
+# removida e a issue volta a ser elegível.
+#
+# A chave inclui a coluna de propósito: se a issue anda no board, o par
+# (board, id) se mantém mas col_id muda, gerando uma chave nova — portanto a
+# issue fica imediatamente elegível na nova coluna, sem esperar o cooldown.
+_rerun_cache: dict[tuple[str, str, str], float] = {}
+
+
+def _cooldown_seconds(config: dict) -> int:
+    """Lê boards.rerun_cooldown (segundos). 0/ausente = desabilitado."""
+    boards_cfg = config.get("boards", {})
+    return boards_cfg.get("rerun_cooldown", 0) or 0
+
+
+def _in_rerun_cooldown(board_id: str, col_id: str, issue_id, cooldown: int) -> bool:
+    """True se a issue foi executada há menos de `cooldown` segundos.
+
+    Efeito colateral: remove a entrada expirada (retornando False) para manter
+    o cache enxuto e liberar a issue para reexecução.
+    """
+    if cooldown <= 0:
+        return False
+    key = (board_id, col_id, str(issue_id))
+    ts = _rerun_cache.get(key)
+    if ts is None:
+        return False
+    if (time.time() - ts) >= cooldown:
+        del _rerun_cache[key]
+        return False
+    return True
+
+
+def _mark_rerun(board_id: str, col_id: str, issue_id) -> None:
+    """Registra que a issue foi entregue para execução agora."""
+    _rerun_cache[(board_id, col_id, str(issue_id))] = time.time()
+
+
+def _purge_expired_rerun(cooldown: int) -> None:
+    """Remove TODAS as entradas expiradas do cache de cooldown.
+
+    Chamado a cada acionamento do keep_task. Sem isso, entradas de issues que
+    saíram do board (fechadas/arquivadas/removidas) nunca seriam reavaliadas e
+    permaneceriam no cache indefinidamente, fazendo-o crescer sem limite.
+
+    Com cooldown desabilitado (<= 0) o cache é esvaziado por completo.
+    """
+    if cooldown <= 0:
+        _rerun_cache.clear()
+        return
+    now = time.time()
+    expired = [k for k, ts in _rerun_cache.items() if (now - ts) >= cooldown]
+    for k in expired:
+        del _rerun_cache[k]
+
+
 def keep_task(board_id: str, config: dict) -> dict | object | None:
     """Seleciona a próxima tarefa elegível no board indicado.
 
@@ -278,9 +377,14 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
     - Elegível se: status=='ok', coluna tem 'agent', coluna tem 'change.advance'
     - parallel:false → bloqueia auto-advance se já existe issue ativa
     - /need_human ou /blocked_by no body → bloqueada
+    - boards.rerun_cooldown → pula issue reexecutada há pouco (mesmo board+coluna)
     """
     boards_cfg = config["boards"]
     board_cfg = boards_cfg[board_id]
+    cooldown = _cooldown_seconds(config)
+    # A cada acionamento, limpa entradas expiradas para o cache não crescer
+    # indefinidamente (issues que saíram do board nunca seriam reavaliadas).
+    _purge_expired_rerun(cooldown)
 
     snap = Snapshot(board_id).load()
     columns = board_cfg.get("columns", {})
@@ -324,8 +428,13 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
             continue
         if _is_blocked(issue):
             continue
+        # Cooldown: pula a issue se foi reexecutada há pouco (mesmo board+coluna).
+        if _in_rerun_cooldown(board_id, col_id, issue["id"], cooldown):
+            continue
 
         log.info("KeepTask", f"[{board_id}] #{issue['id']} selecionada em '{col_id}'")
+        if cooldown > 0:
+            _mark_rerun(board_id, col_id, issue["id"])
         return {
             "board_id": board_id,
             "issue": issue,
@@ -466,11 +575,12 @@ def sleep_time(config: dict):
 
 
 _BANNER = r"""
- _____ ____ _____ _____ ___ ____      _
-| ____/ ___|_   _| ____|_ _|  _ \   / \
-|  _| \___ \ | | |  _|  | || |_) | / _ \
-| |___ ___) || | | |___ | ||  _ < / ___ \
-|_____|____/ |_| |_____|___|_| \_/_/   \_\
+            ___     ___    _____    ___     ___     ___     ___             ___     ___     ___    _  _    _____    ___     ___     ___   
+    o O O  | __|   / __|  |_   _|  | __|   |_ _|   | _ \   /   \    ___    /   \   / __|   | __|  | \| |  |_   _|  |_ _|   / __|   /   \  
+   o       | _|    \__ \    | |    | _|     | |    |   /   | - |   |___|   | - |  | (_ |   | _|   | .` |    | |     | |   | (__    | - |  
+  TS__[O]  |___|   |___/   _|_|_   |___|   |___|   |_|_\   |_|_|   _____   |_|_|   \___|   |___|  |_|\_|   _|_|_   |___|   \___|   |_|_|  
+ {======|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|     |_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****|_|*****| 
+./o--000´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´*`-0-0-´ 
 """
 
 
@@ -524,8 +634,13 @@ def main():
 
             current_board = board_ids[index]
 
-            # Fase 1: Descoberta no board atual
-            had_changes = sync_board(current_board, config)
+            # Fase 1: Descoberta
+            # 1a. Local (up) em TODOS os boards — efeitos colaterais de agentes
+            #     são cross-board (ex.: issue bloqueante criada em outro board).
+            local_changes = detect_local_all(config)
+            # 1b. Remota (down) apenas no board atual da rotação priorizada.
+            remote_changes = sync_remote_board(current_board)
+            had_changes = local_changes or remote_changes
 
             # Fase 2: Processamento global da fila
             process_queue(config)
@@ -541,10 +656,10 @@ def main():
 
             if task is AUTO_ADVANCED:
                 # Auto-advance local: mantém o board atual (não avança nem
-                # reinicia em 0). A próxima iteração força o sync deste board
-                # (sync_board + process_queue), propagando o movimento ao
-                # board e reconciliando o estado — deixando-o realmente pronto
-                # antes de selecionar a tarefa avançada.
+                # reinicia em 0). A próxima iteração força a descoberta deste
+                # board (detect_local_all + sync_remote_board + process_queue),
+                # propagando o movimento ao board e reconciliando o estado —
+                # deixando-o realmente pronto antes de selecionar a tarefa.
                 continue
             elif task:
                 call_agent(config, task)
