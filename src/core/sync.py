@@ -722,6 +722,13 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
 
         if accepted is not None:
             local_bodies[issue_id] = accepted
+        elif len(candidates) > 1:
+            # Ambíguo: múltiplos candidatos e nenhum aceito.
+            # NÃO tratar como "deletado" — a issue existe fisicamente,
+            # apenas a identidade é ambígua. Registrar para que o loop
+            # de delete-up a ignore (evita fechar a issue no board por
+            # engano — regressão do incidente #76/#97).
+            local_bodies[issue_id] = None  # marca presença sem path aceito
 
     # Para cada issue no snapshot com id, verificar mudanças
     for issue in snap.issues:
@@ -736,8 +743,27 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         body_path = Path(issue.get("body_path") or "")
         local_file = local_bodies.get(issue_id)
 
-        # Delete-up: body não encontrado em nenhum diretório
-        if not local_file or not local_file.exists():
+        # Delete-up: body não encontrado em nenhum diretório.
+        # Quando a resolução é ambígua (issue_id presente em local_bodies
+        # com valor None), NÃO emitir delete-up — a issue existe fisicamente,
+        # apenas não foi possível determinar com segurança qual arquivo a
+        # representa. O isolamento já foi registrado via record_orphan;
+        # a issue permanece intacta no snapshot/board até intervenção manual.
+        if local_file is None and issue_id not in local_bodies:
+            if queue.add(ChangeItem.of(SyncEvent.DELETE_UP, id=issue_id, board=board_id)):
+                issue["status"] = SyncEvent.DELETE_UP.value
+                log.info("Sync", f"[{board_id}] #{issue_id} delete-up")
+            continue
+
+        # Identidade ambígua: issue existe no filesystem mas nenhum candidato
+        # foi aceito inequivocamente. Não emitir nenhum evento (nem delete nem
+        # change) — esperar intervenção manual.
+        if local_file is None:
+            continue
+
+        # Arquivo aceito mas removido entre a descoberta e a verificação
+        # (race condition): emitir delete-up normalmente.
+        if not local_file.exists():
             if queue.add(ChangeItem.of(SyncEvent.DELETE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.DELETE_UP.value
                 log.trace("Sync", f"[{board_id}] #{issue_id} delete-up")
