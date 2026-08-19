@@ -510,9 +510,15 @@ review (issue #106). Uma segunda tentativa concorrente (sub-issue #98, PR
 #103) foi cancelada pela decisão do débito #110, que definiu #88/PR #102 como
 veículo único da correção. A implementação corrigida (GraphQL real, guard com
 prova de propagação, suíte sem monkeypatch do código sob teste) foi entregue
-no commit `a00ba7c` e integrada a este branch/PR #102.
+no commit `a00ba7c` e integrada à branch do PR #102.
 
-Documentação: [change #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
+**Estado da entrega:** homologação aprovada em 19/08/2026. O merge do PR #102
+e o deploy continuam sendo necessários para disponibilizar a correção em
+produção. A correção previne novas duplicações, mas não remove resíduos
+anteriores (#84/#85/#86), que exigem limpeza manual com a esteira parada.
+
+Documentação: [change #88](doc/changes/88-sub-issues-propagadas-entre-boards.md),
+[registro da tentativa cancelada #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
 e [post mortem #99](doc/incidente/sub-issues-propagadas/ticket.md).
 
 ## Eventos de coluna (`on_in` / `on_out`)

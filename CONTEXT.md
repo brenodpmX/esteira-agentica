@@ -686,38 +686,40 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
-## Post mortem: sub-issues propagadas entre boards (documentação v1.6.1 — #99)
+## Post mortem: sub-issues propagadas entre boards (#88/#99/#106)
 
 O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o
-vínculo hierárquico é criado, mas esses itens podem nascer sem `Status`. O core
-atual interpreta um `create-down` sem coluna como issue nova e pode materializar
-uma cópia local no board errado.
+vínculo hierárquico é criado, e esses itens podem nascer sem `Status`. Antes da
+correção, o core interpretava um `create-down` sem coluna como issue nova e
+podia materializar uma cópia local no board errado.
 
 A primeira tentativa de correção (issue #98, PR #103, commit `01f9e83`) foi
-homologada com 208 testes aprovados, mas cancelada pela decisão do débito
-#110, que definiu #88/PR #102 como veículo único da correção — o PR #103 foi
-fechado sem merge. A implementação efetivamente entregue é a do #106/PR #102
-(commit `a00ba7c`), com cinco camadas: `remove_from_board` via
-`deleteProjectV2Item`, pós-hook de limpeza pós-vínculo
-(`_remove_propagated_items_without_status`, via GraphQL real), guard no
-`create-down` com prova de propagação, fallback de coluna e reconciliação de
-coluna vazia. A suíte terminou com 221 testes aprovados e 3 ignorados, sem
-`monkeypatch` do código sob teste. Essa correção está integrada a esta branch.
+homologada, mas cancelada pela decisão do débito #110, que definiu #88/PR #102
+como veículo único — o PR #103 foi fechado sem merge. A implementação
+entregue é a do #106 no commit `a00ba7c`, integrada à branch do PR #102, com
+cinco camadas: `remove_from_board` via `deleteProjectV2Item`; pós-hook
+`_remove_propagated_items_without_status` por GraphQL; preservação explícita
+do project de origem e de itens com `Status`; guard no `create-down` com prova
+de propagação; e fallback/reconciliação de coluna vazia. A suíte canônica não
+faz `monkeypatch` do código sob teste. A homologação foi aprovada em
+19/08/2026; merge e deploy ainda são necessários para disponibilidade em
+produção.
 
 ### Regra de acesso à API de GitHub Projects V2
 
 Operações sobre projects, `projectItems`, campos de project e remoção de item
 devem usar GraphQL via `self._gql`. REST via `self._gh` fica restrito às APIs
 tradicionais de issues e pull requests. Um endpoint REST de `projectitems` foi
-inventado na primeira tentativa de correção (PR #102 original, reprovada em
-code review sob #106) e passou pelos mocks; qualquer exceção a essa regra
-exige validação contra a documentação oficial e teste de integração gated.
+inventado na primeira tentativa do PR #102 e passou pelos mocks; qualquer
+exceção a essa regra exige validação contra a documentação oficial e teste de
+integração gated.
 
 O registro completo, os fatores de reincidência e as ações preventivas estão em
-`doc/incidente/sub-issues-propagadas/ticket.md`. O conteúdo funcional planejado
-e o estado de integração estão em
-`doc/changes/98-sub-issues-propagadas-entre-boards.md`; a entrega documental
-v1.6.1 está em `doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
+`doc/incidente/sub-issues-propagadas/ticket.md`. A entrega efetiva está em
+`doc/changes/88-sub-issues-propagadas-entre-boards.md`; o histórico da tentativa
+cancelada está em `doc/changes/98-sub-issues-propagadas-entre-boards.md`; e a
+entrega documental do post mortem está em
+`doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
 
 ## Robustez e Segurança do Estado (v1.5.0 — Incidente "Issue Fantasma")
 

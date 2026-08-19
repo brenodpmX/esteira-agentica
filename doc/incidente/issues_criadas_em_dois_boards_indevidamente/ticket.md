@@ -1,8 +1,8 @@
 # Incidente — Issues criadas em dois boards indevidamente
 
-Status: Fenômeno 1 em correção — veículo único #88 / PR #102
+Status: Fenômeno 1 implementado e homologado — veículo único #88 / PR #102; merge e deploy pendentes
 Owner: engineering
-Last updated: 2026-08-03
+Last updated: 2026-08-19
 
 ## Registro
 
@@ -257,8 +257,17 @@ controles abaixo:
 - fallback de `create_issue`, divergência de coluna vazia e reconciliação de
   `change-down` permanecem cobertos, sem ciclo de reintrodução do item removido.
 
-A versão 1.6.1 e o Fenômeno 1 só devem ser marcados como entregues após o PR
-#102 estar sem conflitos, a suíte completa passar e esses cenários serem
-verificados. O Fenômeno 2 (snapshots órfãos de boards removidos da configuração)
-continua sendo causa independente e fica fora desta entrega, exceto por não
-poder fornecer evidência para uma remoção.
+## Resultado da entrega (2026-08-19)
+
+Os controles acima foram implementados no retrabalho #106 (commit `a00ba7c`),
+integrado à branch do veículo #88/PR #102. A implementação usa GraphQL real,
+preserva o project de origem, exige prova de propagação no `create-down` e
+possui suíte canônica sem `monkeypatch` do método sob teste. A branch foi
+atualizada com `main` e a homologação foi aprovada em 19/08/2026.
+
+O Fenômeno 1 está corrigido no veículo de entrega; merge do PR #102 e deploy
+continuam necessários para disponibilidade em produção. O Fenômeno 2
+(snapshots órfãos de boards removidos da configuração) permanece uma causa
+independente e fora desta entrega, exceto por não poder fornecer evidência para
+remoção. Resíduos anteriores, como #84/#85/#86, exigem limpeza manual com a
+esteira parada.
