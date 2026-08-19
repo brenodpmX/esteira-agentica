@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.commands import annotations_doc, split_body
+from src.core.commands import annotations_doc, AGENT_LEVEL_PREFIX
 from src.core.snapshot import BOARDS_DIR
 
 REPO_DIR = Path("repo")
@@ -29,6 +29,9 @@ PROTECTED_PATHS: list[str] = [
     ".pipe/changeQueue.json",
     ".pipe/throttle.json",
     ".pipe/throttle-*.json",
+    ".pipe/deadLetter.json",
+    ".pipe/orphanFiles.json",
+    ".pipe/pipe.lock",
 ]
 
 
@@ -111,19 +114,17 @@ def _assert_no_protected(prompt: str) -> None:
 
 
 def agent_level(issue: dict) -> str | None:
-    """Lê o nível de agente da issue (tag /agent_level no bloco @---).
+    """Lê o nível de agente da issue a partir das labels do board.
 
-    O nível funciona como um "planning poker" simplificado (low|medium|high
-    por padrão, configurável pelo usuário). É persistido no body via
-    /agent_level.
+    O nível é armazenado como label `agent-level-<nível>` no GitHub
+    (ex.: agent-level-low, agent-level-medium, agent-level-high).
+    Essa label é sincronizada nativamente pelo board, eliminando a
+    dependência de estado local que causava o bug de preservação no sync-down.
     """
-    body_path = Path(issue.get("body_path", ""))
-    if not body_path.exists():
-        return None
-    content = body_path.read_text(encoding="utf-8")
-    raw_body = content.split("\n", 1)[1] if "\n" in content else ""
-    _, cmds = split_body(raw_body)
-    return cmds.agent_level
+    for label in issue.get("labels", []) or []:
+        if label.startswith(AGENT_LEVEL_PREFIX):
+            return label[len(AGENT_LEVEL_PREFIX):]
+    return None
 
 
 def resolve_agent_id(col: dict, issue: dict) -> str:
@@ -166,7 +167,11 @@ class AgentParams:
     prompt: str
     work_dir: str          # diretório de trabalho do agente (clone em repo/<repo_id>)
     repo_id: str = None    # id do repositório alvo (chave em git.repo)
+    issue_title: str = None  # título da issue (para logs)
+    col_name: str = None     # nome da coluna (para logs)
     context: str = None
+    col_name: str = ""     # nome humanizado da coluna/etapa (log de terminal)
+    title: str = ""        # título da issue (log de terminal)
 
 
 class AgentPort(ABC):
@@ -261,8 +266,13 @@ def build_prompt(config: dict, task: dict) -> str:
         lines.append("```bash")
         lines.append(f"cd {work_dir}")
         lines.append("git fetch origin")
-        lines.append(f"git checkout {origin_branch} && git pull origin {origin_branch}")
-        lines.append(f"git checkout -b {branch_name}")
+        # Criação ATÔMICA: a branch nasce explicitamente de origin/<origem>.
+        # Não use a forma em duas etapas (`git checkout <origem> && git pull` +
+        # `git checkout -b <branch>`): se o checkout/pull da origem falhar, o
+        # `checkout -b` ainda cria a branch a partir do HEAD corrente — base
+        # errada e silenciosa (bug #108). Aqui, se origin/<origem> não existir,
+        # o comando falha em vez de inventar uma base.
+        lines.append(f"git checkout -b {branch_name} origin/{origin_branch}")
         lines.append("```")
         lines.append("")
 
@@ -301,7 +311,17 @@ def build_prompt(config: dict, task: dict) -> str:
     # ── Merge Request (merge / create-merge) ──
     if gitevents in ("merge", "create-merge"):
         lines.append("## Pull Request")
+        lines.append("")
+        lines.append(f"Antes de abrir o PR, garanta que a branch contém a ponta de "
+                     f"`origin/{merge_branch}`. Um PR aberto a partir de base defasada "
+                     f"nasce com conflitos e diff poluído (bug #108). Se o merge abaixo "
+                     f"gerar conflito, resolva-o antes de prosseguir.")
         lines.append("```bash")
+        lines.append(f"cd {work_dir}")
+        lines.append("git fetch origin")
+        lines.append(f"git merge-base --is-ancestor origin/{merge_branch} HEAD "
+                     f"|| git merge origin/{merge_branch}")
+        lines.append(f"git push origin {branch_name}")
         lines.append(f"gh pr create --base {merge_branch} --head {branch_name} "
                      f"--title \"merge: {branch_name} -> {merge_branch}\" "
                      f"--body \"Automated PR from agent\"")

@@ -15,6 +15,69 @@ Segue semântico: `MAJOR.MINOR.PATCH`.
 
 A versão é exibida no log ao iniciar a esteira.
 
+## Changelog
+
+### compose.dev.yml — estado/logs em bind mount no host (v1.8.3 — US-04)
+
+Cria o override `compose.dev.yml` (previsto na US-04, até então inexistente — os
+testes ficavam em `skip`). Substitui os named volumes de estado por bind mounts
+configuráveis, dando acesso a logs/estado pelo host. Como o container roda como
+uid 1000, os arquivos criados no host pertencem ao usuário de mesmo uid (não ao
+root), ficando fáceis de inspecionar e apagar.
+
+- Bump: `1.8.2` → `1.8.3` (PATCH — adição de override de dev, sem breaking change
+  no compose base de produção)
+- `compose.dev.yml`: `${PIPE_STATE_DIR:-./.pipe}:/app/.pipe`,
+  `${PIPE_REPO_DIR:-./repo}:/app/repo`, `${PIPE_LOGS_DIR:-./logs}:/app/logs`;
+  merge por destino substitui os named volumes do base; `init: true` herdado.
+- Uso: `docker compose -f docker-compose.yml -f compose.dev.yml up` ou
+  `COMPOSE_FILE=docker-compose.yml:compose.dev.yml` no `.env`.
+- **Operação:** os diretórios do host (`.pipe`, `repo`, `logs`) devem existir com
+  posse do usuário antes do `up` — se não existirem, o Docker os cria como root.
+- Testes US-04 (`TestBindMountsEstado`, `TestDefaultsInline`) saíram do `skip`;
+  `tests/test_docker_compose.py` passa 107/107.
+
+### Fix: posse dos named volumes com usuário não-root (v1.8.2)
+
+Correção de `PermissionError` no arranque em Docker: o container roda como `pipe`
+(uid 1000), mas os mountpoints dos named volumes (`/app/logs`, `/app/.pipe`,
+`/app/repo`, `/home/pipe/.kiro`) não existiam na imagem — o Docker os criava como
+`root`, impedindo a escrita (ex.: `logs/<data>.json`).
+
+- Bump: `1.8.1` → `1.8.2` (PATCH — correção de bug)
+- `Dockerfile`: pré-cria esses diretórios como `pipe` (`mkdir -p` após `USER pipe`),
+  para que cada volume — vazio na primeira criação — herde a posse `pipe:pipe`.
+- **Operação:** volumes já criados com posse `root` precisam ser recriados
+  (`docker compose down -v`) para a correção surtir efeito.
+
+### Correções: get_board_ids + build Docker canônico (v1.8.1)
+
+Bump PATCH consolidando correção de bug de arranque e ajustes no build Docker.
+
+- Bump: `1.8.0` → `1.8.1` (PATCH — correção de bug + ajustes de build)
+- **Fix `get_board_ids`** (`src/__main__.py`): passou a ignorar chaves escalares
+  dentro de `boards` (ex.: `rerun_cooldown`) via `isinstance(cfg, dict)`,
+  corrigindo `AttributeError: 'int' object has no attribute 'get'` no arranque.
+  Alinha o comportamento com `board.board_ids` e a validação de `config.py`.
+- **`docker-compose.yml`**: `build` na forma longa com `build.secrets: [ssh_key]`,
+  para que `docker compose build` injete a chave SSH como secret de build (usado
+  pelo `git clone` da última camada do Dockerfile). Alinha com o runbook.
+- **`docker/versions.env` + `Dockerfile`**: pins atualizados para desbloquear o
+  build — `gh 2.96.0 → 2.97.0` e `kiro-cli 2.13.1 → 2.18.0` (SHA-256 repinado).
+  Build canônico validado ponta a ponta (`docker build` completo). A fragilidade
+  recorrente desses pins ficou registrada em **Pendências**.
+
+### Preflight de Credenciais (v1.6.0 — US-02)
+
+Adição de comportamento novo: verificação de credenciais antes do startup
+principal (preflight). Implementado nas tasks #34 (kiro_cli_agent) e #35
+(startup), consolidado nesta task #36 com o bump MINOR correspondente.
+
+- Bump: `1.5.0` → `1.6.0` (MINOR — adição de comportamento, sem breaking change)
+- Funcionalidade: `preflight()` verifica SSH, GitHub CLI e permissões do repo
+  antes de qualquer operação destrutiva
+- Referências: ADR-04, `doc/arch/rodar-no-docker/us-02-autenticacao-headless.md`
+
 ## Visão Geral
 
 Esteira automatizada de agentes de IA com arquitetura hexagonal. Reescrita do projeto `oldversion/` para suportar múltiplas plataformas de board (GitHub Projects, ClickUp, etc) e múltiplos adapters de agente (kiro-cli, etc).
@@ -267,11 +330,29 @@ Cobertura em `tests/test_rate_limit_detection.py`.
 
 ### Substituição de agente por nível (`override-agent`)
 
-A coluna tem um `agent` default. Se a issue traz `/agent_level <nível>` no bloco
-`@---` e `<nível>` é chave de `override-agent`, usa o agente do valor; senão, o
-`agent` default. Como cada agente carrega o próprio `model`, a troca de agente
-também troca o model. Resolvido em `agent.py` (`agent_level` +
+A coluna tem um `agent` default. O nível de execução de uma issue é armazenado
+como label `agent-level-<nível>` no GitHub (ex.: `agent-level-low`,
+`agent-level-medium`, `agent-level-high`). Essa label é sincronizada
+nativamente pelo board, eliminando a dependência de estado local.
+
+Se a issue possuir uma label `agent-level-<nível>` e `<nível>` for chave de
+`override-agent`, usa o agente do valor; senão, o `agent` default. Como cada
+agente carrega o próprio `model`, a troca de agente também troca o model.
+
+Resolvido em `agent.py` (`agent_level` lê `issue["labels"]` diretamente +
 `resolve_agent_id`), validado em `config.py`.
+
+No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
+`@---` do body. O sync-up chama `all_labels()` (em `commands.py`), que emite
+`agent-level-<nível>` no conjunto de labels efetivas, gravando a label no board
+via `apply_commands`. A label `agent-level-*` é tratada como campo especial
+(análogo a `need_human`): extraída em `from_issue`, reemitida em `all_labels`,
+nunca sobrescrita pelo comando `/labels` do usuário.
+
+Migração de issues legadas: o `board_full_sync` chama
+`migrate_agent_level_labels` (em `sync.py`) que, para cada issue com
+`/agent_level` no body mas sem label `agent-level-*` no snapshot, enfileira um
+`change-up` para que o sync-up grave a label no board.
 
 ### Contexto do agente
 
@@ -402,7 +483,7 @@ de comandos separado por uma linha `@---`.
 - `split_body(raw)` → `(body_limpo, IssueCommands)`. Múltiplos `@---`: o último
   vence, anteriores removidos.
 - `compose_body(body, cmds)` → body completo com bloco.
-- `from_issue(issue)` → IssueCommands (extrai need_human das labels).
+- `from_issue(issue)` → IssueCommands (extrai `need_human` e `agent_level` das labels; ambos tratados como campos especiais — não aparecem em `cmds.labels`).
 - `annotations_doc()` → documentação compartilhada por prompts e contexts.
 
 Filosofia presença/ausência: o estado escrito é o estado final (SET). Sem
@@ -578,22 +659,40 @@ destrutiva (dentro da quota de 5000 pontos/hora).
 ## Pendências
 
 - [ ] Implementar adapter ClickUp
+- [ ] **Fragilidade dos pins Docker — tratar na próxima intervenção nas
+  configurações Docker.** O `gh` é instalado do canal `stable` do repo APT, que
+  serve **apenas a última versão** publicada; e o `kiro-cli` é baixado de uma URL
+  `/latest/` com `KIRO_CLI_SHA256` pinado. Como consequência, a cada novo release
+  upstream o build canônico quebra (`gh=X.Y.Z was not found` ou
+  `sha256 did NOT match`), exigindo bump manual em `docker/versions.env` + o
+  `Dockerfile`. Em 2026-08-14 foram repinados `gh 2.96.0 → 2.97.0` e
+  `kiro-cli 2.13.1 → 2.18.0` só para desbloquear. Avaliar como resolver de forma
+  durável: usar o `gh` empacotado no Debian (`2.46.0-3`, estável no `trixie`) e/ou
+  uma URL versionada do kiro-cli (em vez de `/latest/`), fixando também o digest da
+  imagem base.
 
-## Distribuição Docker (v1.6.0)
+## Distribuição Docker (v1.6.0; build canônico revisado em v1.8.1)
 
-A distribuição homologada usa `Dockerfile` e `docker-compose.yml` na raiz.
-Antes do build, `prepare-docker.sh` copia da instalação local os binários
-`kiro-cli` (launcher) e `kiro-cli-chat` (implementação do subcomando `chat`).
-Ambos são obrigatórios; a ausência do segundo reproduz o erro corrigido na
-issue #120.
+O build canônico usa `Dockerfile` e `docker-compose.yml` na raiz. O `kiro-cli`
+**não** é copiado do host: ele é baixado no build a partir de `KIRO_CLI_URL`
+(versão em `docker/versions.env`, validada por `KIRO_CLI_SHA256`). O `gh` é
+instalado via APT na versão pinada (`GH_VERSION`), e o código-fonte é clonado no
+build (última camada) usando a chave SSH como **secret do BuildKit** — a chave
+nunca persiste em nenhuma camada da imagem. A imagem roda como usuário não-root
+`pipe` (uid 1000). `prepare-docker.sh` é legado do modelo antigo (COPY do host) e
+não faz parte do build canônico.
 
-Credenciais e configuração entram apenas em runtime: `GH_TOKEN` e
-`KIRO_API_KEY` por ambiente, chave SSH e `pipe.yml` por bind, e contextos pelo
-diretório `contexts/`. O estado é persistido nos volumes `pipe_state`,
-`pipe_repos` e `pipe_logs`.
+Credenciais e configuração entram via `.env` (`env_file`): `GH_TOKEN` e
+`KIRO_API_KEY` como variáveis, e a chave SSH como Docker secret alimentado por
+`SSH_KEY_FILE_HOST` (caminho absoluto no host), montada em `/run/secrets/ssh_key`
+— `PIPE_SSH_KEY_FILE` é fixado pelo compose nesse caminho. O `pipe.yml` e os
+`contexts/` entram como bind read-only. O estado é persistido nos volumes
+`pipe-state`, `pipe-repo`, `pipe-logs`, `kiro-home` e `kiro-local`.
 
-A operação usa `PYTHONUNBUFFERED=1` para logs em tempo real, `init: true` para
-repassar sinais e handler de `SIGTERM` para shutdown limpo. O serviço usa
-`restart: unless-stopped`. A arquitetura implementada, limitações e evidências
-de homologação estão em `doc/architecture/rodar-no-docker/arquitetura.md`; o
-guia operacional está no `README.md`.
+`docker compose build` ativa o BuildKit e passa o secret de build via
+`build.secrets` (ver v1.8.1). A operação usa `PYTHONUNBUFFERED=1` para logs em
+tempo real, `init: true` para repassar sinais e handler de `SIGTERM` para
+shutdown limpo. O serviço usa `restart: unless-stopped`. A arquitetura, limitações
+e evidências de homologação estão em
+`doc/architecture/rodar-no-docker/arquitetura.md`; o guia operacional está no
+`README.md` e no `doc/runbook/docker.md`.

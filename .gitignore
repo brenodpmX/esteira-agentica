@@ -19,5 +19,11 @@ pipe.yml
 kiro-cli
 kiro-cli-chat
 
+# Variáveis de ambiente (segredos — nunca versionar)
+.env
+
 # Código de referência (versão antiga)
 oldversion/
+
+# Binário kiro-cli copiado pelo prepare-docker.sh (contexto de build, não deve ser versionado)
+kiro-cli

@@ -129,6 +129,9 @@ class TestProtectedPathsConstant:
         ".pipe/changeQueue.json",
         ".pipe/throttle.json",
         ".pipe/throttle-*.json",
+        ".pipe/deadLetter.json",
+        ".pipe/orphanFiles.json",
+        ".pipe/pipe.lock",
     ])
     def test_protected_paths_contem_padroes_minimos(self, padrao):
         assert PROTECTED_PATHS is not None, "PROTECTED_PATHS não implementada ainda"
@@ -183,6 +186,31 @@ class TestAssertNoProtected:
             pytest.skip("_assert_no_protected não implementada ainda")
         prompt = "Config em .pipe/throttle-myboard.json."
         with pytest.raises(ValueError, match="throttle"):
+            _assert_no_protected(prompt)
+
+    def test_guard_levanta_para_pipe_lock(self):
+        """.pipe/pipe.lock (lock de instância — issue LockGuard) deve ser protegido."""
+        if _assert_no_protected is None:
+            pytest.skip("_assert_no_protected não implementada ainda")
+        prompt = "Verifique .pipe/pipe.lock antes de continuar."
+        with pytest.raises(ValueError, match="pipe.lock"):
+            _assert_no_protected(prompt)
+
+    def test_guard_levanta_com_path_absoluto_pipe_lock(self):
+        if _assert_no_protected is None:
+            pytest.skip("_assert_no_protected não implementada ainda")
+        prompt = "Arquivo: /home/user/.pipe/pipe.lock."
+        with pytest.raises(ValueError):
+            _assert_no_protected(prompt)
+
+    def test_guard_levanta_para_orphanfiles_json(self):
+        """Issue #147: .pipe/orphanFiles.json é o registro de isolamento de
+        arquivos órfãos (record_orphan) e deve ser protegido como os demais
+        arquivos de estado interno."""
+        if _assert_no_protected is None:
+            pytest.skip("_assert_no_protected não implementada ainda")
+        prompt = "Verifique .pipe/orphanFiles.json antes de continuar."
+        with pytest.raises(ValueError, match="orphanFiles.json"):
             _assert_no_protected(prompt)
 
     def test_guard_levanta_com_path_absoluto_snapshot(self):
@@ -243,6 +271,11 @@ class TestBuildPromptNaoExpoePaths:
         assert "throttle.json" not in prompt, \
             "O prompt não deve referenciar throttle.json"
 
+    def test_prompt_nao_contem_pipe_lock(self, tmp_path):
+        prompt = _build_prompt(tmp_path)
+        assert "pipe.lock" not in prompt, \
+            "O prompt não deve referenciar pipe.lock"
+
     def test_prompt_guard_nao_levanta(self, tmp_path):
         """_assert_no_protected não deve levantar para o prompt gerado.
 
@@ -260,6 +293,7 @@ class TestBuildPromptNaoExpoePaths:
         assert "snapshot.json" not in prompt
         assert "changeQueue.json" not in prompt
         assert "throttle.json" not in prompt
+        assert "pipe.lock" not in prompt
 
     def test_prompt_contem_path_da_issue_mas_nao_do_snapshot(self, tmp_path):
         """O path do body da issue DEVE aparecer; o snapshot NÃO deve."""
