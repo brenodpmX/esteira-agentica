@@ -35,6 +35,16 @@ Essas mudanças existem no commit `01f9e83`, mas não estão nesta branch nem em
 `main`. O PR #103 foi fechado sem merge. Este change file registra o conteúdo
 homologado e a pendência de integração; não constitui anúncio de deploy.
 
+> **Nota (débito #110):** este vetor de correção (issue #98, PR #103) foi
+> cancelado em favor da issue #88/PR #102 como veículo único. A implementação
+> efetivamente entregue e integrada a `main` é a do #106 (commit `a00ba7c`),
+> com a mesma cobertura funcional descrita acima mas usando GraphQL real (sem
+> os endpoints REST inexistentes reprovados no code review original do #102) e
+> suíte sem `monkeypatch` do código sob teste (221 testes aprovados e 3
+> ignorados). Ver `README.md`, seção "Incidente: sub-issues propagadas entre
+> boards (#88/#98/#99/#106)", e `CONTEXT.md`, seção "Post mortem: sub-issues
+> propagadas entre boards".
+
 A correção não limpa duplicatas anteriores. Resíduos como #84/#85/#86 devem ser
 removidos numa operação manual separada, com a esteira parada.
 

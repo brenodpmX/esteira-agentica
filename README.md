@@ -482,28 +482,35 @@ Validar credenciais e retornar JWT.
 /agent_level high
 ```
 
-### Incidente: sub-issues propagadas entre boards (#98/#99)
+### Incidente: sub-issues propagadas entre boards (#88/#98/#99/#106)
 
-**Versão desta documentação: 1.6.1.** Ao vincular uma sub-issue a um parent
-presente em outro GitHub Project, o GitHub Projects V2 pode propagar a filha
-para o project do parent sem preencher o campo `Status`. O sync então pode
-interpretar o item sem coluna como uma issue nova daquele board, criar arquivos
-locais duplicados e executar o agente no contexto errado.
+Ao vincular uma sub-issue a um parent presente em outro GitHub Project, o
+GitHub Projects V2 pode propagar a filha para o project do parent sem
+preencher o campo `Status`. O sync então pode interpretar o item sem coluna
+como uma issue nova daquele board, criar arquivos locais duplicados e
+executar o agente no contexto errado.
 
-A correção homologada para o incidente é composta por cinco proteções:
+A correção é composta por cinco proteções:
 
 1. operação `remove_from_board` via GraphQL `deleteProjectV2Item`;
-2. pós-hook de `_add_sub_issue` para remover propagação sem `Status`;
-3. guard em `create-down` para não materializar a duplicata local;
+2. pós-hook de `_add_sub_issue` (`_remove_propagated_items_without_status`)
+   que consulta `projectItems`/`fieldValues` via GraphQL (mesmo padrão de
+   `_belongs_to_board`/`get_issue`) e remove propagação sem `Status`;
+3. guard em `create-down` que exige prova de propagação — a issue já
+   registrada em outro board **configurado** com coluna conhecida — antes de
+   descartar o evento e remover o item; `parent` isolado, sem essa prova, não
+   basta (evita remover sub-issue legítima e nova);
 4. fallback de coluna para issues realmente novas ou já rastreadas; e
 5. detecção de coluna vazia como divergência a reconciliar.
 
-**Estado em 04/08/2026:** a implementação final está no commit `01f9e83` e foi
-homologada com 208 testes aprovados e 3 ignorados, mas o PR #103 foi fechado sem
-merge. Portanto, essa proteção ainda não está disponível em `main` nem deve ser
-considerada implantada em produção. Até a integração, evite criar novos
-vínculos hierárquicos entre boards sem monitorar itens sem `Status`; resíduos
-anteriores (#84/#85/#86) exigem limpeza manual com a esteira parada.
+**Histórico:** a primeira tentativa (PR #102 original) usava endpoints REST
+inexistentes para Projects V2 e um teste que fazia `monkeypatch` do próprio
+método sob teste, mascarando a ausência de cobertura real — reprovada em code
+review (issue #106). Uma segunda tentativa concorrente (sub-issue #98, PR
+#103) foi cancelada pela decisão do débito #110, que definiu #88/PR #102 como
+veículo único da correção. A implementação corrigida (GraphQL real, guard com
+prova de propagação, suíte sem monkeypatch do código sob teste) foi entregue
+no commit `a00ba7c` e integrada a este branch/PR #102.
 
 Documentação: [change #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
 e [post mortem #99](doc/incidente/sub-issues-propagadas/ticket.md).

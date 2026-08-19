@@ -693,22 +693,25 @@ vínculo hierárquico é criado, mas esses itens podem nascer sem `Status`. O co
 atual interpreta um `create-down` sem coluna como issue nova e pode materializar
 uma cópia local no board errado.
 
-A correção #98 foi implementada e homologada no commit `01f9e83`, com cinco
-camadas: `remove_from_board` via `deleteProjectV2Item`, limpeza pós-vínculo,
-guard no `create-down`, fallback de coluna e reconciliação de coluna vazia. A
-suíte da hotfix terminou com 208 testes aprovados e 3 ignorados. Contudo, o PR
-#103 foi fechado sem merge em 03/08/2026; o commit não pertence a `main` nem a
-esta branch documental. Logo, a correção não está disponível no runtime desta
-versão e não deve ser anunciada como implantada.
+A primeira tentativa de correção (issue #98, PR #103, commit `01f9e83`) foi
+homologada com 208 testes aprovados, mas cancelada pela decisão do débito
+#110, que definiu #88/PR #102 como veículo único da correção — o PR #103 foi
+fechado sem merge. A implementação efetivamente entregue é a do #106/PR #102
+(commit `a00ba7c`), com cinco camadas: `remove_from_board` via
+`deleteProjectV2Item`, pós-hook de limpeza pós-vínculo
+(`_remove_propagated_items_without_status`, via GraphQL real), guard no
+`create-down` com prova de propagação, fallback de coluna e reconciliação de
+coluna vazia. A suíte terminou com 221 testes aprovados e 3 ignorados, sem
+`monkeypatch` do código sob teste. Essa correção está integrada a esta branch.
 
 ### Regra de acesso à API de GitHub Projects V2
 
 Operações sobre projects, `projectItems`, campos de project e remoção de item
 devem usar GraphQL via `self._gql`. REST via `self._gh` fica restrito às APIs
 tradicionais de issues e pull requests. Um endpoint REST de `projectitems` foi
-inventado em duas tentativas de correção e passou pelos mocks; qualquer exceção
-a essa regra exige validação contra a documentação oficial e teste de integração
-gated.
+inventado na primeira tentativa de correção (PR #102 original, reprovada em
+code review sob #106) e passou pelos mocks; qualquer exceção a essa regra
+exige validação contra a documentação oficial e teste de integração gated.
 
 O registro completo, os fatores de reincidência e as ações preventivas estão em
 `doc/incidente/sub-issues-propagadas/ticket.md`. O conteúdo funcional planejado
