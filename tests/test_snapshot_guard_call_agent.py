@@ -43,8 +43,13 @@ COL_ID = "doing"
 
 @pytest.fixture(autouse=True)
 def _chdir_tmp(tmp_path, monkeypatch):
-    """Isola .pipe/ em um diretório temporário por teste."""
+    """Isola .pipe/ em um diretório temporário por teste.
+
+    Cria .pipe/ de antemão: InstanceLock.acquire() (issue #151) não cria
+    diretórios pais, apenas o arquivo do lock.
+    """
     monkeypatch.chdir(tmp_path)
+    (tmp_path / ".pipe").mkdir(exist_ok=True)
     yield
 
 
