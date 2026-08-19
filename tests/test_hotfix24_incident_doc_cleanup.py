@@ -29,9 +29,10 @@ Casos de teste:
          (isolamento de IDs/Issue Fantasma) — não responde à Pergunta 1 do ticket hotfix24
   TC-03  Fenômeno 2 (snapshot órfão): `_find_snapshot_issue` no código real do projeto
          não filtra por boards configurados — fix NÃO implementado
-  TC-04  Fenômeno 1 (sub-issue propagada sem coluna): nenhuma primitiva de remoção de
-         item de projeto (`deleteProjectV2Item`/`remove_from_board`) existe no código
-         real do projeto — fix NÃO implementado (permanece em #106, ainda em análise)
+  TC-04  Fenômeno 1 (sub-issue propagada sem coluna): a primitiva de remoção de item de
+         projeto (`deleteProjectV2Item`/`remove_from_board`) e o guard de
+         `_apply_create_down` foram implementados e homologados sob #106/PR #102
+         (commit `a00ba7c`) — fix IMPLEMENTADO nesta branch
   TC-05  leitura do ticket de incidente via `git show <branch>:<path>` sem checkout
   TC-06  cherry-pick de commit de documentação para branch temporária a partir de epic
   TC-07  cherry-pick preserva o conteúdo do ticket (dois fenômenos, causa raiz, decisão)
@@ -273,41 +274,45 @@ class TestTC03Fenomeno2SnapshotOrfaoNaoCorrigido:
         )
 
 
-# ─── TC-04: Fenômeno 1 (sub-issue propagada) — fix NÃO implementado ─────────
+# ─── TC-04: Fenômeno 1 (sub-issue propagada) — fix implementado (#106) ──────
 
 
-class TestTC04Fenomeno1SubIssuePropagadaNaoCorrigido:
-    """TC-04: O ticket do hotfix24 propõe uma primitiva de remoção de item de
-    projeto (`deleteProjectV2Item`/`remove_from_board`) e um guard em
-    `_apply_create_down`. No código real do projeto, nenhuma dessas
-    primitivas existe — a correção permanece em andamento sob a issue #106
-    (board bug/incidente), não faz parte de `epic`/`main` ainda.
+class TestTC04Fenomeno1SubIssuePropagadaCorrigido:
+    """TC-04: O ticket do hotfix24 propunha uma primitiva de remoção de item
+    de projeto (`deleteProjectV2Item`/`remove_from_board`) e um guard em
+    `_apply_create_down`. A correção foi implementada e homologada sob a
+    issue #106/PR #102 (commit `a00ba7c`, mergeado nesta branch) e agora faz
+    parte de `main`: `_remove_propagated_items_without_status` usa GraphQL
+    (mesmo padrão de `_belongs_to_board`/`get_issue`) para a consulta e
+    `deleteProjectV2Item` para a remoção, e `_apply_create_down` exige prova
+    de propagação (issue registrada em outro board configurado com coluna
+    conhecida) antes de descartar o evento.
     """
 
-    def test_no_delete_project_v2_item_mutation_in_source(self, project_root):
+    def test_delete_project_v2_item_mutation_present_in_source(self, project_root):
         src_dir = project_root / "src"
         matches = []
         for path in src_dir.rglob("*.py"):
             text = path.read_text()
             if "deleteProjectV2Item" in text or "remove_from_board" in text:
                 matches.append(str(path))
-        assert matches == [], (
-            f"Nenhum arquivo de produção deve conter a primitiva de remoção "
-            f"de item de projeto ainda — encontrado em: {matches}. Se este "
-            f"teste falhar, a correção de #106 pode ter sido mergeada e o "
-            f"comentário da issue #85 deve ser atualizado."
+        assert matches, (
+            "Esperada a primitiva de remoção de item de projeto "
+            "(deleteProjectV2Item/remove_from_board) em produção — fix do "
+            "#106 deveria estar mergeado nesta branch."
         )
 
-    def test_apply_create_down_has_no_empty_column_guard_yet(self, project_root):
+    def test_apply_create_down_has_empty_column_guard(self, project_root):
         sync_py = project_root / "src" / "core" / "sync.py"
         content = sync_py.read_text()
         def_idx = content.find("def _apply_create_down(")
         assert def_idx != -1
         next_def_idx = content.find("\ndef ", def_idx + 1)
         body = content[def_idx: next_def_idx if next_def_idx != -1 else None]
-        assert "remove_from_board" not in body, (
-            "_apply_create_down ainda não deve conter o guard de remoção "
-            "por coluna vazia — confirma que o Fenômeno 1 não foi corrigido."
+        assert "remove_from_board" in body, (
+            "_apply_create_down deveria conter o guard de remoção por coluna "
+            "vazia com prova de propagação — confirma que o Fenômeno 1 foi "
+            "corrigido pelo #106."
         )
 
 

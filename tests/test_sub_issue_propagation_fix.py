@@ -453,8 +453,12 @@ def test_create_down_falha_de_remocao_nao_consome_o_evento(monkeypatch, tmp_path
     queue = ChangeQueue()
     queue.add(sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True))
 
-    with pytest.raises(Exception, match="500 do GitHub"):
-        sync.apply_changes(board, queue, CONFIG)
+    # apply_changes classifica a falha como transitória (mensagem genérica,
+    # ver classify_error) e reenfileira em vez de propagar — comportamento
+    # introduzido por #144 para evitar head-of-line blocking (incidente #97).
+    # A garantia relevante ao guard do #106 permanece: o evento não é
+    # consumido/descartado e nenhum arquivo local é criado após a falha.
+    sync.apply_changes(board, queue, CONFIG)
 
     # At-least-once: item continua na fila para o próximo ciclo.
     pending = queue.getNext()
