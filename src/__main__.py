@@ -481,102 +481,129 @@ def main():
     log.info("Pipe", f"Iniciando esteira agêntica v{VERSION}")
 
     config = check_config()
-    startup(config)
-    
-    platform = config["boards"]["platform"]
-    if platform not in ADAPTERS:
-        log.error("Config", f"Plataforma '{platform}' não suportada. Use: {list(ADAPTERS.keys())}")
-        raise SystemExit(1)
-    
-    adapter = ADAPTERS[platform]()
-    board = Board(adapter)
-    board.connect(config)
 
-    # Gate de permissões: não inicia a esteira sem poder operar o repositório.
+    # InstanceLock: garante exclusividade de instância por diretório de estado.
+    # Adquire ANTES de startup() para evitar que uma 2ª instância destrua a
+    # fila da 1ª (causa-raiz do incidente #97). A liberação fica no finally
+    # externo, cobrindo término normal, SIGTERM, KeyboardInterrupt, falhas de
+    # startup e exceções do loop.
+    from src.core.lock import InstanceLock, LockHeldError
+
+    lock = InstanceLock()
+    lock.path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        board.check_access(config)
-    except BoardAccessError as e:
-        log.error("Startup", f"Permissões insuficientes - esteira não iniciada: {e}")
+        lock.acquire()
+    except LockHeldError as e:
+        log.error(
+            "Pipe",
+            f"Outra instância já está ativa: {e}",
+            event="instance_lock_refused",
+            lock_path=str(e.path),
+            holder_pid=e.holder_pid,
+            holder_started_at=e.holder_started_at,
+            holder_host=e.holder_host,
+        )
         raise SystemExit(1)
 
-    board_full_sync(config)
-    last_full_sync = datetime.now().date()
+    try:
+        startup(config)
 
-    # Array fixo de boards ordenados por prioridade
-    board_ids = get_board_ids(config)
-    index = 0
+        platform = config["boards"]["platform"]
+        if platform not in ADAPTERS:
+            log.error("Config", f"Plataforma '{platform}' não suportada. Use: {list(ADAPTERS.keys())}")
+            raise SystemExit(1)
 
-    log.info("Pipe", "Esteira agêntica iniciada")
+        adapter = ADAPTERS[platform]()
+        board = Board(adapter)
+        board.connect(config)
 
-    # Handler de SIGTERM: docker compose down/stop envia SIGTERM. Como o Python
-    # roda como PID 1 (ou sob tini via init:true), sem handler o sinal é
-    # ignorado/mata sujo (SIGKILL/137). Aqui encerramos o loop de forma limpa,
-    # simétrico ao tratamento de SIGINT (KeyboardInterrupt). Ver issue #70.
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-
-    running = True
-    while running:
+        # Gate de permissões: não inicia a esteira sem poder operar o repositório.
         try:
-            today = datetime.now().date()
-            if today != last_full_sync:
-                board_full_sync(config)
-                last_full_sync = today
+            board.check_access(config)
+        except BoardAccessError as e:
+            log.error("Startup", f"Permissões insuficientes - esteira não iniciada: {e}")
+            raise SystemExit(1)
 
-            current_board = board_ids[index]
+        board_full_sync(config)
+        last_full_sync = datetime.now().date()
 
-            # Fase 1: Descoberta no board atual
-            had_changes = sync_board(current_board, config)
+        # Array fixo de boards ordenados por prioridade
+        board_ids = get_board_ids(config)
+        index = 0
 
-            # Fase 2: Processamento global da fila
-            process_queue(config)
+        log.info("Pipe", "Esteira agêntica iniciada")
 
-            # Se houve mudanças ou fila ainda tem itens, volta ao início
-            queue = ChangeQueue()
-            if had_changes or queue.size() > 0:
-                index = 0
-                continue
+        # Handler de SIGTERM: docker compose down/stop envia SIGTERM. Como o Python
+        # roda como PID 1 (ou sob tini via init:true), sem handler o sinal é
+        # ignorado/mata sujo (SIGKILL/137). Aqui encerramos o loop de forma limpa,
+        # simétrico ao tratamento de SIGINT (KeyboardInterrupt). Ver issue #70.
+        signal.signal(signal.SIGTERM, _handle_sigterm)
 
-            # Sem mudanças e fila vazia: buscar tarefa no board atual
-            task = keep_task(current_board, config)
+        running = True
+        while running:
+            try:
+                today = datetime.now().date()
+                if today != last_full_sync:
+                    board_full_sync(config)
+                    last_full_sync = today
 
-            if task is AUTO_ADVANCED:
-                # Auto-advance local: mantém o board atual (não avança nem
-                # reinicia em 0). A próxima iteração força o sync deste board
-                # (sync_board + process_queue), propagando o movimento ao
-                # board e reconciliando o estado — deixando-o realmente pronto
-                # antes de selecionar a tarefa avançada.
-                continue
-            elif task:
-                call_agent(config, task)
-                index = 0
-            else:
-                # Nenhuma tarefa neste board, avança para o próximo
-                index += 1
-                if index >= len(board_ids):
-                    # Percorreu todos sem encontrar trabalho — sleep
+                current_board = board_ids[index]
+
+                # Fase 1: Descoberta no board atual
+                had_changes = sync_board(current_board, config)
+
+                # Fase 2: Processamento global da fila
+                process_queue(config)
+
+                # Se houve mudanças ou fila ainda tem itens, volta ao início
+                queue = ChangeQueue()
+                if had_changes or queue.size() > 0:
                     index = 0
-                    sleep_time(config)
+                    continue
 
-        except PenaltyException as e:
-            back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
-            log.warning("Pipe", f"Penalty - aguardando até {back_at}")
-            time.sleep(e.wait_seconds)
-        except KeyboardInterrupt:
-            log.info("Pipe", "Interrompido pelo usuário")
-            running = False
-        except _Shutdown:
-            log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
-            running = False
-        except SnapshotIntegrityError as e:
-            log.error(
-                "Pipe",
-                f"[{e.board_id}] Falha fatal ao restaurar integridade do snapshot "
-                f"- encerrando o processo: {e.cause}",
-            )
-            raise
-        except Exception as e:
-            log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
-            time.sleep(config.get("sleep", 60))
+                # Sem mudanças e fila vazia: buscar tarefa no board atual
+                task = keep_task(current_board, config)
+
+                if task is AUTO_ADVANCED:
+                    # Auto-advance local: mantém o board atual (não avança nem
+                    # reinicia em 0). A próxima iteração força o sync deste board
+                    # (sync_board + process_queue), propagando o movimento ao
+                    # board e reconciliando o estado — deixando-o realmente pronto
+                    # antes de selecionar a tarefa avançada.
+                    continue
+                elif task:
+                    call_agent(config, task)
+                    index = 0
+                else:
+                    # Nenhuma tarefa neste board, avança para o próximo
+                    index += 1
+                    if index >= len(board_ids):
+                        # Percorreu todos sem encontrar trabalho — sleep
+                        index = 0
+                        sleep_time(config)
+
+            except PenaltyException as e:
+                back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
+                log.warning("Pipe", f"Penalty - aguardando até {back_at}")
+                time.sleep(e.wait_seconds)
+            except KeyboardInterrupt:
+                log.info("Pipe", "Interrompido pelo usuário")
+                running = False
+            except _Shutdown:
+                log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
+                running = False
+            except SnapshotIntegrityError as e:
+                log.error(
+                    "Pipe",
+                    f"[{e.board_id}] Falha fatal ao restaurar integridade do snapshot "
+                    f"- encerrando o processo: {e.cause}",
+                )
+                raise
+            except Exception as e:
+                log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
+                time.sleep(config.get("sleep", 60))
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":
