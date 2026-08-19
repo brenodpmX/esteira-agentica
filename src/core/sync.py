@@ -425,19 +425,56 @@ def _write_state_from_issue(issue_data: dict, issue, fullsync: bool) -> None:
         issue_data["blocks"] = list(issue.blocks or [])
 
 
-def _find_snapshot_issue(target_id: str) -> tuple[str, dict] | None:
+def _find_snapshot_issue(target_id: str, allowed_boards: list[str] | None = None) -> tuple[str, dict] | None:
     """Localiza o registro de snapshot de uma issue em qualquer board.
+
+    `allowed_boards`, quando informado, restringe a busca aos boards indicados —
+    diretórios de boards fora da configuração são ignorados (não servem como
+    evidência). `None` mantém o comportamento histórico (varre todo o glob).
 
     Retorna (board_id, issue_data) ou None se a issue não é rastreada.
     """
     if not BOARDS_DIR.exists():
         return None
+    allowed = set(allowed_boards) if allowed_boards is not None else None
     for snap_file in BOARDS_DIR.glob("*/snapshot.json"):
         board_id = snap_file.parent.name
+        if allowed is not None and board_id not in allowed:
+            continue
         snap = Snapshot(board_id).load()
         data = snap.issue(target_id)
         if data is not None:
             return board_id, data
+    return None
+
+
+def _propagation_proof(board_id: str, issue_id: str, config: dict) -> tuple[str, str] | None:
+    """Evidência de que a issue chegou ao board por propagação automática.
+
+    A única evidência aceita é a própria issue já registrada em OUTRO board
+    configurado, com coluna conhecida nas `columns` daquele board no `pipe.yml`.
+    `parent` isolado NÃO é evidência: uma sub-issue nova e legítima deste board
+    também pode chegar com coluna vazia.
+
+    Snapshots de diretórios fora da configuração são ignorados (board removido do
+    `pipe.yml` não prova nada).
+
+    Retorna (board_id_de_origem, coluna) ou None quando não há prova.
+    """
+    boards = (config or {}).get("boards", {}) or {}
+    others = [bid for bid in boards if bid != "platform" and bid != board_id]
+    if not others:
+        return None
+
+    found = _find_snapshot_issue(issue_id, allowed_boards=others)
+    if not found:
+        return None
+
+    other_board, data = found
+    column = (data.get("column") or "").strip()
+    known_cols = (boards.get(other_board, {}) or {}).get("columns", {}) or {}
+    if column and column in known_cols:
+        return other_board, column
     return None
 
 
@@ -579,11 +616,11 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
             # não há baseline no snapshot para preservá-las.
             if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,
                                        board=board_id, fullsync=True)):
-                log.info("Sync", f"[{board_id}] #{issue_id} create-down")
+                log.trace("Sync", f"[{board_id}] #{issue_id} create-down")
         else:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id, board=board_id)):
                 known["status"] = SyncEvent.CHANGE_DOWN.value
-                log.info("Sync", f"[{board_id}] #{issue_id} change-down")
+                log.trace("Sync", f"[{board_id}] #{issue_id} change-down")
 
     if max_updated != since:
         snap.last_board_update = max_updated
@@ -620,8 +657,14 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if match:
             issue_id = match.group(1)
             numbered_candidates.setdefault(issue_id, []).append(body_file)
-        elif body_file.name.count("-") >= 2:
-            # Arquivo sem id numérico = issue criada localmente (sem id)
+        else:
+            # Arquivo sem id numérico = issue criada localmente (sem id).
+            #
+            # NÃO usar heurística de contagem de hífens aqui. `_slugify`
+            # converte hífens e espaços em underscore, então todo arquivo
+            # nomeado pelo próprio sistema tem exatamente UM hífen — o do
+            # sufixo `-body`. A condição `count("-") >= 2` descartava
+            # silenciosamente esses nomes e o create-up nunca era gerado.
             body_path_str = str(body_file)
             # Verificar se já está no snapshot por body_path
             known = any(
@@ -637,7 +680,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
                         "body_mtime": str(body_file.stat().st_mtime),
                         "status": SyncEvent.CREATE_UP.value,
                     })
-                    log.info("Sync", f"[{board_id}] '{body_file.name}' create-up")
+                    log.trace("Sync", f"[{board_id}] '{body_file.name}' create-up")
 
     # Resolve cada grupo de candidatos por ID aparente com a mesma regra de
     # match confiável de _find_issue_files (reaproveitando _is_valid_registered_path
@@ -679,6 +722,13 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
 
         if accepted is not None:
             local_bodies[issue_id] = accepted
+        elif len(candidates) > 1:
+            # Ambíguo: múltiplos candidatos e nenhum aceito.
+            # NÃO tratar como "deletado" — a issue existe fisicamente,
+            # apenas a identidade é ambígua. Registrar para que o loop
+            # de delete-up a ignore (evita fechar a issue no board por
+            # engano — regressão do incidente #76/#97).
+            local_bodies[issue_id] = None  # marca presença sem path aceito
 
     # Para cada issue no snapshot com id, verificar mudanças
     for issue in snap.issues:
@@ -693,11 +743,30 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         body_path = Path(issue.get("body_path") or "")
         local_file = local_bodies.get(issue_id)
 
-        # Delete-up: body não encontrado em nenhum diretório
-        if not local_file or not local_file.exists():
+        # Delete-up: body não encontrado em nenhum diretório.
+        # Quando a resolução é ambígua (issue_id presente em local_bodies
+        # com valor None), NÃO emitir delete-up — a issue existe fisicamente,
+        # apenas não foi possível determinar com segurança qual arquivo a
+        # representa. O isolamento já foi registrado via record_orphan;
+        # a issue permanece intacta no snapshot/board até intervenção manual.
+        if local_file is None and issue_id not in local_bodies:
             if queue.add(ChangeItem.of(SyncEvent.DELETE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.DELETE_UP.value
                 log.info("Sync", f"[{board_id}] #{issue_id} delete-up")
+            continue
+
+        # Identidade ambígua: issue existe no filesystem mas nenhum candidato
+        # foi aceito inequivocamente. Não emitir nenhum evento (nem delete nem
+        # change) — esperar intervenção manual.
+        if local_file is None:
+            continue
+
+        # Arquivo aceito mas removido entre a descoberta e a verificação
+        # (race condition): emitir delete-up normalmente.
+        if not local_file.exists():
+            if queue.add(ChangeItem.of(SyncEvent.DELETE_UP, id=issue_id, board=board_id)):
+                issue["status"] = SyncEvent.DELETE_UP.value
+                log.trace("Sync", f"[{board_id}] #{issue_id} delete-up")
             continue
 
         # Change-up: mtime maior, coluna diferente, ou addcomment com conteúdo
@@ -722,7 +791,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if changed:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.CHANGE_UP.value
-                log.info("Sync", f"[{board_id}] #{issue_id} change-up")
+                log.trace("Sync", f"[{board_id}] #{issue_id} change-up")
 
     snap.save()
 
@@ -760,7 +829,7 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
             if item.event == SyncEvent.CREATE_UP.value:
                 _apply_create_up(board_id, item, board_obj, queue)
             elif item.event == SyncEvent.CREATE_DOWN.value:
-                _apply_create_down(board_id, item, board_obj, queue)
+                _apply_create_down(board_id, item, board_obj, queue, config)
             elif item.event == SyncEvent.CHANGE_UP.value:
                 _apply_change_up(board_id, item, board_obj, queue, config)
             elif item.event == SyncEvent.CHANGE_DOWN.value:
@@ -915,12 +984,33 @@ def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: C
         _trigger_reciprocal_downs(created.id, deltas, queue)
 
 
-def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None):
+def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None,
+                       config: dict = None):
     """Cria arquivos locais a partir do issue no board."""
     snap = Snapshot(board_id).load()
     issue = board_obj.get_issue(board_id, item.id, fullsync=item.fullsync)
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     column = issue.column or ""
+
+    # Guard de propagação automática: o GitHub Projects V2 adiciona a sub-issue
+    # aos projects do pai sem definir Status. Só descarta o evento (e remove o
+    # item do board) quando há PROVA de propagação — a issue já registrada em
+    # outro board configurado com coluna conhecida. `parent` isolado é apenas
+    # contexto de log: sub-issue nova e legítima deste board também pode chegar
+    # sem coluna, e removê-la seria perda de dado.
+    if not column:
+        proof = _propagation_proof(board_id, item.id, config)
+        if proof:
+            other_board, other_col = proof
+            log.info("Sync", f"[{board_id}] #{item.id} create-down descartado - "
+                     f"propagação automática (issue em '{other_board}/{other_col}')")
+            # A remoção precisa CONCLUIR antes de o evento ser descartado: falha
+            # propaga e a fila (at-least-once) reprocessa no ciclo seguinte.
+            board_obj.remove_from_board(board_id, item.id)
+            return
+        if issue.parent:
+            log.info("Sync", f"[{board_id}] #{item.id} create-down com parent #{issue.parent} "
+                     f"e coluna vazia, sem prova de propagação - criando local")
 
     if not column:
         column = list(snap.board.keys())[0] if snap.board else ""
@@ -1072,6 +1162,25 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     remote_col = issue.column or ""
 
+    # Coluna vazia no board (propagação automática que apagou o Status): reaplicar
+    # no BOARD a coluna conhecida do snapshot. Feito antes de qualquer decisão
+    # sobre arquivos locais porque a reconciliação é do board — se dependesse de
+    # movimentação local, o caso comum (arquivo já na coluna certa) deixaria o
+    # item remoto sem Status e `detect_board_changes` acusaria a mesma divergência
+    # em todo full sync, indefinidamente.
+    if not remote_col and old_col:
+        log.info("Sync", f"[{board_id}] #{item.id} - coluna vazia no board, "
+                 f"reaplicando '{old_col}' do snapshot")
+        try:
+            board_obj.move_issue(board_id, item.id, old_col)
+        except PenaltyException:
+            raise
+        except Exception as e:
+            # Reconciliação oportunista: não descarta evento nem interrompe o down.
+            log.warning("Sync", f"[{board_id}] #{item.id} - falha ao reaplicar coluna "
+                        f"'{old_col}' no board: {e}")
+        remote_col = old_col
+
     body_path = _find_issue_files(board_id, item.id)
     if not body_path:
         # Arquivos não existem, criar
@@ -1086,6 +1195,7 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
 
     # Mover se coluna mudou
     current_col = _col_from_path(body_path, board_id)
+
     if remote_col and remote_col != current_col:
         slug = body_path.stem.removesuffix("-body")
         new_files = _issue_files(board_id, remote_col, item.id, slug.split("-", 1)[1] if "-" in slug else slug)
@@ -1100,6 +1210,10 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
             old_ac.rename(new_files["addcomment"])
         body_path = new_files["body"]
         current_col = remote_col
+        # Sem move_issue aqui: no down quem manda é o board. Escrever de volta a
+        # coluna que ele já tem custa 2 chamadas GraphQL por movimentação manual.
+        # A única escrita legítima no board é a reaplicação de coluna perdida,
+        # tratada acima.
 
     # Atualizar history
     slug = body_path.stem.removesuffix("-body")
@@ -1111,7 +1225,7 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     ac_file = body_path.parent / f"{slug}-addcomment.md"
     ac_file.write_text("", encoding="utf-8")
 
-    log.info("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
+    log.trace("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
              issue_id=item.id, column=current_col)
 
     # Gatilho de par recíproco: calcula deltas de deps ANTES de sobrescrever o
