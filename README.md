@@ -51,6 +51,10 @@ agents:
 
 boards:
   platform: github
+  rerun_cooldown: 300   # opcional: tempo mínimo (segundos) para reexecutar a
+                        # mesma issue (mesmo board + coluna + id). 0/ausente
+                        # desabilita. Se a issue muda de coluna, fica elegível
+                        # imediatamente.
   backlog:
     name: Backlog
     priority: 0
@@ -85,66 +89,119 @@ python -m src
 
 ### Execução via Docker Compose (recomendado para produção)
 
-**Pré-requisitos:**
-- Docker e Docker Compose instalados
-- `gh auth login` executado no host (gera `~/.config/gh/`)
-- Chave SSH configurada no GitHub (`~/.ssh/id_ed25519`)
-- Token do GitHub com escopos `repo` e `project`
+A distribuição Docker executa o loop da esteira sem prompts no container;
+intervenções de negócio continuam sendo feitas no board do GitHub e são
+capturadas pelo sincronismo seguinte. O passo a passo detalhado (verificação de
+saúde e gestão do container) está em
+[`doc/runbook/docker.md`](doc/runbook/docker.md).
 
-**1. Preparar o contexto de build (copia o binário kiro-cli):**
+**Pré-requisitos no host:**
+- Docker Engine com Docker Compose V2 (`docker compose`);
+- chave SSH registrada no GitHub (usada como Docker secret no build e no runtime);
+- token do GitHub com escopos `repo` e `project`;
+- API key do Kiro (plano Pro/Pro+ ou superior), gerada em
+  https://app.kiro.dev → **API Keys**.
 
-```bash
-./prepare-docker.sh
-```
+O `kiro-cli` **não** precisa estar instalado no host: o build o baixa na versão
+pinada em `docker/versions.env` (validada por SHA-256). O login local do `gh`
+também não é necessário — a autenticação usa `GH_TOKEN`.
 
-**2. Criar o arquivo `.env` com o token do GitHub:**
+**1. Configurar credenciais:**
 
 ```bash
 cp .env.example .env
-# Editar .env e preencher GH_TOKEN (e opcionalmente SSH_KEY_FILE, GH_CONFIG_DIR)
 ```
 
-**3. Garantir que o `pipe.yml` existe na raiz do projeto:**
+Preencha no `.env`:
 
-```bash
-# pipe.yml não é versionado — deve ser criado/copiado manualmente
-# Ver seção "Configuração → Arquivo pipe.yml" abaixo para o formato
+```env
+GH_TOKEN=ghp_seu_token
+KIRO_API_KEY=kiro_sua_api_key
+SSH_KEY_FILE_HOST=/caminho/absoluto/para/id_ed25519   # alimenta o Docker secret
 ```
 
-**4. Build e execução:**
+`PIPE_SSH_KEY_FILE` é fixado pelo compose como `/run/secrets/ssh_key` — não o
+defina no `.env`. Use caminho **absoluto** em `SSH_KEY_FILE_HOST` (o compose não
+expande `~` em `secrets.file`). Não versione o `.env`. Para rotacionar a API key,
+atualize `KIRO_API_KEY` e recrie o serviço com
+`docker compose up -d --force-recreate`.
+
+**2. Criar a configuração da esteira:**
+
+Crie `pipe.yml` na raiz (ele não é versionado) usando o exemplo da seção
+[Configuração](#configuração). Preencha também os contextos requeridos em
+`contexts/<plataforma>/<agente>.md`; o startup cria arquivos ausentes, mas exige
+conteúdo antes de executar os agentes.
+
+**3. Construir e iniciar:**
 
 ```bash
 docker compose build
-docker compose up
-```
-
-**5. Para rodar em background:**
-
-```bash
 docker compose up -d
-docker compose logs -f   # acompanhar logs
+docker compose logs -f
 ```
 
-**6. Para parar:**
+O `docker compose build` ativa o BuildKit e injeta a chave SSH como **secret de
+build** (`build.secrets`) para o `git clone` do código na última camada do
+Dockerfile; a chave nunca persiste em nenhuma camada da imagem. Os logs são
+emitidos em tempo real (`PYTHONUNBUFFERED=1`). O Compose usa um processo init e a
+aplicação trata `SIGTERM`, portanto `down`/`stop` encerram o loop de forma limpa,
+sem aguardar `SIGKILL` (issue #70).
+
+**4. Parar ou reiniciar:**
 
 ```bash
-docker compose down
+docker compose down       # preserva os volumes
+docker compose up -d      # reutiliza estado, clones e logs
+docker compose down -v    # remove também todo o estado persistido
 ```
+
+O serviço usa `restart: unless-stopped`, reiniciando após crash ou reboot do
+host, mas permanecendo parado após uma interrupção explícita.
 
 **Volumes persistidos entre reinícios:**
 
 | Volume | Caminho no container | Conteúdo |
 |--------|---------------------|----------|
-| `pipe_state` | `/app/.pipe` | Snapshots, fila de mudanças, índice de sessões |
-| `pipe_repos` | `/app/repo` | Clones dos repositórios git |
-| `pipe_logs` | `/app/logs` | Logs de execução |
+| `pipe-state` | `/app/.pipe` | Snapshots, fila de mudanças e índice de sessões |
+| `pipe-repo` | `/app/repo` | Clones dos repositórios Git |
+| `pipe-logs` | `/app/logs` | Logs da esteira e das execuções de agentes |
+| `kiro-home` | `/home/pipe/.kiro` | Configuração do kiro-cli |
+| `kiro-local` | `/home/pipe/.local/share/kiro-cli` | Dados locais do kiro-cli |
 
-Os volumes são criados automaticamente pelo Docker na primeira execução.
-Para limpar o estado interno (forçar re-sync completo), remova os volumes:
+Por padrão o estado fica em **named volumes** (geridos pelo Docker, em
+`/var/lib/docker/volumes/`). Para ter logs e estado **acessíveis no host** — e
+com posse do seu usuário, não do root — use o override `compose.dev.yml`, que
+troca esses volumes por bind mounts configuráveis:
 
 ```bash
-docker compose down -v
+docker compose -f docker-compose.yml -f compose.dev.yml up -d
 ```
+
+Para que o `docker compose up` normal já use os dois arquivos, defina no `.env`:
+
+```env
+COMPOSE_FILE=docker-compose.yml:compose.dev.yml
+```
+
+Os caminhos no host são configuráveis (`PIPE_STATE_DIR`, `PIPE_REPO_DIR`,
+`PIPE_LOGS_DIR`; padrão `./.pipe`, `./repo`, `./logs`). Crie os diretórios com o
+seu usuário antes do `up` (`mkdir -p .pipe repo logs`) — se não existirem, o
+Docker os cria como root.
+
+### Solução de problemas do Docker
+
+| Sintoma | Verificação / correção |
+|---------|------------------------|
+| Build falha ao instalar `gh` (`Version 'X.Y.Z' for 'gh' was not found`) | O repo APT do `gh` serve apenas a última versão; atualize `GH_VERSION` em `docker/versions.env` e o `Dockerfile`. |
+| Build falha no kiro-cli (`sha256 … did NOT match`) | A URL `/latest/` mudou de build; atualize `KIRO_CLI_VERSION`/`KIRO_CLI_SHA256` em `docker/versions.env` e no `Dockerfile`. |
+| Falha de autenticação do agente | Confirme `KIRO_API_KEY` no `.env` e recrie o serviço. |
+| Falha de API/projeto do GitHub | Confirme os escopos `repo` e `project` de `GH_TOKEN`. |
+| Falha ao clonar via SSH | Confirme `SSH_KEY_FILE_HOST` (caminho absoluto) e o cadastro da chave no GitHub. |
+| Configuração ou contexto inválido | Consulte `docker compose logs`; o startup encerra com mensagem explícita. |
+
+> A imagem é construída para Linux `amd64`: o Dockerfile baixa o GitHub CLI e o
+> Kiro CLI (binário nativo glibc `x86_64`) para essa arquitetura.
 
 ## Estrutura
 
@@ -185,17 +242,25 @@ main()
 ├── board_full_sync()      # Sync completo (estrutura + mudanças remotas)
 │
 └── while running:
-    ├── board_full_sync()  # Re-executa se mudou o dia (daily full sync)
-    ├── sync_board()       # Detecta mudanças remotas/locais, aplica fila → bool
-    ├── keep_task()        # Seleciona próxima tarefa → task | AUTO_ADVANCED | None
-    ├── call_agent()       # Executa agente com prompt construído
-    └── sleep_time()       # Intervalo entre ciclos (condicional)
+    ├── board_full_sync()   # Re-executa se mudou o dia (daily full sync)
+    ├── detect_local_all()  # Descoberta local (up) em TODOS os boards → bool
+    ├── sync_remote_board() # Descoberta remota (down) no board atual → bool
+    ├── process_queue()     # Aplica a fila global de mudanças
+    ├── keep_task()         # Seleciona próxima tarefa → task | AUTO_ADVANCED | None
+    ├── call_agent()        # Executa agente com prompt construído
+    └── sleep_time()        # Intervalo entre ciclos (condicional)
 ```
+
+> **Descoberta desacoplada:** a detecção local (`up`) roda em **todos** os
+> boards a cada ciclo — barata (varredura de filesystem) e necessária porque um
+> agente atuando em um board pode criar artefatos (ex.: issue bloqueante) em
+> outro. Já o sync remoto (`down`) permanece **por board**, na rotação
+> priorizada, por consumir API do provider (sujeito a rate limit).
 
 ### sleep_time (controle de ociosidade)
 
 Ativado apenas quando **ambas** as condições são verdadeiras:
-- `sync_board()` retornou `False` (nenhuma movimentação up ou down)
+- a descoberta não movimentou nada (`detect_local_all()` e `sync_remote_board()` retornaram `False`)
 - `keep_task()` retornou `None` (nenhuma tarefa elegível)
 
 Quando ativado, dorme pelo tempo definido em `sleep` no `pipe.yml` (em segundos).
@@ -210,6 +275,29 @@ Se houve qualquer atividade (sync movimentou algo OU existe tarefa para executar
 - Auto-advance de coluna `todo` para próxima coluna (só ocorre se nenhuma coluna posterior tiver tarefa pronta); move os arquivos, atualiza o snapshot e enfileira o `change-up` para o sync propagar ao board
 - `parallel: false` → bloqueia auto-advance se já existe issue ativa
 - Issues com `/need_human` ou `/blocked_by` no body são ignoradas
+- Issues reexecutadas há menos de `boards.rerun_cooldown` segundos são puladas
+  (ver abaixo)
+
+### Cooldown de reexecução (`boards.rerun_cooldown`)
+
+Impede que a mesma issue seja reentregue ao agente em loop apertado quando falha
+repetidamente. Sem isso, uma issue que não avança consome quota do modelo a cada
+ciclo sem progresso.
+
+- Cache interno em memória: `(board, coluna, id)` → instante da última entrega.
+- A chave **inclui a coluna** de propósito: se a issue avança no board, é
+  trabalho novo e fica elegível imediatamente, sem esperar o cooldown.
+- Entradas expiradas são purgadas a cada acionamento do `keep_task`, para o cache
+  não crescer indefinidamente com issues que saíram do board.
+- `0` ou ausente desabilita e esvazia o cache.
+
+O cooldown é por processo (não persiste entre reinícios): reiniciar a esteira
+libera todas as issues imediatamente.
+
+> **Atenção ao atualizar de 1.8.x:** nas versões 1.8.0–1.8.3 essa chave era
+> validada mas **não tinha efeito** (regressão do merge `c27f813`, corrigida na
+> 1.9.0). Se o seu `pipe.yml` já a declara, o comportamento muda ao atualizar.
+> Para manter o comportamento anterior, remova a chave ou defina `0`.
 
 ### Resolução automática de bloqueios
 
@@ -240,11 +328,21 @@ automaticamente em três situações:
 
 ### Substituição de agente por nível (`override-agent`)
 
-Cada coluna define um agente default no atributo `agent`. Se a issue tiver uma
-tag `/agent_level <nível>` no bloco `@---` e esse `<nível>` for uma chave do
-mapa `override-agent` da coluna, a esteira usa o agente indicado no valor. Se
-não houver `/agent_level`, ou o nível não estiver mapeado, usa o `agent`
-default.
+Cada coluna define um agente default no atributo `agent`. O nível de execução
+de uma issue é armazenado como label `agent-level-<nível>` no GitHub (ex.:
+`agent-level-low`, `agent-level-medium`, `agent-level-high`). Essa label é
+sincronizada nativamente pelo board, garantindo que o nível persista entre
+ciclos de sync.
+
+Se a issue possuir uma label `agent-level-<nível>` e esse `<nível>` for uma
+chave do mapa `override-agent` da coluna, a esteira usa o agente indicado no
+valor. Caso contrário, usa o `agent` default.
+
+No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
+`@---` do body. O sync-up lê esse campo via `all_labels()` e grava a label
+`agent-level-<nível>` no GitHub automaticamente. A resolução de agente em
+`resolve_agent_id()` lê diretamente `issue["labels"]` — sem dependência de
+arquivo local.
 
 Como cada agente carrega o próprio `model`, trocar o agente por nível troca
 também o model efetivo da execução.
@@ -254,8 +352,8 @@ columns:
   desenvolvimento:
     agent: engineering          # default
     override-agent:
-      low: generic              # /agent_level low  -> generic
-      high: senior-engineering  # /agent_level high -> senior-engineering
+      low: generic              # agent-level-low  -> generic
+      high: senior-engineering  # agent-level-high -> senior-engineering
 ```
 
 Validação (`config.py`): `override-agent` deve ser um mapa `<nível>: <agente>`,
@@ -383,6 +481,32 @@ Validar credenciais e retornar JWT.
 /labels backend, security
 /agent_level high
 ```
+
+### Incidente: sub-issues propagadas entre boards (#98/#99)
+
+**Versão desta documentação: 1.6.1.** Ao vincular uma sub-issue a um parent
+presente em outro GitHub Project, o GitHub Projects V2 pode propagar a filha
+para o project do parent sem preencher o campo `Status`. O sync então pode
+interpretar o item sem coluna como uma issue nova daquele board, criar arquivos
+locais duplicados e executar o agente no contexto errado.
+
+A correção homologada para o incidente é composta por cinco proteções:
+
+1. operação `remove_from_board` via GraphQL `deleteProjectV2Item`;
+2. pós-hook de `_add_sub_issue` para remover propagação sem `Status`;
+3. guard em `create-down` para não materializar a duplicata local;
+4. fallback de coluna para issues realmente novas ou já rastreadas; e
+5. detecção de coluna vazia como divergência a reconciliar.
+
+**Estado em 04/08/2026:** a implementação final está no commit `01f9e83` e foi
+homologada com 208 testes aprovados e 3 ignorados, mas o PR #103 foi fechado sem
+merge. Portanto, essa proteção ainda não está disponível em `main` nem deve ser
+considerada implantada em produção. Até a integração, evite criar novos
+vínculos hierárquicos entre boards sem monitorar itens sem `Status`; resíduos
+anteriores (#84/#85/#86) exigem limpeza manual com a esteira parada.
+
+Documentação: [change #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
+e [post mortem #99](doc/incidente/sub-issues-propagadas/ticket.md).
 
 ## Eventos de coluna (`on_in` / `on_out`)
 

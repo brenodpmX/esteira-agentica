@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
+from src.core.commands import _sanitize_relations_with_discards
 from src.core.log import log
 
 
@@ -48,6 +49,7 @@ class ChangeItem:
     board: str = None       # board_id ao qual a issue pertence
     uuid: str = None        # id único na fila (atribuído por add/addAll)
     fullsync: bool = False  # se True, reconcilia todas as propriedades + deps
+    attempts: int = 0       # tentativas de processamento já feitas (erro transitório)
 
     @staticmethod
     def now() -> str:
@@ -252,6 +254,8 @@ class Board:
         for board_id, board_cfg in config.get("boards", {}).items():
             if board_id == "platform":
                 continue
+            if not isinstance(board_cfg, dict):
+                continue
             columns = list(board_cfg.get("columns", {}).keys())
             boards.append({
                 "id": board_id,
@@ -345,6 +349,15 @@ class Board:
            children:{...}, blocked_by:{...}, blocks:{...}}
         Onde 'added'/'removed' são numbers de issues (str).
         """
+        cmds, discards = _sanitize_relations_with_discards(issue_id, cmds)
+        self_id = str(issue_id)
+        for attr_name in discards:
+            log.warning(
+                "Board",
+                f"[{board_id}] auto-referência descartada em {attr_name}: #{self_id}",
+                board_id=board_id, issue_id=self_id,
+            )
+
         deltas = {
             "parent": {"added": [], "removed": []},
             "children": {"added": [], "removed": []},
@@ -458,7 +471,10 @@ class Board:
 
     def board_ids(self, config: dict) -> list[str]:
         """Retorna os ids dos boards configurados (ignora 'platform')."""
-        return [bid for bid in config.get("boards", {}) if bid != "platform"]
+        return [
+            bid for bid, cfg in config.get("boards", {}).items()
+            if bid != "platform" and isinstance(cfg, dict)
+        ]
 
     def detect_board_changes(self, board_id: str, snapshot, queue) -> int:
         """Detecta mudanças de um board comparando com o snapshot e registra na fila.
