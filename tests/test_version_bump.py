@@ -1,17 +1,15 @@
-"""Testes de verificação do bump de versão MINOR — US-02 (preflight).
+"""Testes de verificação do bump de versão — US-02 (preflight) + evolução.
 
 Confirma que:
-1. src/core/version.py contém VERSION = "1.6.0" (bump MINOR a partir de 1.5.0).
+1. src/core/version.py contém VERSION semântica válida (>= 1.6.0 baseline US-02).
 2. A versão segue o padrão semântico MAJOR.MINOR.PATCH.
-3. O MINOR foi incrementado (de 5 para 6) e o PATCH zerado.
-4. CONTEXT.md contém a seção de changelog "Preflight de Credenciais (v1.6.0 — US-02)".
-5. A versão é exibida no log de inicialização via __main__.
+3. O CONTEXT.md contém documentação de changelog da US-02 (preflight).
+4. A versão é exibida no log de inicialização via __main__.
 
-Contexto do bump:
-  O body da issue #36 define bump 1.5.0 → 1.6.0. A versão 1.5.0 é o estado
-  atual de `main` (release "Incidente — Issue Fantasma", commit 5a41183).
-  As tasks #34 e #35 implementaram o preflight() na branch epic sem realizar
-  o bump; esta task corrige omissão e registra a versão correta: 1.6.0.
+Histórico:
+  - Bump original #36: 1.5.0 → 1.6.0 pela adição do preflight (US-02).
+  - Evolução posterior: 1.6.0 → 1.7.0 → 1.8.0 → 1.8.1 → 1.8.2 → 1.8.3.
+  - Atualizado em #165 para usar baseline >= 1.6.0 em vez de versão exata fixa.
 """
 
 import sys
@@ -58,32 +56,33 @@ class TestVersionFile:
         )
 
     def test_version_is_target(self):
-        """VERSION deve ser '1.6.0' após o bump MINOR da US-02."""
+        """VERSION deve ser semântica válida >= 1.6.0 (baseline US-02 preflight)."""
         from src.core.version import VERSION
-        assert VERSION == "1.6.0", (
-            f"Esperado VERSION = '1.6.0' após bump MINOR (1.5.0 → 1.6.0 pela "
-            f"adição do preflight de credenciais — US-02). Atual: '{VERSION}'"
-        )
+        parts = VERSION.split(".")
+        assert len(parts) == 3, f"VERSION deve ser MAJOR.MINOR.PATCH, mas é '{VERSION}'"
+        major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
+        assert major >= 1, f"MAJOR deve ser >= 1. Atual: {major}"
+        assert minor >= 6, f"MINOR deve ser >= 6 (baseline US-02). Atual: {minor}"
 
     def test_version_minor_incremented(self):
-        """MINOR deve ser 6 (incrementado de 5)."""
+        """MINOR deve ser >= 6 (baseline após US-02 preflight)."""
         from src.core.version import VERSION
         parts = VERSION.split(".")
         assert len(parts) == 3, f"Formato inválido: '{VERSION}'"
-        major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+        major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
         assert major == 1, f"MAJOR deve ser 1. Atual: {major}"
-        assert minor == 6, (
-            f"MINOR deve ser 6 (bump de 5 pela adição do preflight). Atual: {minor}"
+        assert minor >= 6, (
+            f"MINOR deve ser >= 6 (bump de 5 pela adição do preflight em US-02). Atual: {minor}"
         )
 
-    def test_version_patch_zeroed(self):
-        """PATCH deve ser 0 após bump MINOR."""
+    def test_version_patch_valid(self):
+        """PATCH deve ser um inteiro não-negativo."""
         from src.core.version import VERSION
         parts = VERSION.split(".")
         assert len(parts) == 3, f"Formato inválido: '{VERSION}'"
         patch = int(parts[2])
-        assert patch == 0, (
-            f"PATCH deve ser 0 após bump MINOR. Atual: {patch}"
+        assert patch >= 0, (
+            f"PATCH deve ser >= 0. Atual: {patch}"
         )
 
 
@@ -133,12 +132,15 @@ class TestVersionInBootLog:
         )
 
     def test_main_version_is_160(self):
-        """VERSION importado por __main__ deve ser '1.6.0'."""
+        """VERSION importado por __main__ deve ser >= 1.6.0 (baseline US-02)."""
         import importlib
         import src.core.version as version_mod
         importlib.reload(version_mod)
-        assert version_mod.VERSION == "1.6.0", (
-            f"__main__ usará VERSION = '{version_mod.VERSION}'. Esperado '1.6.0'"
+        parts = version_mod.VERSION.split(".")
+        assert len(parts) == 3, f"Formato inválido: '{version_mod.VERSION}'"
+        major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
+        assert major >= 1 and minor >= 6, (
+            f"__main__ usará VERSION >= 1.6.0 (baseline US-02). Atual: '{version_mod.VERSION}'"
         )
 
     def test_version_log_message_format(self):
