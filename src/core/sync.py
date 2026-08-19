@@ -579,11 +579,11 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
             # não há baseline no snapshot para preservá-las.
             if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,
                                        board=board_id, fullsync=True)):
-                log.info("Sync", f"[{board_id}] #{issue_id} create-down")
+                log.trace("Sync", f"[{board_id}] #{issue_id} create-down")
         else:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id, board=board_id)):
                 known["status"] = SyncEvent.CHANGE_DOWN.value
-                log.info("Sync", f"[{board_id}] #{issue_id} change-down")
+                log.trace("Sync", f"[{board_id}] #{issue_id} change-down")
 
     if max_updated != since:
         snap.last_board_update = max_updated
@@ -643,7 +643,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
                         "body_mtime": str(body_file.stat().st_mtime),
                         "status": SyncEvent.CREATE_UP.value,
                     })
-                    log.info("Sync", f"[{board_id}] '{body_file.name}' create-up")
+                    log.trace("Sync", f"[{board_id}] '{body_file.name}' create-up")
 
     # Resolve cada grupo de candidatos por ID aparente com a mesma regra de
     # match confiável de _find_issue_files (reaproveitando _is_valid_registered_path
@@ -703,7 +703,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if not local_file or not local_file.exists():
             if queue.add(ChangeItem.of(SyncEvent.DELETE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.DELETE_UP.value
-                log.info("Sync", f"[{board_id}] #{issue_id} delete-up")
+                log.trace("Sync", f"[{board_id}] #{issue_id} delete-up")
             continue
 
         # Change-up: mtime maior, coluna diferente, ou addcomment com conteúdo
@@ -728,7 +728,7 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
         if changed:
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_UP, id=issue_id, board=board_id)):
                 issue["status"] = SyncEvent.CHANGE_UP.value
-                log.info("Sync", f"[{board_id}] #{issue_id} change-up")
+                log.trace("Sync", f"[{board_id}] #{issue_id} change-up")
 
     snap.save()
 
@@ -1117,7 +1117,7 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     ac_file = body_path.parent / f"{slug}-addcomment.md"
     ac_file.write_text("", encoding="utf-8")
 
-    log.info("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
+    log.trace("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
              issue_id=item.id, column=current_col)
 
     # Gatilho de par recíproco: calcula deltas de deps ANTES de sobrescrever o
