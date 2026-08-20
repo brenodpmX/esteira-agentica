@@ -120,7 +120,9 @@ class SnapshotGuard:
     nunca por metadado do filesystem (mtime, tamanho etc.). Ao detectar uma
     violação, restaura por escrita atômica (arquivo temporário no mesmo
     diretório + ``os.replace()``) e emite exatamente um ``log.warning`` — sem
-    nunca logar o conteúdo dos bytes.
+    nunca logar o conteúdo dos bytes. A restauração devolve também o modo
+    (permissões) original do arquivo: o temporário de ``mkstemp`` nasce ``0600``
+    e, sem isso, a própria guarda alteraria o estado que deve preservar.
 
     Se a própria restauração falhar (ex.: ``OSError``), levanta
     ``SnapshotIntegrityError`` — que precede/substitui qualquer exceção que
@@ -134,6 +136,7 @@ class SnapshotGuard:
         self._existed_before: bool = False
         self._content_before: bytes | None = None
         self._hash_before: str | None = None
+        self._mode_before: int | None = None
 
     def __enter__(self) -> "SnapshotGuard":
         self._existed_before = self._path.exists()
@@ -144,6 +147,9 @@ class SnapshotGuard:
             hashlib.sha256(self._content_before).hexdigest()
             if self._content_before is not None
             else None
+        )
+        self._mode_before = (
+            self._path.stat().st_mode & 0o777 if self._existed_before else None
         )
         return self
 
@@ -183,7 +189,10 @@ class SnapshotGuard:
         """Escreve `content` atomicamente no path do snapshot.
 
         Usa arquivo temporário no mesmo diretório + os.replace() para
-        garantir atomicidade (mesmo filesystem).
+        garantir atomicidade (mesmo filesystem). O modo capturado na entrada
+        do escopo é aplicado ao temporário ANTES do replace, para que o
+        arquivo final já apareça com as permissões originais (o default de
+        mkstemp é 0600).
         """
         directory = self._path.parent
         directory.mkdir(parents=True, exist_ok=True)
@@ -193,6 +202,8 @@ class SnapshotGuard:
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(content)
+            if self._mode_before is not None:
+                os.chmod(tmp_path, self._mode_before)
             os.replace(tmp_path, self._path)
         except OSError:
             tmp_path.unlink(missing_ok=True)
