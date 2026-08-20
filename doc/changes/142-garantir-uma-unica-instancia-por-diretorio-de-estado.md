@@ -1,134 +1,105 @@
 # Change #142 — Garantir uma única instância por diretório de estado
 
 - **Tipo:** feature / hardening de confiabilidade
-- **Versão-alvo:** 1.9.0
 - **Plataforma afetada:** todas (lock é local ao filesystem, independe de board provider)
 - **Compatibilidade:** sem mudança de schema ou de `pipe.yml`; novo arquivo de
   estado interno `.pipe/pipe.lock`
-- **Implementação:** commits `0edb67a` (task #150, PR #161), `570e699` (task
-  #151, PR #162) e `de70f75` (task #152, PR #193)
 - **Story:** #142, épico #104 (post-mortem do incidente #97 — parte da C5)
 
-> **Retificação (2026-08-19, bug #196).** A versão original deste arquivo
-> afirmava que as três tasks já estavam "em `main`" e citava `545089a` como
-> commit da task #151. Ambas as afirmações eram incorretas:
->
-> - `545089a` **não é ancestral de `main` nem de `epic`** (é um commit órfão da
->   branch original da task #151, substituído na integração). O commit real da
->   integração é `570e699`.
-> - Apenas `0edb67a` (task #150, a primitiva `InstanceLock`) estava em `main`.
->   `570e699` (task #151, integração ao ciclo de vida) e `de70f75` (task #152,
->   testes concorrentes) existiam **somente em `epic`**. Nenhuma instância da
->   esteira executando a partir de `main` tinha proteção de lock.
->
-> As duas tasks chegaram a `main` apenas pela reconciliação `epic` → `main`
-> executada no bug **#196**. Antes dela, os critérios de aceite desta story não
-> eram verificáveis em produção.
+## Resumo
 
-## Problema
+Implementado lock de instância única (`InstanceLock`) por diretório de
+estado, integrado ao ciclo de vida completo de `main()`, com cobertura de
+testes unitários, de integração e concorrentes. A correção fecha a lacuna que
+permitia duas instâncias operarem sobre o mesmo `.pipe`, causa raiz de parte
+do incidente #97 (parent recursivo).
 
-Sem exclusividade de instância, duas execuções da esteira sobre o mesmo
-diretório de estado (`.pipe/`) podem correr concorrentemente — cada uma com
-sua própria fila em memória e seu próprio ciclo de sync — causando
-concorrência, perda de eventos da fila e corrupção da memória operacional
-(`snapshot.json`, `changeQueue.json`, `sessions.json`). O épico #104
-(post-mortem do incidente #97) previa essa proteção como task técnica C5.
+## Contexto da entrega (segunda passagem)
 
-## Mudanças implementadas
+Na primeira passagem desta etapa, o merge para `epic` (PR #195) incluiu
+apenas o change file — sem código, sem testes. O code review seguinte
+reprovou a entrega e abriu o bug #196 (`/blocks #142`) por ausência da
+integração de `InstanceLock` em `src/__main__.py` no destino real do merge.
 
-- **`InstanceLock`** (`src/core/lock.py`, task #150): primitiva isolada
-  baseada em `fcntl.flock(LOCK_EX | LOCK_NB)` sobre `.pipe/pipe.lock`:
-  - `acquire()` não bloqueante; em sucesso grava metadados (`pid`,
-    `started_at`, `host`) como JSON no arquivo, com `flush()` + `fsync()`.
-  - Em caso de disputa, levanta `LockHeldError` com os metadados do
-    detentor atual (lidos best-effort do arquivo), produzindo mensagem com
-    caminho, pid, horário de início e host — sem exigir edição de arquivos
-    internos.
-  - `release()` idempotente (chamar sem lock ativo não levanta erro); não
-    remove o arquivo, apenas libera o lock do kernel.
-  - Reaproveitamento de lock órfão (processo detentor morto sem cleanup, ex.
-    `SIGKILL`) não exige código adicional: é propriedade do próprio `flock`
-    do kernel — ao morrer o processo, o SO fecha os file descriptors e
-    libera o lock automaticamente, mesmo com o arquivo intacto no disco.
-  - Suporte a context manager (`__enter__`/`__exit__`) para uso em testes.
-  - `.pipe/pipe.lock` adicionado a `PROTECTED_PATHS` (`src/core/agent.py`) e
-    ao bloco de restrições do `.pipe/CONTEXT.md` gerado
-    (`context_generator.py`) — o agente nunca deve ler/escrever esse arquivo.
-- **Integração ao ciclo de vida de `main()`** (`src/__main__.py`, task #151):
-  - Lock adquirido logo após `check_config()`, **antes** de `startup()` —
-    a exclusividade existe antes de qualquer efeito persistido (clone de
-    repositórios, geração de `CONTEXT.md`, limpeza da fila).
-  - Em `LockHeldError`, loga erro estruturado (`event="instance_lock_refused"`
-    com `lock_path`, `holder_pid` e `holder_started_at`) e encerra com
-    `SystemExit(1)` sem executar `startup()` nem tocar no estado da instância
-    detentora. O `host` do detentor é gravado nos metadados do arquivo de lock
-    e aparece na mensagem de erro, mas não é emitido como campo estruturado
-    próprio.
-  - Liberação em `finally` externo ao loop principal — cobre encerramento
-    normal, `SIGTERM` (via `_Shutdown`), `KeyboardInterrupt` e qualquer
-    exceção não tratada do loop, garantindo que um arquivo remanescente sem
-    lock ativo do kernel permita nova inicialização segura.
-- **Suíte de testes concorrentes** (tasks #150/#152):
-  - `tests/test_instance_lock.py` — 26 testes unitários da primitiva
-    (aquisição, disputa, metadados do detentor, idempotência de `release`,
-    reaproveitamento de lock órfão).
-  - `tests/test_instance_lock_integration.py` (15 testes) +
-    `tests/_lock_holder_helper.py` e `tests/_main_lock_holder_helper.py`
-    — testes com subprocessos reais: disputa simultânea sobre o mesmo
-    diretório de estado, rajada de N instâncias (no máximo uma ativa),
-    reinicialização legítima após encerramento/crash sem intervenção manual,
-    e o cenário de regressão composta do incidente #97 aplicado à frente de
-    instância única.
-  - `tests/test_instance_lock_concurrent.py` — 6 testes de concorrência do
-    ciclo de vida completo de `main()` via processos separados.
+O bug #196 foi corrigido via hotfix
+(`hotfix196-196-integrar_instancelock_em_main_reconciliando_epic`, PR #197,
+merge commit `fec6fe1`), reconciliando `main` com `origin/epic` e trazendo os
+commits de integração e testes que já existiam em `epic`. Nesta passagem, a
+branch da story foi remesclada com `main` (já contendo a correção) antes de
+redigir este change file, e a implementação foi conferida diretamente no
+repositório — não apenas no histórico da issue.
 
-## Verificação de bloqueios (critério desta etapa)
+## Verificação de código realizada
 
-- Tasks filhas da story (`/blocked_by #150, #151, #152` registrado no body
-  pelo planejamento): #150, #151 e #152 estão todas **encerradas** e
-  integradas em `epic` (commits acima). **Retificação (#196):** apenas #150
-  estava em `main`; #151 e #152 só chegaram a `main` pela reconciliação do bug
-  #196.
-- Nenhuma duplicata da C5 encontrada nos boards `story`/`task`.
-- Sem `/blocked_by` pendente no body da issue #142 no momento desta etapa.
+- `src/core/lock.py` — `InstanceLock`/`LockHeldError`: `fcntl.flock`
+  exclusivo não bloqueante, metadados do detentor (pid, host, horário de
+  início) e reaproveitamento seguro de lock órfão após crash (via
+  propriedade do kernel de liberar o `flock` no encerramento do processo
+  detentor).
+- `src/__main__.py`:
+  - Lock adquirido em `main()` **antes** de `startup()`, portanto antes de
+    qualquer alteração persistida do estado (ex.: remoção da fila).
+  - `LockHeldError` tratado com log estruturado
+    (`event="instance_lock_refused"`, `lock_path`, `holder_pid`,
+    `holder_started_at`) e `SystemExit(1)` — recusa fail-fast sem tocar no
+    estado da instância detentora.
+  - `lock.release()` em `finally` externo ao loop principal, cobrindo
+    encerramento normal, `SIGTERM`, `KeyboardInterrupt` e qualquer exceção
+    não tratada que escape do loop.
+- `.pipe/pipe.lock` presente em `PROTECTED_PATHS` (`src/core/agent.py`) e no
+  bloco de restrições do `.pipe/CONTEXT.md` gerado.
+- Confirmado via `git merge-base --is-ancestor`: o commit `570e699`
+  (integração ao ciclo de vida de `main()`) é ancestral de `origin/main`
+  após o hotfix #197 — ausente na primeira passagem, presente agora.
 
-## Validação
+## Testes executados
 
-Medições da etapa original, com a árvore em que foram feitas explicitada
-(retificação #196 — o texto anterior não indicava a árvore, e
-`test_instance_lock_integration.py` **não existia em `main`**):
+- `tests/test_instance_lock.py` + `tests/test_instance_lock_concurrent.py` +
+  `tests/test_instance_lock_integration.py`: **47 testes, todos aprovados**.
+- `tests/test_epic_merge_ausente_146_147.py` (guard de regressão do padrão
+  "merge `epic → main` incompleto", débito #165): **21 testes, todos
+  aprovados** — na passagem anterior, 4 falhavam nomeando exatamente o
+  commit `570e699` como ausente; a falha não existe mais.
+- Suíte completa: `1123 passed, 28 skipped, 1 xpassed, 22 failed`. As 22
+  falhas são em `tests/test_agent_log_descritivo.py` e
+  `tests/test_dockerfile.py` — features não relacionadas (formato de log
+  descritivo do agente e verificação de SHA-256 do Dockerfile), introduzidas
+  pelo commit `a7bb76c`, sem relação com `InstanceLock` ou com esta story.
 
-- `tests/test_instance_lock.py` + `tests/test_instance_lock_integration.py`:
-  41 testes aprovados, medidos na árvore da branch da story (equivalente a
-  `epic`). Esse recorte **omitia** `tests/test_instance_lock_concurrent.py`
-  (6 testes); o total real da frente de instância única é **47**.
-- Suíte completa da etapa original: `1090 passed, 28 skipped, 1 xfailed`.
+## Critérios de aceite — cobertura
 
-Medição após a reconciliação do bug #196 (branch
-`hotfix196-196-integrar_instancelock_em_main_reconciliando_epic`):
+- Exclusividade adquirida antes de qualquer alteração persistida, mantida
+  durante startup, loop e encerramento: **atendido**.
+- Segunda instância recusada sem executar startup nem alterar o estado da
+  primeira: **atendido**.
+- Recusa informa caminho e dados do detentor, sem exigir edição de arquivos
+  internos: **atendido**.
+- Encerramento/sinal/crash liberam a posse; lock remanescente sem posse ativa
+  permite nova inicialização: **atendido**.
+- Verificação O(1), sem varredura do diretório de estado: **atendido**
+  (`flock` é uma chamada de sistema O(1)).
+- Testes concorrentes comprovam no máximo uma instância ativa e
+  reinicialização legítima sem intervenção manual: **atendido**.
 
-- Suíte de lock completa (`test_instance_lock.py`,
-  `test_instance_lock_integration.py`, `test_instance_lock_concurrent.py`):
-  **47 passed**.
-- `tests/test_epic_merge_ausente_146_147.py`: **21 passed, 0 failed**.
-- Suíte completa: **1123 passed, 22 failed, 28 skipped, 1 xpassed**. As 22
-  falhas são exatamente o mesmo conjunto medido em `origin/main` antes da
-  correção (18 em `test_agent_log_descritivo.py`, 3 em `test_dockerfile.py`,
-  1 em `test_agent_failure_detection.py`) — essas sim pré-existentes e não
-  relacionadas a esta story.
+## Bloqueios da story #142
 
-**Retificação sobre as falhas de `tests/test_epic_merge_ausente_146_147.py`.**
-O texto original classificava as 4 falhas desse arquivo como "pré-existentes e
-não relacionadas a esta story". A classificação era incorreta: as 3 falhas de
-`TestTC02SemDivergenciaDeCodigo` e a de `TestTC05CriteriosDeAceitePosMerge`
-eram **causadas por código desta própria story ausente em `main`** — o teste
-`test_nenhum_commit_de_epic_em_src_falta_em_head` nomeava explicitamente o
-commit `570e699` ("Integrar InstanceLock ao ciclo de vida de main()"), que é a
-task #151. O arquivo é o guard executável do elo `epic → main`, e estava
-apontando precisamente a lacuna desta entrega. Após a reconciliação do #196 as
-4 falhas desapareceram, sem qualquer alteração em `src/` ou `tests/`.
+As 3 tasks filhas estão encerradas e integradas em `main`: #150 (LockGuard),
+#151 (integração ao ciclo de vida), #152 (suíte concorrente). O bug #196
+também está encerrado após o hotfix #197. Sem `/blocked_by` pendente no body
+de #142.
 
-## Fora de escopo (conforme a story)
+## Épico #104 — bloqueios verificados, NÃO avançado
 
-Lock distribuído entre hosts sem filesystem compartilhado e coordenação entre
-diretórios de estado distintos.
+O body do épico #104 declara `/blocked_by #141, #149, #139`. Status apurado
+nesta etapa:
+
+- **#149** — concluída (board `task`, coluna `concluido`).
+- **#139** — "Isolar falhas sem bloquear os demais trabalhos" — ainda em
+  `story/planejamento-tecnico`.
+- **#141** — "Restaurar alterações indevidas no snapshot após execução do
+  agente" — ainda em `story/change-file`.
+
+Como #139 e #141 continuam em andamento, o épico #104 não teve todos os seus
+bloqueios resolvidos. Nenhuma ação foi tomada sobre a issue #104 nesta etapa.
+
+— Isabela Gomes - Tech Lead
