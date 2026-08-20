@@ -29,6 +29,9 @@ _PROTECTED_FILES = [
     ".pipe/throttle.json",
     ".pipe/throttle",
     ".pipe/sessions.json",
+    ".pipe/deadLetter.json",
+    ".pipe/orphanFiles.json",
+    ".pipe/pipe.lock",
 ]
 
 

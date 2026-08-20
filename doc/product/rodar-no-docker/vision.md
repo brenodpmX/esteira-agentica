@@ -1,8 +1,16 @@
 # Vision — Rodar no Docker
 
-Status: draft
+Status: entregue e homologada
 Owner: product
-Last updated: 2026-07-02
+Last updated: 2026-08-03
+
+## Resultado da entrega
+
+A visão foi materializada na versão 1.6.0: a esteira inicia via Docker Compose,
+recebe configuração e credenciais externamente, preserva estado em volumes e
+executa agentes em modo headless. A homologação de 03/08/2026 confirmou startup,
+sincronização com os boards e conclusão de uma execução real de agente dentro
+do container. O guia operacional está publicado no `README.md`.
 
 ## Esclarecimento de escopo — "sem humano"
 Confirmado com o negócio: "sem a presença de um humano" refere-se à **operação
@@ -24,8 +32,8 @@ acesso à máquina que hospeda o container.
 - src/__main__.py (startup, _setup_ssh)
 - src/adapters/kiro_cli_agent.py
 
-## Problema
-Hoje a esteira só roda em uma máquina física preparada manualmente: exige uma
+## Problema original
+Hoje, antes desta entrega, a esteira só rodava em uma máquina física preparada manualmente: exige uma
 chave SSH apontada por `PIPE_SSH_KEY_FILE`, o `gh` CLI autenticado e o
 `kiro-cli` autenticado no ambiente. Isso prende o analista a um computador
 específico e impede que a esteira seja executada de forma reprodutível e

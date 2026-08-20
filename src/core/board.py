@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
+from src.core.commands import _sanitize_relations_with_discards
 from src.core.log import log
 
 
@@ -48,6 +49,7 @@ class ChangeItem:
     board: str = None       # board_id ao qual a issue pertence
     uuid: str = None        # id único na fila (atribuído por add/addAll)
     fullsync: bool = False  # se True, reconcilia todas as propriedades + deps
+    attempts: int = 0       # tentativas de processamento já feitas (erro transitório)
 
     @staticmethod
     def now() -> str:
@@ -225,6 +227,10 @@ class BoardPort(ABC):
         """Desarquiva o item da issue no project."""
         log.warning("Board", "unarchive_issue não implementado neste adapter")
 
+    def remove_from_board(self, board_id: str, issue_id: str) -> None:
+        """Remove um item de um project (via deleteProjectV2Item)."""
+        log.warning("Board", "remove_from_board não implementado neste adapter")
+
 
 class Board:
     """Core de boards - usa port para operações."""
@@ -247,6 +253,8 @@ class Board:
         boards = []
         for board_id, board_cfg in config.get("boards", {}).items():
             if board_id == "platform":
+                continue
+            if not isinstance(board_cfg, dict):
                 continue
             columns = list(board_cfg.get("columns", {}).keys())
             boards.append({
@@ -319,6 +327,10 @@ class Board:
     def unarchive_issue(self, board_id: str, issue_id: str):
         self._port.unarchive_issue(board_id, issue_id)
 
+    def remove_from_board(self, board_id: str, issue_id: str):
+        """Remove um item de um project (via deleteProjectV2Item)."""
+        self._port.remove_from_board(board_id, issue_id)
+
     def apply_commands(self, board_id: str, issue_id: str, cmds, known: dict = None) -> dict:
         """Aplica os comandos anotados (IssueCommands) como atributos no board.
 
@@ -337,6 +349,15 @@ class Board:
            children:{...}, blocked_by:{...}, blocks:{...}}
         Onde 'added'/'removed' são numbers de issues (str).
         """
+        cmds, discards = _sanitize_relations_with_discards(issue_id, cmds)
+        self_id = str(issue_id)
+        for attr_name in discards:
+            log.warning(
+                "Board",
+                f"[{board_id}] auto-referência descartada em {attr_name}: #{self_id}",
+                board_id=board_id, issue_id=self_id,
+            )
+
         deltas = {
             "parent": {"added": [], "removed": []},
             "children": {"added": [], "removed": []},
@@ -450,7 +471,10 @@ class Board:
 
     def board_ids(self, config: dict) -> list[str]:
         """Retorna os ids dos boards configurados (ignora 'platform')."""
-        return [bid for bid in config.get("boards", {}) if bid != "platform"]
+        return [
+            bid for bid, cfg in config.get("boards", {}).items()
+            if bid != "platform" and isinstance(cfg, dict)
+        ]
 
     def detect_board_changes(self, board_id: str, snapshot, queue) -> int:
         """Detecta mudanças de um board comparando com o snapshot e registra na fila.
@@ -490,8 +514,11 @@ class Board:
 
             remote_at = issue.updated_at or ""
             snap_at = known.get("updated_at") or ""
+            # Coluna vazia é divergência (propagação automática sem Status).
+            # Trata-se como change-down para que _apply_change_down possa
+            # reaplicar a coluna do snapshot local ou remover o item se for inválido.
             changed = (remote_at and snap_at and remote_at > snap_at) or \
-                      (issue.column and issue.column != known.get("column"))
+                      (issue.column != known.get("column"))
             if changed:
                 # Full sync diário: reconcilia todas as propriedades + deps.
                 if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id,
