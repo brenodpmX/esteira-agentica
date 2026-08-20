@@ -51,6 +51,10 @@ agents:
 
 boards:
   platform: github
+  rerun_cooldown: 300   # opcional: tempo mínimo (segundos) para reexecutar a
+                        # mesma issue (mesmo board + coluna + id). 0/ausente
+                        # desabilita. Se a issue muda de coluna, fica elegível
+                        # imediatamente.
   backlog:
     name: Backlog
     priority: 0
@@ -85,41 +89,24 @@ python -m src
 
 ### Execução via Docker Compose (recomendado para produção)
 
-A distribuição Docker foi homologada na versão 1.6.0. Ela executa o loop da
-esteira sem prompts no container; intervenções de negócio continuam sendo feitas
-no board do GitHub e são capturadas pelo sincronismo seguinte.
+A distribuição Docker executa o loop da esteira sem prompts no container;
+intervenções de negócio continuam sendo feitas no board do GitHub e são
+capturadas pelo sincronismo seguinte. O passo a passo detalhado (verificação de
+saúde e gestão do container) está em
+[`doc/runbook/docker.md`](doc/runbook/docker.md).
 
 **Pré-requisitos no host:**
 - Docker Engine com Docker Compose V2 (`docker compose`);
-- `kiro-cli` instalado por completo no `PATH` — o build copia o launcher e o
-  executável de chat da instalação local;
-- chave SSH registrada no GitHub (por padrão, `~/.ssh/id_ed25519`);
+- chave SSH registrada no GitHub (usada como Docker secret no build e no runtime);
 - token do GitHub com escopos `repo` e `project`;
 - API key do Kiro (plano Pro/Pro+ ou superior), gerada em
   https://app.kiro.dev → **API Keys**.
 
-O login local do `gh` é opcional quando `GH_TOKEN` está preenchido. O diretório
-`~/.config/gh` também é montado por padrão e pode ser alterado por
-`GH_CONFIG_DIR`.
+O `kiro-cli` **não** precisa estar instalado no host: o build o baixa na versão
+pinada em `docker/versions.env` (validada por SHA-256). O login local do `gh`
+também não é necessário — a autenticação usa `GH_TOKEN`.
 
-**1. Preparar o contexto de build:**
-
-```bash
-./prepare-docker.sh
-```
-
-O script copia **dois** binários do host: `kiro-cli` (launcher, ~109 MB) e
-`kiro-cli-chat` (~665 MB), que implementa o subcomando `chat` usado pela
-esteira. Copiar somente o launcher causa
-`No such file or directory (os error 2)` durante a execução do agente
-(issue #120). O script resolve symlinks da instalação, valida os dois arquivos e
-não copia `kiro-cli-term`, que não é usado.
-
-Os binários são ignorados pelo Git e usados apenas no contexto local de build.
-A imagem resultante ocupa aproximadamente 1,7 GB; a maior parte vem do Kiro CLI,
-que não possui distribuição pública instalável pela imagem.
-
-**2. Configurar credenciais e caminhos:**
+**1. Configurar credenciais:**
 
 ```bash
 cp .env.example .env
@@ -130,49 +117,38 @@ Preencha no `.env`:
 ```env
 GH_TOKEN=ghp_seu_token
 KIRO_API_KEY=kiro_sua_api_key
-SSH_KEY_FILE=~/.ssh/id_ed25519       # opcional; este é o padrão
-GH_CONFIG_DIR=~/.config/gh           # opcional; este é o padrão
+SSH_KEY_FILE_HOST=/caminho/absoluto/para/id_ed25519   # alimenta o Docker secret
 ```
 
-Não versione o `.env`. Para rotacionar a API key, atualize `KIRO_API_KEY` e
-recrie o serviço com `docker compose up -d --force-recreate`.
+`PIPE_SSH_KEY_FILE` é fixado pelo compose como `/run/secrets/ssh_key` — não o
+defina no `.env`. Use caminho **absoluto** em `SSH_KEY_FILE_HOST` (o compose não
+expande `~` em `secrets.file`). Não versione o `.env`. Para rotacionar a API key,
+atualize `KIRO_API_KEY` e recrie o serviço com
+`docker compose up -d --force-recreate`.
 
-**3. Criar a configuração da esteira:**
+**2. Criar a configuração da esteira:**
 
 Crie `pipe.yml` na raiz (ele não é versionado) usando o exemplo da seção
 [Configuração](#configuração). Preencha também os contextos requeridos em
 `contexts/<plataforma>/<agente>.md`; o startup cria arquivos ausentes, mas exige
 conteúdo antes de executar os agentes.
 
-**4. Construir e iniciar:**
+**3. Construir e iniciar:**
 
 ```bash
 docker compose build
-docker compose up
-```
-
-Para executar em background e acompanhar os logs:
-
-```bash
 docker compose up -d
 docker compose logs -f
 ```
 
-Os logs são emitidos em tempo real (`PYTHONUNBUFFERED=1`). O Compose usa um
-processo init e a aplicação trata `SIGTERM`, portanto `down`/`stop` encerram o
-loop de forma limpa, sem aguardar `SIGKILL` (issue #70).
+O `docker compose build` ativa o BuildKit e injeta a chave SSH como **secret de
+build** (`build.secrets`) para o `git clone` do código na última camada do
+Dockerfile; a chave nunca persiste em nenhuma camada da imagem. Os logs são
+emitidos em tempo real (`PYTHONUNBUFFERED=1`). O Compose usa um processo init e a
+aplicação trata `SIGTERM`, portanto `down`/`stop` encerram o loop de forma limpa,
+sem aguardar `SIGKILL` (issue #70).
 
-**5. Verificar a execução:**
-
-Uma inicialização saudável registra, nesta ordem geral: validação do
-`pipe.yml`, verificação dos repositórios, sincronização dos boards, início da
-esteira e seleção/execução de tarefas. Para validar os binários embarcados:
-
-```bash
-docker compose run --rm pipe kiro-cli chat --help
-```
-
-**6. Parar ou reiniciar:**
+**4. Parar ou reiniciar:**
 
 ```bash
 docker compose down       # preserva os volumes
@@ -187,25 +163,45 @@ host, mas permanecendo parado após uma interrupção explícita.
 
 | Volume | Caminho no container | Conteúdo |
 |--------|---------------------|----------|
-| `pipe_state` | `/app/.pipe` | Snapshots, fila de mudanças e índice de sessões |
-| `pipe_repos` | `/app/repo` | Clones dos repositórios Git |
-| `pipe_logs` | `/app/logs` | Logs da esteira e das execuções de agentes |
+| `pipe-state` | `/app/.pipe` | Snapshots, fila de mudanças e índice de sessões |
+| `pipe-repo` | `/app/repo` | Clones dos repositórios Git |
+| `pipe-logs` | `/app/logs` | Logs da esteira e das execuções de agentes |
+| `kiro-home` | `/home/pipe/.kiro` | Configuração do kiro-cli |
+| `kiro-local` | `/home/pipe/.local/share/kiro-cli` | Dados locais do kiro-cli |
+
+Por padrão o estado fica em **named volumes** (geridos pelo Docker, em
+`/var/lib/docker/volumes/`). Para ter logs e estado **acessíveis no host** — e
+com posse do seu usuário, não do root — use o override `compose.dev.yml`, que
+troca esses volumes por bind mounts configuráveis:
+
+```bash
+docker compose -f docker-compose.yml -f compose.dev.yml up -d
+```
+
+Para que o `docker compose up` normal já use os dois arquivos, defina no `.env`:
+
+```env
+COMPOSE_FILE=docker-compose.yml:compose.dev.yml
+```
+
+Os caminhos no host são configuráveis (`PIPE_STATE_DIR`, `PIPE_REPO_DIR`,
+`PIPE_LOGS_DIR`; padrão `./.pipe`, `./repo`, `./logs`). Crie os diretórios com o
+seu usuário antes do `up` (`mkdir -p .pipe repo logs`) — se não existirem, o
+Docker os cria como root.
 
 ### Solução de problemas do Docker
 
 | Sintoma | Verificação / correção |
 |---------|------------------------|
-| `kiro-cli não encontrado no PATH` | Instale o Kiro CLI completo no host e rode novamente `./prepare-docker.sh`. |
-| `kiro-cli-chat não encontrado` | Reinstale/atualize o Kiro CLI; launcher e binário de chat devem estar no mesmo diretório real. |
-| `No such file or directory (os error 2)` ao chamar o agente | Remova `kiro-cli` e `kiro-cli-chat` da raiz, execute `./prepare-docker.sh` e refaça o build sem cache. |
+| Build falha ao instalar `gh` (`Version 'X.Y.Z' for 'gh' was not found`) | O repo APT do `gh` serve apenas a última versão; atualize `GH_VERSION` em `docker/versions.env` e o `Dockerfile`. |
+| Build falha no kiro-cli (`sha256 … did NOT match`) | A URL `/latest/` mudou de build; atualize `KIRO_CLI_VERSION`/`KIRO_CLI_SHA256` em `docker/versions.env` e no `Dockerfile`. |
 | Falha de autenticação do agente | Confirme `KIRO_API_KEY` no `.env` e recrie o serviço. |
 | Falha de API/projeto do GitHub | Confirme os escopos `repo` e `project` de `GH_TOKEN`. |
-| Falha ao clonar via SSH | Confirme `SSH_KEY_FILE`, o arquivo `.pub` correspondente e o cadastro da chave no GitHub. |
+| Falha ao clonar via SSH | Confirme `SSH_KEY_FILE_HOST` (caminho absoluto) e o cadastro da chave no GitHub. |
 | Configuração ou contexto inválido | Consulte `docker compose logs`; o startup encerra com mensagem explícita. |
 
-> A imagem atual é construída para Linux `amd64`, pois o Dockerfile baixa o
-> binário do GitHub CLI para essa arquitetura e copia binários nativos do Kiro
-> CLI instalados no host.
+> A imagem é construída para Linux `amd64`: o Dockerfile baixa o GitHub CLI e o
+> Kiro CLI (binário nativo glibc `x86_64`) para essa arquitetura.
 
 ## Estrutura
 
@@ -279,6 +275,29 @@ Se houve qualquer atividade (sync movimentou algo OU existe tarefa para executar
 - Auto-advance de coluna `todo` para próxima coluna (só ocorre se nenhuma coluna posterior tiver tarefa pronta); move os arquivos, atualiza o snapshot e enfileira o `change-up` para o sync propagar ao board
 - `parallel: false` → bloqueia auto-advance se já existe issue ativa
 - Issues com `/need_human` ou `/blocked_by` no body são ignoradas
+- Issues reexecutadas há menos de `boards.rerun_cooldown` segundos são puladas
+  (ver abaixo)
+
+### Cooldown de reexecução (`boards.rerun_cooldown`)
+
+Impede que a mesma issue seja reentregue ao agente em loop apertado quando falha
+repetidamente. Sem isso, uma issue que não avança consome quota do modelo a cada
+ciclo sem progresso.
+
+- Cache interno em memória: `(board, coluna, id)` → instante da última entrega.
+- A chave **inclui a coluna** de propósito: se a issue avança no board, é
+  trabalho novo e fica elegível imediatamente, sem esperar o cooldown.
+- Entradas expiradas são purgadas a cada acionamento do `keep_task`, para o cache
+  não crescer indefinidamente com issues que saíram do board.
+- `0` ou ausente desabilita e esvazia o cache.
+
+O cooldown é por processo (não persiste entre reinícios): reiniciar a esteira
+libera todas as issues imediatamente.
+
+> **Atenção ao atualizar de 1.8.x:** nas versões 1.8.0–1.8.3 essa chave era
+> validada mas **não tinha efeito** (regressão do merge `c27f813`, corrigida na
+> 1.9.0). Se o seu `pipe.yml` já a declara, o comportamento muda ao atualizar.
+> Para manter o comportamento anterior, remova a chave ou defina `0`.
 
 ### Resolução automática de bloqueios
 
@@ -309,11 +328,21 @@ automaticamente em três situações:
 
 ### Substituição de agente por nível (`override-agent`)
 
-Cada coluna define um agente default no atributo `agent`. Se a issue tiver uma
-tag `/agent_level <nível>` no bloco `@---` e esse `<nível>` for uma chave do
-mapa `override-agent` da coluna, a esteira usa o agente indicado no valor. Se
-não houver `/agent_level`, ou o nível não estiver mapeado, usa o `agent`
-default.
+Cada coluna define um agente default no atributo `agent`. O nível de execução
+de uma issue é armazenado como label `agent-level-<nível>` no GitHub (ex.:
+`agent-level-low`, `agent-level-medium`, `agent-level-high`). Essa label é
+sincronizada nativamente pelo board, garantindo que o nível persista entre
+ciclos de sync.
+
+Se a issue possuir uma label `agent-level-<nível>` e esse `<nível>` for uma
+chave do mapa `override-agent` da coluna, a esteira usa o agente indicado no
+valor. Caso contrário, usa o `agent` default.
+
+No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
+`@---` do body. O sync-up lê esse campo via `all_labels()` e grava a label
+`agent-level-<nível>` no GitHub automaticamente. A resolução de agente em
+`resolve_agent_id()` lê diretamente `issue["labels"]` — sem dependência de
+arquivo local.
 
 Como cada agente carrega o próprio `model`, trocar o agente por nível troca
 também o model efetivo da execução.
@@ -323,8 +352,8 @@ columns:
   desenvolvimento:
     agent: engineering          # default
     override-agent:
-      low: generic              # /agent_level low  -> generic
-      high: senior-engineering  # /agent_level high -> senior-engineering
+      low: generic              # agent-level-low  -> generic
+      high: senior-engineering  # agent-level-high -> senior-engineering
 ```
 
 Validação (`config.py`): `override-agent` deve ser um mapa `<nível>: <agente>`,
@@ -453,30 +482,43 @@ Validar credenciais e retornar JWT.
 /agent_level high
 ```
 
-### Incidente: sub-issues propagadas entre boards (#98/#99)
+### Incidente: sub-issues propagadas entre boards (#88/#98/#99/#106)
 
-**Versão desta documentação: 1.6.1.** Ao vincular uma sub-issue a um parent
-presente em outro GitHub Project, o GitHub Projects V2 pode propagar a filha
-para o project do parent sem preencher o campo `Status`. O sync então pode
-interpretar o item sem coluna como uma issue nova daquele board, criar arquivos
-locais duplicados e executar o agente no contexto errado.
+Ao vincular uma sub-issue a um parent presente em outro GitHub Project, o
+GitHub Projects V2 pode propagar a filha para o project do parent sem
+preencher o campo `Status`. O sync então pode interpretar o item sem coluna
+como uma issue nova daquele board, criar arquivos locais duplicados e
+executar o agente no contexto errado.
 
-A correção homologada para o incidente é composta por cinco proteções:
+A correção é composta por cinco proteções:
 
 1. operação `remove_from_board` via GraphQL `deleteProjectV2Item`;
-2. pós-hook de `_add_sub_issue` para remover propagação sem `Status`;
-3. guard em `create-down` para não materializar a duplicata local;
+2. pós-hook de `_add_sub_issue` (`_remove_propagated_items_without_status`)
+   que consulta `projectItems`/`fieldValues` via GraphQL (mesmo padrão de
+   `_belongs_to_board`/`get_issue`) e remove propagação sem `Status`;
+3. guard em `create-down` que exige prova de propagação — a issue já
+   registrada em outro board **configurado** com coluna conhecida — antes de
+   descartar o evento e remover o item; `parent` isolado, sem essa prova, não
+   basta (evita remover sub-issue legítima e nova);
 4. fallback de coluna para issues realmente novas ou já rastreadas; e
 5. detecção de coluna vazia como divergência a reconciliar.
 
-**Estado em 04/08/2026:** a implementação final está no commit `01f9e83` e foi
-homologada com 208 testes aprovados e 3 ignorados, mas o PR #103 foi fechado sem
-merge. Portanto, essa proteção ainda não está disponível em `main` nem deve ser
-considerada implantada em produção. Até a integração, evite criar novos
-vínculos hierárquicos entre boards sem monitorar itens sem `Status`; resíduos
-anteriores (#84/#85/#86) exigem limpeza manual com a esteira parada.
+**Histórico:** a primeira tentativa (PR #102 original) usava endpoints REST
+inexistentes para Projects V2 e um teste que fazia `monkeypatch` do próprio
+método sob teste, mascarando a ausência de cobertura real — reprovada em code
+review (issue #106). Uma segunda tentativa concorrente (sub-issue #98, PR
+#103) foi cancelada pela decisão do débito #110, que definiu #88/PR #102 como
+veículo único da correção. A implementação corrigida (GraphQL real, guard com
+prova de propagação, suíte sem monkeypatch do código sob teste) foi entregue
+no commit `a00ba7c` e integrada à branch do PR #102.
 
-Documentação: [change #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
+**Estado da entrega:** homologação aprovada em 19/08/2026. O merge do PR #102
+e o deploy continuam sendo necessários para disponibilizar a correção em
+produção. A correção previne novas duplicações, mas não remove resíduos
+anteriores (#84/#85/#86), que exigem limpeza manual com a esteira parada.
+
+Documentação: [change #88](doc/changes/88-sub-issues-propagadas-entre-boards.md),
+[registro da tentativa cancelada #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
 e [post mortem #99](doc/incidente/sub-issues-propagadas/ticket.md).
 
 ## Eventos de coluna (`on_in` / `on_out`)
@@ -542,6 +584,47 @@ detectar uma relação adicionada/removida numa issue, o sync enfileira um
 `change-down fullsync` do alvo **apenas se o snapshot do alvo ainda não
 refletir o par recíproco**. Essa checagem é a condição de parada e evita
 reação em cadeia infinita.
+
+### Sub-issues propagadas entre boards sem coluna
+
+Ao vincular uma sub-issue a um parent que está em outro GitHub Project, o
+GitHub Projects V2 pode adicionar automaticamente a filha aos projects do pai
+sem preencher o campo `Status`. Sem tratamento, esse item seria interpretado
+como uma nova issue do board e criaria arquivos locais duplicados.
+
+A sincronização trata esse efeito colateral em duas camadas:
+
+1. **Prevenção após o vínculo:** depois de criar a relação parent/child, o
+   adapter consulta via GraphQL os `projectItems` da sub-issue (com o `Status`
+   de cada item em `fieldValues`) e remove, por `deleteProjectV2Item`, os itens
+   de **outros** projects cujo `Status` está vazio. Dados de Projects V2 não
+   existem na REST API — a consulta usa o mesmo padrão de `get_issue` e
+   `_belongs_to_board`. Itens com coluna definida são preservados, inclusive
+   participações multi-board intencionais.
+2. **Defesa no `create-down`:** se um item sem coluna já está registrado em
+   outro board configurado com coluna conhecida, o core o remove do board atual
+   via `deleteProjectV2Item`, descarta o evento e não cria arquivos locais. A
+   simples presença de `parent` não basta para remover: sem prova de presença em
+   outro board, a issue pode ser uma sub-issue legítima e nova do board atual, e
+   segue o fluxo normal com o fallback da primeira coluna.
+
+O project informado ao pós-hook é sempre preservado, mesmo temporariamente sem
+`Status`; se esse project não puder ser resolvido, nada é removido. Como
+`set_children` informa o project do pai — justamente onde o item propagado
+aparece —, esse caminho é coberto deliberadamente pela camada 2, que tem a prova
+de presença no snapshot.
+
+A remoção precisa concluir antes de o evento ser descartado; falhas propagam e
+são reprocessadas pela fila. Snapshots de boards ausentes do `pipe.yml` não
+servem como prova. Além disso, uma coluna remota vazia passa a ser detectada
+como divergência: em issues já rastreadas, o `change-down` reaplica no board a
+coluna conhecida do snapshot (evitando que a mesma divergência retorne em todo
+full sync), e `create_issue` nunca deixa uma issue nascer sem `Status` — coluna
+inexistente cai na primeira opção do project com warning.
+
+> A correção previne novas duplicações, mas não remove automaticamente resíduos
+> que já haviam sido materializados localmente antes da atualização. Esses itens
+> devem ser removidos manualmente do project indevido, com a esteira parada.
 
 ### Incidente conhecido: parent recursivo (#97)
 
@@ -633,4 +716,5 @@ penalty indevidamente.
 
 ## Documentação Técnica
 
-Ver [CONTEXT.md](CONTEXT.md) para decisões técnicas e estado do projeto.
+- [Contexto e decisões técnicas](CONTEXT.md)
+- [Changelog](CHANGELOG.md)
