@@ -1,17 +1,21 @@
 # Post-Mortem de Produto — Incidente Parent Recursivo
 
-Status: mitigado; ações preventivas pendentes
+Status: resolvido; C1–C5 implementadas e homologadas
 Incidente de origem: #97
 Análise de negócio: #104
 Owner: product
 Data do incidente: 2026-08-01
-Última atualização: 2026-08-03
+Data de resolução: 2026-08-20
+Versão da correção: 1.10.0
+Última atualização: 2026-08-20
 
 ## Resumo executivo
 
 Em 01/08/2026, a Esteira Agêntica associou um artefato local indevido à issue #76, substituiu seu título e conteúdo e tentou estabelecer uma relação impossível da issue consigo mesma. A rejeição dessa operação passou a ser repetida continuamente e impediu o processamento de todos os boards por aproximadamente 2h37.
 
-A intervenção operacional restaurou os dados e retomou o serviço. Não houve perda financeira identificada nem perda permanente de informação. Entretanto, a correção definitiva ainda depende de cinco frentes preventivas. Até que elas sejam entregues e homologadas, o incidente permanece mitigado, com risco residual de recorrência.
+A intervenção operacional restaurou os dados e retomou o serviço no mesmo dia. Em seguida, as cinco frentes preventivas foram entregues pelas stories #138–#142: associação determinística de body, sanitização de auto-referência, isolamento de mensagem-veneno, restauração de integridade do snapshot e lock de instância única. Após a integração em `main` e o aceite de homologação de 20/08/2026, o incidente foi reclassificado como **resolvido na versão 1.10.0**.
+
+As seções de análise, decisões e critérios abaixo preservam o raciocínio aprovado em 03/08/2026. Menções a ações “pendentes” ou à manutenção do estado “mitigado” descrevem o gate vigente naquele momento; esse gate foi satisfeito em 20/08/2026. Permanecem como limites aceitos o lock restrito ao filesystem compartilhado, a guarda limitada a snapshots, a ausência de replay automático de dead-letter e a auditoria parcial em timeout fora desta entrega.
 
 ## Classificação de Produto
 

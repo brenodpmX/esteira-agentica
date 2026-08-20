@@ -1,8 +1,12 @@
 # Épicos — Confiabilidade após o incidente Parent Recursivo
 
-Status: draft
+Status: concluído; cinco épicos entregues
 Owner: requirements
-Last updated: 2026-08-03
+Last updated: 2026-08-20
+
+> C1–C5 foram implementadas pelas stories #138–#142 e homologadas em conjunto
+> na versão 1.10.0. A decomposição abaixo permanece como rastreabilidade do
+> escopo aprovado.
 
 ## Inputs
 - Issue #104 — Post Mortem do incidente reportado em 01/08/2026

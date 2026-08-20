@@ -1,8 +1,13 @@
 # Visão de Produto — Operação Confiável e Recuperável
 
-Status: pronto para aprovação de negócio
+Status: implementada e homologada na versão 1.10.0
 Owner: product
-Última atualização: 2026-08-03
+Última atualização: 2026-08-20
+
+> **Resultado:** os sete resultados esperados foram cobertos pelas entregas
+> C1–C5 (stories #138–#142), integradas em `main` e aceitas no gate de
+> homologação de 20/08/2026. Os critérios abaixo permanecem como contrato de
+> regressão e acompanhamento pós-liberação.
 
 ## Visão
 
@@ -132,5 +137,5 @@ As duas primeiras frentes reduzem rapidamente o risco de paralisação. A tercei
 
 - Validar primeiro os cenários reproduzidos no incidente e, depois, variações de identidade ambígua, relação inválida, falha definitiva, tentativa de alteração de estado e execução concorrente.
 - Liberar com acompanhamento de Operações e evidência de que outros boards continuam avançando durante falhas localizadas.
-- Manter o incidente como “mitigado, com risco residual” até que todas as frentes estejam concluídas.
+- O gate foi satisfeito em 20/08/2026: todas as frentes foram concluídas e homologadas, permitindo reclassificar o incidente como “resolvido”.
 - Considerar o incidente “resolvido” somente após homologação integral dos critérios negociais e ausência de recorrência no período de observação definido na liberação.

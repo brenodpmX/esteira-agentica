@@ -712,10 +712,13 @@ arquitetura hexagonal e adicionou cinco limites no core:
 
 As decisões, contratos, fluxo de falhas, rollout e testes de regressão estão em
 `doc/architecture/confiabilidade-parent-recursivo/arquitetura.md`. A causa raiz
-e o estado operacional original estão em
-`doc/incidente/parent-recursivo/ticket.md`. O incidente segue sendo tratado
-como **mitigado, com risco residual**, até a homologação conjunta das cinco
-frentes confirmar ausência de recorrência do padrão do #97 em produção.
+e o histórico operacional estão em
+`doc/incidente/parent-recursivo/ticket.md`. Após a conclusão das stories
+#138–#142 e a aprovação de homologação do épico #104 em 20/08/2026, o
+incidente foi reclassificado como **resolvido na versão 1.10.0**. Permanecem
+como limites conhecidos — e não como bloqueadores do encerramento — o lock
+restrito ao filesystem compartilhado, a guarda limitada a snapshots e a
+ausência de replay automático de dead-letter.
 
 ## Post mortem: sub-issues propagadas entre boards (#88/#99/#106)
 

@@ -1,8 +1,14 @@
 # Espaço do Problema — Confiabilidade após o incidente Parent Recursivo
 
-Status: pronto para aprovação de negócio
+Status: encerrado; salvaguardas entregues e homologadas
 Owner: product
-Última atualização: 2026-08-03
+Última atualização: 2026-08-20
+
+> **Desfecho:** este documento preserva a análise do problema feita antes da
+> implementação. As cinco necessidades identificadas foram atendidas pelas
+> stories #138–#142 e homologadas em 20/08/2026 na versão 1.10.0. O risco de
+> não agir descrito abaixo deixou de representar o estado atual e permanece
+> como justificativa histórica da priorização.
 
 ## Entradas consideradas
 

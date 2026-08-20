@@ -1,12 +1,17 @@
 # Arquitetura — Confiabilidade após o incidente Parent Recursivo
 
-**Status:** proposta para validação arquitetural
+**Status:** implementada, integrada em `main` e homologada
 
 **Owner:** architecture
 
-**Última atualização:** 2026-08-04
+**Última atualização:** 2026-08-20
 
 **Incidentes relacionados:** #97 e #104
+
+> As ADRs deste documento foram materializadas por C1–C5 nas stories
+> #138–#142. A homologação conjunta foi aprovada em 20/08/2026 e compõe a
+> versão 1.10.0. As seções em linguagem de proposta/plano são preservadas como
+> registro da decisão anterior à implementação.
 
 ## 1. Objetivo e decisão
 

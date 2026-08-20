@@ -1,8 +1,12 @@
 # Regras de Negócio — Confiabilidade após o incidente Parent Recursivo
 
-Status: draft
+Status: aprovado e implementado na versão 1.10.0
 Owner: requirements
-Last updated: 2026-08-03
+Last updated: 2026-08-20
+
+> As regras foram usadas como contrato para C1–C5 e tiveram seu gate final
+> aprovado em 20/08/2026. A RN-010 foi satisfeita: as cinco frentes estão
+> entregues e o incidente #97 está resolvido.
 
 ## Inputs
 - `doc/product/confiabilidade-parent-recursivo/vision.md` (RN01–RN09)

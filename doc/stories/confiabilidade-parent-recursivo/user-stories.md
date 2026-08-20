@@ -1,9 +1,14 @@
 # User Stories — Confiabilidade após o incidente Parent Recursivo
 
-Status: prontas para planejamento técnico
+Status: concluídas e homologadas
 Owner: product (Helena Costa — Product Manager)
-Last updated: 2026-08-04
+Last updated: 2026-08-20
 Épico de origem: #104 "Post-Mortem de Produto — Incidente reportado em 01/08/2026" (board `epic`)
+
+> US-01 a US-05 correspondem às stories #138–#142, todas
+> concluídas/encerradas. A regressão composta e o gate do épico foram aceitos
+> em 20/08/2026 na versão 1.10.0; o critério de encerramento ao fim deste
+> documento foi satisfeito.
 
 ## Inputs aprovados
 
@@ -285,12 +290,12 @@ coordenação entre diretórios de estado distintos.
 
 ## Critério de encerramento do épico
 
-O incidente permanece **mitigado, com risco residual** durante entregas
-parciais. O épico #104 só pode ser considerado resolvido quando:
+Durante entregas parciais, o incidente permaneceu **mitigado, com risco
+residual**. Em 20/08/2026, o épico #104 foi considerado resolvido porque:
 
-1. US-01 a US-05 estiverem implementadas e homologadas;
-2. a regressão composta do incidente #97 confirmar zero substituições de
-   conteúdo, zero autorreferências no adapter, ausência de bloqueio global,
-   restauração do estado protegido e instância única; e
-3. os logs permitirem identificar item, board, motivo, ação automática e
-   próximo passo sem acesso à memória interna.
+1. US-01 a US-05 foram implementadas e homologadas;
+2. a regressão composta do incidente #97 confirmou proteção contra
+   substituição de conteúdo, autorreferências no adapter, bloqueio global,
+   alteração persistente do snapshot e concorrência de instâncias; e
+3. os logs e registros de isolamento permitem identificar item, board, motivo,
+   ação automática e próximo passo sem acesso à memória interna.

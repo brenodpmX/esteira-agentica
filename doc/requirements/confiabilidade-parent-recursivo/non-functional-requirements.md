@@ -1,8 +1,12 @@
 # Requisitos Não-Funcionais — Confiabilidade após o incidente Parent Recursivo
 
-Status: draft
+Status: aprovado e validado na versão 1.10.0
 Owner: requirements
-Last updated: 2026-08-03
+Last updated: 2026-08-20
+
+> Os requisitos abaixo permanecem como critérios de regressão. A entrega
+> conjunta C1–C5 foi homologada em 20/08/2026; os resultados e limitações da
+> rodada estão registrados no change file do épico #104.
 
 ## Inputs
 - `doc/product/confiabilidade-parent-recursivo/vision.md`
