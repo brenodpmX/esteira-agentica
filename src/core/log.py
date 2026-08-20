@@ -9,14 +9,19 @@ from pathlib import Path
 _DEFAULT_DIR = "logs"
 _DEFAULT_TTL = 10
 
+# Nível TRACE: abaixo de DEBUG (5 < 10). Só vai para arquivo, não para terminal.
+TRACE = 5
+logging.addLevelName(TRACE, "TRACE")
+
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _YELLOW = "\033[33m"
 _RED = "\033[31m"
 _WHITE = "\033[37m"
+_DIM = "\033[2m"
 
 _LEVEL_COLOR = {
-    logging.DEBUG: _WHITE,
+    TRACE: _DIM,
     logging.INFO: _BOLD,
     logging.WARNING: _YELLOW,
     logging.ERROR: _RED,
@@ -33,6 +38,7 @@ class Log:
             cls._instance = super().__new__(cls)
             cls._instance._log_dir = Path(_DEFAULT_DIR)
             cls._instance._ttl = _DEFAULT_TTL
+            cls._instance._level = logging.INFO
             cls._instance._file = None
             cls._instance._setup()
         return cls._instance
@@ -42,6 +48,11 @@ class Log:
         log_cfg = config.get("log", {})
         new_dir = Path(log_cfg.get("dir", _DEFAULT_DIR))
         self._ttl = log_cfg.get("ttl", _DEFAULT_TTL)
+        level_str = log_cfg.get("level", "INFO").upper()
+        if level_str == "TRACE":
+            self._level = TRACE
+        else:
+            self._level = getattr(logging, level_str, logging.INFO)
         if new_dir != self._log_dir:
             self._log_dir = new_dir
             if self._file:
@@ -85,21 +96,23 @@ class Log:
     def error(self, module: str, msg: str, *args, exc: BaseException = None, **extra):
         self._log("ERROR", module, msg, args, extra, exc=exc)
 
-    def debug(self, module: str, msg: str, *args, **extra):
-        self._log("DEBUG", module, msg, args, extra)
+    def trace(self, module: str, msg: str, *args, **extra):
+        self._log("TRACE", module, msg, args, extra)
 
     def _log(self, level: str, module: str, msg: str, args: tuple, extra: dict, exc: BaseException = None):
         formatted = msg % args if args else msg
 
         now = datetime.now()
+        level_num = getattr(logging, level, None) or TRACE
 
-        # Terminal: hora + resumo colorido
-        color = _LEVEL_COLOR.get(getattr(logging, level), _BOLD)
-        terminal_msg = f"[{module}] {formatted}"
-        terminal_msg = _BRACKET.sub(f"{color}[\\1]{_RESET}", terminal_msg)
-        print(f"{now.strftime('%H:%M:%S')} {terminal_msg}")
+        # Terminal: hora + resumo colorido (só se nível >= configurado)
+        if level_num >= self._level:
+            color = _LEVEL_COLOR.get(level_num, _BOLD)
+            terminal_msg = f"[{module}] {formatted}"
+            terminal_msg = _BRACKET.sub(f"{color}[\\1]{_RESET}", terminal_msg)
+            print(f"{now.strftime('%H:%M:%S')} {terminal_msg}")
 
-        # Arquivo: timestamp - level - module - message + extras
+        # Arquivo: timestamp - level - module - message + extras (sempre grava)
         ts = now.strftime("%Y-%m-%d %H:%M:%S")
         file_line = f"{ts} - {level} - {module} - {formatted}"
         if extra:

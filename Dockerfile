@@ -1,55 +1,103 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
-# Dependências do sistema: git, ssh, curl, jq (utilitários de linha)
+# Comando de build (BuildKit obrigatório para --secret):
+#
+#   DOCKER_BUILDKIT=1 docker build \
+#     --secret id=ssh_key,src="$PIPE_SSH_KEY_FILE" \
+#     --build-arg PIPE_REF=main \
+#     -t esteira .
+#
+# Para uma versão específica: --build-arg PIPE_REF=<tag|sha>
+
+# ---------------------------------------------------------------------------
+# Camada 2 — Dependências de sistema
+# Pacotes em único RUN para minimizar camadas (ADR-02)
+# Versões pinadas conforme docker/versions.env (ADR-04)
+# gnupg não necessário: repositório APT do gh usa keyring binário via curl
+# ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    ssh \
-    curl \
-    jq \
-    ca-certificates \
+        git=1:2.47.3-0+deb13u1 \
+        openssh-client=1:10.0p1-7+deb13u4 \
+        ca-certificates \
+        curl \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# GitHub CLI (gh) — baixa o binário oficial
-ARG GH_VERSION=2.94.0
-RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
-    | tar -xz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_amd64/bin/gh" \
-    && gh --version
+# ---------------------------------------------------------------------------
+# Camada 3 — GitHub CLI (gh)
+# Repositório APT oficial do GitHub com chave GPG assinada
+# Versão pinada conforme docker/versions.env (ADR-04)
+# ---------------------------------------------------------------------------
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+        https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh=2.97.0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# kiro-cli — copiado do host (binário nativo, não distribuído via repositório público)
-#
-# `kiro-cli` é apenas um launcher: o subcomando `chat` é executado via `exec` no
-# binário irmão `kiro-cli-chat`, que precisa estar no PATH ao lado dele. Omitir
-# esse binário faz toda execução de agente falhar com
-# "error: No such file or directory (os error 2)" (issue #120).
-#
-# Instalados em /usr/local/bin (e não em ~/.local/bin) para não depender do HOME
-# e sobreviver à migração para usuário não-root (issue #40).
-COPY kiro-cli kiro-cli-chat /usr/local/bin/
-RUN chmod +x /usr/local/bin/kiro-cli /usr/local/bin/kiro-cli-chat
+# ---------------------------------------------------------------------------
+# Camada 4 — PyYAML
+# Versão pinada conforme docker/versions.env (ADR-04)
+# ---------------------------------------------------------------------------
+RUN pip install --no-cache-dir pyyaml==6.0.2
 
-# Dependências Python
-RUN pip install --no-cache-dir pyyaml
-
-# stdout/stderr sem buffer: fora de um TTY (caso do `docker compose up`, que
-# captura a saída por pipe) o CPython usa buffer de bloco e os logs só apareceriam
-# quando o buffer enchesse. Com isso, `docker logs` mostra os logs em tempo real
-# (issue #70)
-ENV PYTHONUNBUFFERED=1
-
-# Diretório de trabalho da esteira
+# ---------------------------------------------------------------------------
+# Camada 5 — Usuário não-root (ADR-05)
+# uid determinístico 1000; HOME gravável para ~/.ssh e sessões do kiro-cli
+# ---------------------------------------------------------------------------
+RUN useradd --create-home --uid 1000 pipe
 WORKDIR /app
+RUN chown pipe:pipe /app
+USER pipe
 
-# Copia o código-fonte da esteira
-COPY src/ ./src/
-COPY README.md CONTEXT.md ./
+# Diretórios montados como named volumes em runtime (ver docker-compose.yml).
+# Criados como 'pipe' para que cada volume — vazio na primeira criação — herde a
+# posse pipe:pipe. Sem isto, o Docker cria o mountpoint como root e o usuário
+# não-root falha ao escrever (PermissionError em logs/, .pipe/, repo/, ~/.kiro).
+RUN mkdir -p /app/.pipe /app/repo /app/logs /home/pipe/.kiro
 
-# Diretórios criados em runtime (montados via volumes)
-# - /app/pipe.yml          → configuração
-# - /app/contexts/         → contextos dos agentes
-# - /app/repo/             → clones dos repositórios
-# - /app/logs/             → logs de execução
-# - /app/.pipe/            → estado interno (snapshots, fila, sessões)
-# - /root/.ssh/            → chave SSH
-# - /root/.config/gh/      → autenticação do gh CLI
+# ---------------------------------------------------------------------------
+# Camada 6 — kiro-cli (ADR-03)
+# Instalado como usuário pipe → ~/.local/bin (PATH ainda não inclui esse dir)
+# Smoke test usa path absoluto: ENV PATH só é definido na camada seguinte
+# ---------------------------------------------------------------------------
+ARG KIRO_CLI_VERSION=2.18.0
+ARG KIRO_CLI_URL=https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocli-x86_64-linux.zip
 
+RUN curl --proto '=https' --tlsv1.2 -fsSL "$KIRO_CLI_URL" -o /tmp/kirocli.zip \
+    && unzip -q /tmp/kirocli.zip -d /tmp/kirocli_extract \
+    && /tmp/kirocli_extract/kirocli/install.sh --no-confirm \
+    && rm -rf /tmp/kirocli.zip /tmp/kirocli_extract \
+    && ~/.local/bin/kiro-cli --version
+
+# ---------------------------------------------------------------------------
+# Camada 7 — Variáveis de ambiente
+# PATH inclui ~/.local/bin onde kiro-cli foi instalado
+# XDG_RUNTIME_DIR=/tmp necessário para kiro-cli em container
+# ---------------------------------------------------------------------------
+ENV PYTHONUNBUFFERED=1 \
+    XDG_RUNTIME_DIR=/tmp \
+    PATH=/home/pipe/.local/bin:$PATH
+
+# ---------------------------------------------------------------------------
+# Camada 8 — Código da esteira via git clone (ADR-07)
+# Camada mais volátil — última para preservar cache das anteriores
+# Chave SSH efêmera via BuildKit secret (ADR-06): nunca persiste na imagem
+# ---------------------------------------------------------------------------
+ARG PIPE_REPO=git@github.com:brenotmp-agent/pipe.git
+ARG PIPE_REF=main
+
+RUN --mount=type=secret,id=ssh_key,uid=1000 \
+    GIT_SSH_COMMAND="ssh -i /run/secrets/ssh_key -o StrictHostKeyChecking=accept-new" \
+    git clone --depth 1 --branch "$PIPE_REF" "$PIPE_REPO" /tmp/esteira \
+    && cp -r /tmp/esteira/src /app/src \
+    && rm -rf /tmp/esteira
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
 CMD ["python", "-m", "src"]

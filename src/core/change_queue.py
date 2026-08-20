@@ -125,3 +125,18 @@ class ChangeQueue:
             return False
         self._write(remaining)
         return True
+
+    def requeue(self, item: ChangeItem) -> None:
+        """Remove o item (por uuid) e o readiciona ao fim da fila, atomicamente.
+
+        Usado para reprocessar um item com erro transitório sem bloquear os
+        demais itens da fila (head-of-line blocking): remove a posição atual
+        e acrescenta uma nova entrada (novo uuid) ao final, numa única
+        leitura/escrita do arquivo — evita duplicar ou perder o item entre as
+        duas operações.
+        """
+        items = self._read()
+        remaining = [i for i in items if i.uuid != item.uuid]
+        item.uuid = str(uuidlib.uuid4())
+        remaining.append(item)
+        self._write(remaining)

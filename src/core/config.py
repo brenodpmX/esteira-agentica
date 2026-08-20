@@ -23,11 +23,19 @@ def _validate_env():
     key_path = os.environ.get(SSH_KEY_ENV, "").strip()
     if not key_path:
         raise ConfigError(
-            f"Variável de ambiente '{SSH_KEY_ENV}' não definida ou vazia. "
-            f"Defina com: export {SSH_KEY_ENV}=~/.ssh/id_ed25519"
+            "✗ SSH  variável PIPE_SSH_KEY_FILE não definida ou vazia\n"
+            "    Causa:  o clone via SSH no arranque precisa saber onde está a chave privada.\n"
+            "    Ação:   defina PIPE_SSH_KEY_FILE no serviço apontando para o secret montado.\n"
+            "            ex.: PIPE_SSH_KEY_FILE=/run/secrets/ssh_key\n"
+            "    Onde:   monte a chave como Docker secret (ver docker-compose / runbook)."
         )
     if not Path(key_path).expanduser().exists():
-        raise ConfigError(f"Arquivo SSH não encontrado: {key_path}")
+        raise ConfigError(
+            f"✗ SSH  arquivo de chave não encontrado em {key_path}\n"
+            "    Causa:  PIPE_SSH_KEY_FILE aponta para um caminho que não existe no container.\n"
+            "    Ação:   confira se o secret/volume da chave está montado nesse caminho.\n"
+            "    Onde:   seção 'secrets' do docker-compose (ver runbook)."
+        )
 
 
 def _validate_git(git: dict):
@@ -69,8 +77,21 @@ def _validate_agents(agents: dict):
 def _validate_boards(boards: dict, known_agents: set[str] | None = None):
     known_agents = known_agents or set()
     _require(boards, "platform", "boards")
+
+    # boards.rerun_cooldown (opcional): tempo mínimo, em segundos, antes de
+    # reexecutar a mesma issue (mesmo board, coluna e id). 0 desabilita.
+    cooldown = boards.get("rerun_cooldown")
+    if cooldown is not None and (
+        isinstance(cooldown, bool) or not isinstance(cooldown, int) or cooldown < 0
+    ):
+        raise ConfigError("boards.rerun_cooldown: deve ser inteiro >= 0 (segundos)")
+
     for board_id, board in boards.items():
         if board_id == "platform":
+            continue
+        # Chaves escalares de configuração (ex.: rerun_cooldown) convivem com os
+        # boards dentro de 'boards'; só validamos entradas que são boards (dict).
+        if not isinstance(board, dict):
             continue
         _require(board, "name", f"boards.{board_id}")
         columns = _require(board, "columns", f"boards.{board_id}")
@@ -118,6 +139,35 @@ def _validate_sleep(sleep_val):
         raise ConfigError("sleep: deve ser número > 0 (segundos)")
 
 
+DEFAULT_MAX_ATTEMPTS = 3
+
+
+def validate_max_attempts(config: dict) -> None:
+    """Valida a chave opcional sync.max_attempts do pipe.yml.
+
+    Se presente, deve ser um int >= 1 (rejeita 0, negativos, floats e
+    strings não numéricas). Levanta ConfigError identificando a chave.
+    """
+    sync_cfg = config.get("sync") or {}
+    if "max_attempts" not in sync_cfg:
+        return
+    value = sync_cfg["max_attempts"]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(
+            f"sync.max_attempts: deve ser inteiro >= 1 (valor recebido: {value!r})"
+        )
+
+
+def resolve_max_attempts(config: dict) -> int:
+    """Retorna o limite de tentativas configurado (sync.max_attempts).
+
+    Default seguro de DEFAULT_MAX_ATTEMPTS quando a chave está ausente.
+    Não valida — assume que validate_max_attempts já rodou em check_config.
+    """
+    sync_cfg = config.get("sync") or {}
+    return sync_cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
+
+
 def check_config() -> dict:
     """Valida e retorna configuração do pipe.yml."""
     _validate_env()
@@ -136,7 +186,9 @@ def check_config() -> dict:
     
     _require(config, "sleep", "pipe.yml")
     _validate_sleep(config["sleep"])
-    
+
+    validate_max_attempts(config)
+
     git = _require(config, "git", "pipe.yml")
     _validate_git(git)
     

@@ -15,6 +15,133 @@ Segue semântico: `MAJOR.MINOR.PATCH`.
 
 A versão é exibida no log ao iniciar a esteira.
 
+## Changelog
+
+### Restauração das mudanças perdidas no merge `c27f813` (v1.9.0 — #181)
+
+Recupera funcionalidade que existia apenas em `main` e foi descartada na
+resolução de conflitos do merge `c27f813` (integração de `epic` em `main`). Os
+dois lados do merge eram legítimos; o conflito foi resolvido adotando `epic` por
+inteiro nos arquivos em disputa, sem reconciliar o que era exclusivo de `main`.
+
+A `merge-base` das pontas era `26d863e`, muito anterior aos commits manuais de
+`main` — por isso o three-way não tinha como preservá-los automaticamente.
+
+- Bump: `1.8.3` → `1.9.0` (MINOR — retorno de comportamento ausente, sem
+  breaking change; `pipe.yml` e schema inalterados)
+
+**Perdas restauradas:**
+
+| Origem | Perda | Gravidade |
+|--------|-------|-----------|
+| `28fea7e` | `boards.rerun_cooldown` sem efeito | alta — issue que falha reexecuta em loop apertado |
+| `6176819` | `create-up` de body com slug em underscore | alta — falha silenciosa |
+| `d8d85d9` | descoberta local presa à rotação de boards | média — inanição de boards de baixa prioridade |
+| `3a1196a` | falha do kiro-cli logada como sucesso | média — diagnóstico cego |
+| `7ed7bf0`/`45c8b14` | banner da locomotiva substituído | cosmética — mas foi o que revelou o incidente |
+
+**Detalhamento:**
+
+- **`boards.rerun_cooldown` voltou a funcionar** (`src/__main__.py`). A validação
+  em `config.py` sobreviveu ao merge, mas o comportamento não: `pipe.yml` aceitava
+  a chave sem erro e ela não tinha efeito nenhum. Restaurados `_rerun_cache`,
+  `_cooldown_seconds`, `_in_rerun_cooldown`, `_mark_rerun`, `_purge_expired_rerun`
+  e os pontos de chamada em `keep_task`.
+- **`create-up` de slug em underscore** (`src/core/sync.py`). O merge reintroduziu
+  a heurística `elif body_file.name.count("-") >= 2` em `detect_local_changes`.
+  Como `_slugify` converte hífens e espaços em underscore, **todo** arquivo
+  nomeado pelo próprio sistema tem exatamente um hífen (o de `-body`) e era
+  descartado em silêncio — a issue criada localmente nunca subia ao board. Voltou
+  a ser `else`: todo `*-body.md` sem prefixo numérico é issue local nova.
+- **Descoberta local global** (`src/__main__.py`). Restaurados `detect_local_all`
+  (varre todos os boards; barato, só filesystem) e `sync_remote_board` (um board,
+  consome API do provider). `sync_board` permanece como wrapper de
+  compatibilidade. Motivo: efeitos colaterais de agente são cross-board.
+- **Detecção da falha real do kiro-cli** (`src/adapters/kiro_cli_agent.py`).
+  Restaurados `_detect_failure` e `_last_meaningful_line`. O exit-code não reflete
+  toda falha: erros de modelo/servidor voltam como texto com exit 0. A linha de
+  **início** do log mantém o formato do `epic` (mais informativo, com `title`,
+  `col_name` e path do log); as linhas de **conclusão/erro** recuperam a
+  classificação e a causa real.
+- **Banner da locomotiva** (`src/__main__.py`) restaurado byte a byte.
+- **`AgentParams` saneado** (`src/core/agent.py`). O merge manteve campos dos dois
+  lados, deixando `col_name` declarado duas vezes e `issue_title` sem consumidor.
+
+**Testes:**
+
+- Restaurados (deletados pelo merge): `tests/test_detect_local_all.py`,
+  `tests/test_create_up_underscore_slug.py`.
+- Novos: `tests/test_rerun_cooldown.py` (32), `tests/test_agent_failure_detection.py`,
+  `tests/test_banner.py`.
+- `tests/test_sigterm_shutdown.py` corrigido: amarrava o stop do loop em
+  `sync_board` e, quando o loop deixou de chamá-lo, `main()` passou a rodar
+  indefinidamente (o `except Exception` dorme e continua) — **travando** a suíte
+  em vez de falhar. O stop passou a cobrir as três funções de descoberta.
+
+Documentação: [change #181](doc/changes/181-restauracao-mudancas-perdidas-merge-c27f813.md)
+e [changelog](doc/changelogs/181-restauracao-mudancas-perdidas-merge-c27f813.md).
+
+### compose.dev.yml — estado/logs em bind mount no host (v1.8.3 — US-04)
+
+Cria o override `compose.dev.yml` (previsto na US-04, até então inexistente — os
+testes ficavam em `skip`). Substitui os named volumes de estado por bind mounts
+configuráveis, dando acesso a logs/estado pelo host. Como o container roda como
+uid 1000, os arquivos criados no host pertencem ao usuário de mesmo uid (não ao
+root), ficando fáceis de inspecionar e apagar.
+
+- Bump: `1.8.2` → `1.8.3` (PATCH — adição de override de dev, sem breaking change
+  no compose base de produção)
+- `compose.dev.yml`: `${PIPE_STATE_DIR:-./.pipe}:/app/.pipe`,
+  `${PIPE_REPO_DIR:-./repo}:/app/repo`, `${PIPE_LOGS_DIR:-./logs}:/app/logs`;
+  merge por destino substitui os named volumes do base; `init: true` herdado.
+- Uso: `docker compose -f docker-compose.yml -f compose.dev.yml up` ou
+  `COMPOSE_FILE=docker-compose.yml:compose.dev.yml` no `.env`.
+- **Operação:** os diretórios do host (`.pipe`, `repo`, `logs`) devem existir com
+  posse do usuário antes do `up` — se não existirem, o Docker os cria como root.
+- Testes US-04 (`TestBindMountsEstado`, `TestDefaultsInline`) saíram do `skip`;
+  `tests/test_docker_compose.py` passa 107/107.
+
+### Fix: posse dos named volumes com usuário não-root (v1.8.2)
+
+Correção de `PermissionError` no arranque em Docker: o container roda como `pipe`
+(uid 1000), mas os mountpoints dos named volumes (`/app/logs`, `/app/.pipe`,
+`/app/repo`, `/home/pipe/.kiro`) não existiam na imagem — o Docker os criava como
+`root`, impedindo a escrita (ex.: `logs/<data>.json`).
+
+- Bump: `1.8.1` → `1.8.2` (PATCH — correção de bug)
+- `Dockerfile`: pré-cria esses diretórios como `pipe` (`mkdir -p` após `USER pipe`),
+  para que cada volume — vazio na primeira criação — herde a posse `pipe:pipe`.
+- **Operação:** volumes já criados com posse `root` precisam ser recriados
+  (`docker compose down -v`) para a correção surtir efeito.
+
+### Correções: get_board_ids + build Docker canônico (v1.8.1)
+
+Bump PATCH consolidando correção de bug de arranque e ajustes no build Docker.
+
+- Bump: `1.8.0` → `1.8.1` (PATCH — correção de bug + ajustes de build)
+- **Fix `get_board_ids`** (`src/__main__.py`): passou a ignorar chaves escalares
+  dentro de `boards` (ex.: `rerun_cooldown`) via `isinstance(cfg, dict)`,
+  corrigindo `AttributeError: 'int' object has no attribute 'get'` no arranque.
+  Alinha o comportamento com `board.board_ids` e a validação de `config.py`.
+- **`docker-compose.yml`**: `build` na forma longa com `build.secrets: [ssh_key]`,
+  para que `docker compose build` injete a chave SSH como secret de build (usado
+  pelo `git clone` da última camada do Dockerfile). Alinha com o runbook.
+- **`docker/versions.env` + `Dockerfile`**: pins atualizados para desbloquear o
+  build — `gh 2.96.0 → 2.97.0` e `kiro-cli 2.13.1 → 2.18.0` (SHA-256 repinado).
+  Build canônico validado ponta a ponta (`docker build` completo). A fragilidade
+  recorrente desses pins ficou registrada em **Pendências**.
+
+### Preflight de Credenciais (v1.6.0 — US-02)
+
+Adição de comportamento novo: verificação de credenciais antes do startup
+principal (preflight). Implementado nas tasks #34 (kiro_cli_agent) e #35
+(startup), consolidado nesta task #36 com o bump MINOR correspondente.
+
+- Bump: `1.5.0` → `1.6.0` (MINOR — adição de comportamento, sem breaking change)
+- Funcionalidade: `preflight()` verifica SSH, GitHub CLI e permissões do repo
+  antes de qualquer operação destrutiva
+- Referências: ADR-04, `doc/arch/rodar-no-docker/us-02-autenticacao-headless.md`
+
 ## Visão Geral
 
 Esteira automatizada de agentes de IA com arquitetura hexagonal. Reescrita do projeto `oldversion/` para suportar múltiplas plataformas de board (GitHub Projects, ClickUp, etc) e múltiplos adapters de agente (kiro-cli, etc).
@@ -267,11 +394,29 @@ Cobertura em `tests/test_rate_limit_detection.py`.
 
 ### Substituição de agente por nível (`override-agent`)
 
-A coluna tem um `agent` default. Se a issue traz `/agent_level <nível>` no bloco
-`@---` e `<nível>` é chave de `override-agent`, usa o agente do valor; senão, o
-`agent` default. Como cada agente carrega o próprio `model`, a troca de agente
-também troca o model. Resolvido em `agent.py` (`agent_level` +
+A coluna tem um `agent` default. O nível de execução de uma issue é armazenado
+como label `agent-level-<nível>` no GitHub (ex.: `agent-level-low`,
+`agent-level-medium`, `agent-level-high`). Essa label é sincronizada
+nativamente pelo board, eliminando a dependência de estado local.
+
+Se a issue possuir uma label `agent-level-<nível>` e `<nível>` for chave de
+`override-agent`, usa o agente do valor; senão, o `agent` default. Como cada
+agente carrega o próprio `model`, a troca de agente também troca o model.
+
+Resolvido em `agent.py` (`agent_level` lê `issue["labels"]` diretamente +
 `resolve_agent_id`), validado em `config.py`.
+
+No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
+`@---` do body. O sync-up chama `all_labels()` (em `commands.py`), que emite
+`agent-level-<nível>` no conjunto de labels efetivas, gravando a label no board
+via `apply_commands`. A label `agent-level-*` é tratada como campo especial
+(análogo a `need_human`): extraída em `from_issue`, reemitida em `all_labels`,
+nunca sobrescrita pelo comando `/labels` do usuário.
+
+Migração de issues legadas: o `board_full_sync` chama
+`migrate_agent_level_labels` (em `sync.py`) que, para cada issue com
+`/agent_level` no body mas sem label `agent-level-*` no snapshot, enfileira um
+`change-up` para que o sync-up grave a label no board.
 
 ### Contexto do agente
 
@@ -402,7 +547,7 @@ de comandos separado por uma linha `@---`.
 - `split_body(raw)` → `(body_limpo, IssueCommands)`. Múltiplos `@---`: o último
   vence, anteriores removidos.
 - `compose_body(body, cmds)` → body completo com bloco.
-- `from_issue(issue)` → IssueCommands (extrai need_human das labels).
+- `from_issue(issue)` → IssueCommands (extrai `need_human` e `agent_level` das labels; ambos tratados como campos especiais — não aparecem em `cmds.labels`).
 - `annotations_doc()` → documentação compartilhada por prompts e contexts.
 
 Filosofia presença/ausência: o estado escrito é o estado final (SET). Sem
@@ -427,6 +572,66 @@ comandos de "remover".
 - Labels: PUT `/issues/{n}/labels` (SET); add/remove unitário via POST/DELETE.
 - Arquivamento: GraphQL `archiveProjectV2Item` / `unarchiveProjectV2Item`.
 - `need_human` é label comum no GitHub, tratada em campo próprio no domínio.
+
+## Proteção contra propagação de sub-issues entre boards (v1.6.1)
+
+O GitHub Projects V2 possui um efeito colateral ao registrar relações de
+sub-issue: ao executar `POST /repos/{owner}/{repo}/issues/{parent}/sub_issues`,
+o filho pode ser propagado para todos os projects do parent sem valor no campo
+`Status`. Antes da v1.6.1, o sync interpretava esse item sem coluna como uma
+issue nova no board e materializava arquivos locais duplicados.
+
+A correção usa defesa em profundidade:
+
+1. **Primitiva da porta:** `BoardPort.remove_from_board` e
+   `Board.remove_from_board` expõem a remoção de item do project. O adapter
+   GitHub resolve o item e executa a mutation `deleteProjectV2Item`.
+2. **Pós-hook do vínculo:** `_add_sub_issue` recebe o board de origem e chama
+   `_remove_propagated_items_without_status`. Dados de Projects V2 (inclusive
+   `Status`) só existem no GraphQL — não há endpoint REST equivalente —, então o
+   pós-hook consulta `projectItems`/`fieldValues` no mesmo padrão de `get_issue`
+   e `_belongs_to_board` e remove por `deleteProjectV2Item` usando o
+   `project_id`/`item_id` retornados pela própria query. Ignora o project
+   informado e remove somente itens de **outros** projects com `Status` vazio; um
+   item com coluna definida é considerado intencional e é preservado. Se o
+   project informado não puder ser resolvido, nada é removido (sem a exclusão
+   garantida, o item de origem entraria na lista de candidatos).
+   Assimetria deliberada: `set_parent` informa o board do filho (o item
+   propagado, que aparece no project do pai, é removido aqui), enquanto
+   `set_children` informa o board do pai — nesse caminho o item propagado está
+   justamente no project excluído e a limpeza fica com o guard do `create-down`,
+   que possui a prova de presença no snapshot.
+3. **Guard no `create-down`:** `_apply_create_down` só descarta um item sem
+   coluna quando há **prova** de propagação automática: a própria issue já
+   registrada em outro board **configurado** no `pipe.yml`, com coluna conhecida
+   naquele board. `parent` isolado é apenas contexto de log — uma sub-issue nova
+   e legítima do board atual também pode chegar sem coluna, e removê-la seria
+   perda de dado. Snapshots de diretórios fora da configuração não contam como
+   prova (`_find_snapshot_issue` aceita um filtro opcional de boards). A remoção
+   precisa concluir antes do descarte: falha propaga e a fila reprocessa,
+   preservando a garantia *at-least-once*.
+4. **Reconciliação:** `detect_board_changes` considera `Status` vazio diferente
+   da coluna conhecida. `_apply_change_down` reaplica no board a coluna do
+   snapshot antes de decidir sobre os arquivos locais — se dependesse da
+   movimentação local, o caso comum (arquivo já na coluna certa) deixaria o item
+   remoto sem `Status` e a divergência voltaria em todo full sync. Movimentação
+   remota legítima não escreve de volta no board. Issues realmente novas, sem
+   prova de presença em outro board, continuam usando a primeira coluna
+   configurada como fallback local, e `create_issue` também aplica fallback para
+   a primeira opção do project (com warning) quando a coluna pedida não existe —
+   antes o `Status` era pulado em silêncio, criando a própria "issue sem coluna".
+
+O discriminador crítico é a ausência de `Status`: a correção não remove
+sub-issues legitimamente mantidas em múltiplos boards quando cada item possui
+coluna própria. Resíduos já materializados antes da v1.6.1 não são limpos
+automaticamente e exigem operação manual com a esteira parada.
+
+Cobertura de regressão: `tests/test_sub_issue_propagation_fix.py` exercita a
+implementação real (sem substituir o método sob teste por fake) — pós-hook em
+GraphQL com `_gh`/`_api` proibidos, preservação do project de origem e de itens
+com `Status`, fail-safe de project não resolvido, fallback de `create_issue`,
+prova exigida pelo guard do `create-down`, falha de remoção que não consome o
+evento, reconciliação do `change-down` e detecção de coluna vazia.
 
 ## Eventos de coluna (`on_in` / `on_out`)
 
@@ -481,48 +686,71 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
-## Arquitetura planejada: confiabilidade Parent Recursivo (#97/#104)
+## Confiabilidade Parent Recursivo (#97/#104): C1–C5 entregues
 
-O incidente de 01/08/2026 permanece mitigado, com C1–C5 pendentes. A solução
-preserva a arquitetura hexagonal e adiciona cinco limites no core: resolução
-determinística de artefatos, sanitização de auto-referências antes de I/O,
-erros tipados com dead-letter por item, guarda/restauração dos snapshots ao
-redor do agente e lock local de instância antes do startup.
+O incidente de 01/08/2026 (parent recursivo) está com as cinco frentes de
+correção (C1–C5) implementadas e integradas em `main`. A solução preservou a
+arquitetura hexagonal e adicionou cinco limites no core:
+
+- **C1 — Associação segura:** resolução determinística do body da issue por
+  identidade, sem heurística arbitrária em caso de ambiguidade (#146, story
+  #140).
+- **C2 — Relações válidas:** sanitização de auto-referência em
+  `parent`/`children`/`blocked_by`/`blocks` antes de qualquer chamada ao board
+  (`src/core/commands.py`, story #138/#143).
+- **C3 — Falha isolada:** erros tipados no port, tentativas limitadas e
+  dead-letter persistente por item, sem head-of-line blocking na fila global
+  (story #139/#144/#145).
+- **C4 — Estado protegido:** `SnapshotGuard`/`SnapshotIntegrityError`
+  (`src/core/snapshot.py`) captura, compara e restaura o snapshot ao redor da
+  execução do agente, preservando o modo do arquivo (story #141/#149).
+- **C5 — Instância única:** `InstanceLock`/`LockHeldError` adquirido em
+  `main()` antes do `startup()`, com recusa *fail-fast* quando outra instância
+  já detém o lock sobre o mesmo diretório de estado (story #142/#150/#151).
+  A integração havia sido mergeada apenas em `epic`; a reconciliação #196
+  promoveu-a para `main` (fast-forward, sem conflito).
 
 As decisões, contratos, fluxo de falhas, rollout e testes de regressão estão em
 `doc/architecture/confiabilidade-parent-recursivo/arquitetura.md`. A causa raiz
-e o estado operacional permanecem em
-`doc/incidente/parent-recursivo/ticket.md`.
+e o estado operacional original estão em
+`doc/incidente/parent-recursivo/ticket.md`. O incidente segue sendo tratado
+como **mitigado, com risco residual**, até a homologação conjunta das cinco
+frentes confirmar ausência de recorrência do padrão do #97 em produção.
 
-## Post mortem: sub-issues propagadas entre boards (documentação v1.6.1 — #99)
+## Post mortem: sub-issues propagadas entre boards (#88/#99/#106)
 
 O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o
-vínculo hierárquico é criado, mas esses itens podem nascer sem `Status`. O core
-atual interpreta um `create-down` sem coluna como issue nova e pode materializar
-uma cópia local no board errado.
+vínculo hierárquico é criado, e esses itens podem nascer sem `Status`. Antes da
+correção, o core interpretava um `create-down` sem coluna como issue nova e
+podia materializar uma cópia local no board errado.
 
-A correção #98 foi implementada e homologada no commit `01f9e83`, com cinco
-camadas: `remove_from_board` via `deleteProjectV2Item`, limpeza pós-vínculo,
-guard no `create-down`, fallback de coluna e reconciliação de coluna vazia. A
-suíte da hotfix terminou com 208 testes aprovados e 3 ignorados. Contudo, o PR
-#103 foi fechado sem merge em 03/08/2026; o commit não pertence a `main` nem a
-esta branch documental. Logo, a correção não está disponível no runtime desta
-versão e não deve ser anunciada como implantada.
+A primeira tentativa de correção (issue #98, PR #103, commit `01f9e83`) foi
+homologada, mas cancelada pela decisão do débito #110, que definiu #88/PR #102
+como veículo único — o PR #103 foi fechado sem merge. A implementação
+entregue é a do #106 no commit `a00ba7c`, integrada à branch do PR #102, com
+cinco camadas: `remove_from_board` via `deleteProjectV2Item`; pós-hook
+`_remove_propagated_items_without_status` por GraphQL; preservação explícita
+do project de origem e de itens com `Status`; guard no `create-down` com prova
+de propagação; e fallback/reconciliação de coluna vazia. A suíte canônica não
+faz `monkeypatch` do código sob teste. A homologação foi aprovada em
+19/08/2026; merge e deploy ainda são necessários para disponibilidade em
+produção.
 
 ### Regra de acesso à API de GitHub Projects V2
 
 Operações sobre projects, `projectItems`, campos de project e remoção de item
 devem usar GraphQL via `self._gql`. REST via `self._gh` fica restrito às APIs
 tradicionais de issues e pull requests. Um endpoint REST de `projectitems` foi
-inventado em duas tentativas de correção e passou pelos mocks; qualquer exceção
-a essa regra exige validação contra a documentação oficial e teste de integração
-gated.
+inventado na primeira tentativa do PR #102 e passou pelos mocks; qualquer
+exceção a essa regra exige validação contra a documentação oficial e teste de
+integração gated.
 
 O registro completo, os fatores de reincidência e as ações preventivas estão em
-`doc/incidente/sub-issues-propagadas/ticket.md`. O conteúdo funcional planejado
-e o estado de integração estão em
-`doc/changes/98-sub-issues-propagadas-entre-boards.md`; a entrega documental
-v1.6.1 está em `doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
+`doc/incidente/sub-issues-propagadas/ticket.md`. A entrega efetiva está em
+`doc/changes/88-sub-issues-propagadas-entre-boards.md`; o histórico da tentativa
+cancelada está em `doc/changes/98-sub-issues-propagadas-entre-boards.md`; e a
+entrega documental do post mortem está em
+`doc/changelogs/99-post_mortem_sub_issues_propagadas.md`.
 
 ## Robustez e Segurança do Estado (v1.5.0 — Incidente "Issue Fantasma")
 
@@ -591,22 +819,118 @@ destrutiva (dentro da quota de 5000 pontos/hora).
 ## Pendências
 
 - [ ] Implementar adapter ClickUp
+- [ ] **Fragilidade dos pins Docker — tratar na próxima intervenção nas
+  configurações Docker.** O `gh` é instalado do canal `stable` do repo APT, que
+  serve **apenas a última versão** publicada; e o `kiro-cli` é baixado de uma URL
+  `/latest/` com `KIRO_CLI_SHA256` pinado. Como consequência, a cada novo release
+  upstream o build canônico quebra (`gh=X.Y.Z was not found` ou
+  `sha256 did NOT match`), exigindo bump manual em `docker/versions.env` + o
+  `Dockerfile`. Em 2026-08-14 foram repinados `gh 2.96.0 → 2.97.0` e
+  `kiro-cli 2.13.1 → 2.18.0` só para desbloquear. Avaliar como resolver de forma
+  durável: usar o `gh` empacotado no Debian (`2.46.0-3`, estável no `trixie`) e/ou
+  uma URL versionada do kiro-cli (em vez de `/latest/`), fixando também o digest da
+  imagem base.
 
-## Distribuição Docker (v1.6.0)
+## Distribuição Docker (v1.6.0; build canônico revisado em v1.8.1)
 
-A distribuição homologada usa `Dockerfile` e `docker-compose.yml` na raiz.
-Antes do build, `prepare-docker.sh` copia da instalação local os binários
-`kiro-cli` (launcher) e `kiro-cli-chat` (implementação do subcomando `chat`).
-Ambos são obrigatórios; a ausência do segundo reproduz o erro corrigido na
-issue #120.
+O build canônico usa `Dockerfile` e `docker-compose.yml` na raiz. O `kiro-cli`
+**não** é copiado do host: ele é baixado no build a partir de `KIRO_CLI_URL`
+(versão em `docker/versions.env`, validada por `KIRO_CLI_SHA256`). O `gh` é
+instalado via APT na versão pinada (`GH_VERSION`), e o código-fonte é clonado no
+build (última camada) usando a chave SSH como **secret do BuildKit** — a chave
+nunca persiste em nenhuma camada da imagem. A imagem roda como usuário não-root
+`pipe` (uid 1000). `prepare-docker.sh` é legado do modelo antigo (COPY do host) e
+não faz parte do build canônico.
 
-Credenciais e configuração entram apenas em runtime: `GH_TOKEN` e
-`KIRO_API_KEY` por ambiente, chave SSH e `pipe.yml` por bind, e contextos pelo
-diretório `contexts/`. O estado é persistido nos volumes `pipe_state`,
-`pipe_repos` e `pipe_logs`.
+Credenciais e configuração entram via `.env` (`env_file`): `GH_TOKEN` e
+`KIRO_API_KEY` como variáveis, e a chave SSH como Docker secret alimentado por
+`SSH_KEY_FILE_HOST` (caminho absoluto no host), montada em `/run/secrets/ssh_key`
+— `PIPE_SSH_KEY_FILE` é fixado pelo compose nesse caminho. O `pipe.yml` e os
+`contexts/` entram como bind read-only. O estado é persistido nos volumes
+`pipe-state`, `pipe-repo`, `pipe-logs`, `kiro-home` e `kiro-local`.
 
-A operação usa `PYTHONUNBUFFERED=1` para logs em tempo real, `init: true` para
-repassar sinais e handler de `SIGTERM` para shutdown limpo. O serviço usa
-`restart: unless-stopped`. A arquitetura implementada, limitações e evidências
-de homologação estão em `doc/architecture/rodar-no-docker/arquitetura.md`; o
-guia operacional está no `README.md`.
+`docker compose build` ativa o BuildKit e passa o secret de build via
+`build.secrets` (ver v1.8.1). A operação usa `PYTHONUNBUFFERED=1` para logs em
+tempo real, `init: true` para repassar sinais e handler de `SIGTERM` para
+shutdown limpo. O serviço usa `restart: unless-stopped`. A arquitetura, limitações
+e evidências de homologação estão em
+`doc/architecture/rodar-no-docker/arquitetura.md`; o guia operacional está no
+`README.md` e no `doc/runbook/docker.md`.
+
+
+## Fluxo de Integração: Feature → Epic → Main (Débito #165)
+
+**Correção em: v1.8.0 — #165. Estado: Implementado.**
+
+### Problema Original
+
+O fluxo de integração de branches estava incompleto:
+- Features (`feature/*`) eram mergeadas em `epic` via PR.
+- PRs eram marcadas como "closed" no board quando o merge em `epic` era feito.
+- A branch `epic` **nunca era mergeada em `main`**, deixando funcionalidade completada "offline".
+
+Consequências:
+- Testes e planejamento subsequentes operavam sobre `main` que **não tinha** o código "fechado".
+- Dependências entre tasks (Planning Poker #148 depends-on #146 e #147) partiam de premissa falsa: código estava apenas em `epic`, não em `main`.
+- Risco composto: cada PR adicional em `epic` aumentava o diff a resolver.
+
+### Solução
+
+1. **Merge de `epic` em `main` (#165)**
+   - Merge realizado em dois estágios: commit `c27f813` (merge inicial de 133
+     commits com resolução de 8 conflitos conforme arquitetura Docker não-root)
+     e merge complementar dos commits pós-merge (v1.8.1, v1.8.2, v1.8.3, PR #178).
+   - Todos os commits de `epic` são agora ancestrais de `main`.
+   - ⚠️ **Perda colateral, corrigida em v1.9.0 (#181):** a resolução dos
+     conflitos adotou o lado `epic` por inteiro em `src/__main__.py`,
+     `src/core/agent.py`, `src/core/sync.py`, `src/adapters/kiro_cli_agent.py` e
+     `tests/`, descartando trabalho que existia **apenas** em `main`
+     (`rerun_cooldown`, `create-up` de slug em underscore, descoberta local
+     global, detecção de falha do kiro-cli, banner). Os commits perdidos
+     permaneciam ancestrais de `main` — logo `git log` e `--is-ancestor` não
+     denunciavam nada — mas seu **conteúdo** havia sido revertido pela árvore do
+     merge. Ver o changelog da v1.9.0.
+
+   **Lição para merges futuros de branch longa:** commit ancestral não garante
+   conteúdo presente. Após integrar uma branch com `merge-base` antiga, verificar
+   cada arquivo em conflito com `git diff <parent-main> <merge> -- <arquivo>` e
+   confirmar que nenhum hunk reverte trabalho exclusivo do lado `main`.
+
+2. **Fluxo Corrigido (permanente)**
+   - Feature branches (`feature/*`) continuam apontando para origem definida em `pipe.yml`.
+   - Padrão esperado (conforme `README.md`):
+     - Para flows de integração simples: `feature/* → main` direto (gitevents: `create-merge`).
+     - Para flows multi-tier (se necessário): `feature/* → epic → main` (gitevents: `create-merge` em ambos os estágios, com base diferente).
+   - **Regra crítica**: Toda branch de integração intermediária (ex.: `epic`) deve ser **explicitamente mergeada em `main`** antes de ser considerada completa.
+
+3. **Salvaguardas**
+   - Validação em `config.py` pode ser estendida (sugestão da Camila Rocha, TC-04):
+     verificar que toda cadeia `flow → ... → base` termina em `main`.
+   - Testes de regressão em `tests/test_epic_merge_ausente_146_147.py` (TC-04)
+     validam que nenhuma cadeia de flow fica "presa" sem alcançar `base`.
+
+### Validação Pós-Merge
+
+```bash
+# Critério 1: Ancestralidade
+git merge-base --is-ancestor 498674b main  # is ancestor ✓
+git merge-base --is-ancestor 9572409 main  # is ancestor ✓
+
+# Critério 2: Sem divergência material de código
+git diff main epic -- src/                 # sem diffs relevantes
+
+# Critério 3: Testes passam
+python -m pytest tests/ -q
+
+# Critério 4: Documentação disponível
+grep -i "epic\|fluxo de branch" CONTEXT.md  # Seção presente
+```
+
+### Referências
+
+- **Débito**: Issue #165
+- **Issues Desbloqueadas**: #148 (Planning Poker pode retomar)
+- **Commits Críticos**:
+  - `498674b` — Resolução determinística do body da issue (#146)
+  - `9572409` — Detecção de arquivos órfãos (#147)
+  - `c27f813` — Merge inicial (débito #165)
