@@ -1,10 +1,9 @@
 # Change File — Post mortem #99: sub-issues propagadas entre boards
 
-**Data:** 2026-08-04
-**Versão:** 1.6.1
-**Issue:** #99 — Post mortem do incidente de duplicação e ausência de coluna
-**Branch:** `epic99-99-post_mortem_do_incidente_corrigir_duplicacao_e_ausencia_de_coluna_em_sub_issues_propagadas_entre_boards_github_projects_v2`
-**Status:** documentação homologada; correção de runtime pendente de integração
+- **Data original:** 2026-08-04
+- **Atualização:** 2026-08-19
+- **Issue:** #99 — post mortem do incidente #88
+- **Status:** documentação atualizada; correção final homologada
 
 ## Resumo
 
@@ -12,29 +11,31 @@ Esta entrega publica o post mortem do incidente em que sub-issues propagadas
 automaticamente pelo GitHub Projects V2, sem `Status`, eram materializadas como
 duplicatas locais em boards incorretos.
 
-## Alterações entregues
+## Artefatos
 
-- Post mortem completo em `doc/incidente/sub-issues-propagadas/ticket.md`.
-- Histórico de homologação em
+- Post mortem: `doc/incidente/sub-issues-propagadas/ticket.md`.
+- Roteiro e resultado de homologação:
   `doc/incidente/sub-issues-propagadas/homologacao.md`.
-- Resumo operacional e alerta de disponibilidade no `README.md`.
-- Política técnica de uso de GraphQL para GitHub Projects V2 no `CONTEXT.md`.
-- Change funcional #98 em
-  `doc/changes/98-sub-issues-propagadas-entre-boards.md`.
-- Versão da Pipe incrementada de 1.6.0 para 1.6.1.
+- Resumo operacional: `README.md`.
+- Política técnica de GraphQL para Projects V2: `CONTEXT.md`.
+- Entrega funcional: `doc/changes/88-sub-issues-propagadas-entre-boards.md`.
+- Tentativa cancelada: `doc/changes/98-sub-issues-propagadas-entre-boards.md`.
 
-## Estado da correção #98
+## Estado da correção
 
-A implementação final foi homologada no commit `01f9e83` com 208 testes
-aprovados e 3 ignorados. O PR #103, porém, foi fechado sem merge em 03/08/2026;
-o código não está em `main` nem nesta branch. Assim, esta release documenta a
-solução e sua pendência, mas não altera o comportamento de runtime relacionado
-a sub-issues propagadas.
+O débito #110 definiu #88/PR #102 como veículo único e cancelou #98/PR #103.
+A implementação final foi entregue pelo retrabalho #106 no commit `a00ba7c`,
+usando GraphQL real, preservando o project de origem e exigindo prova de
+propagação no `create-down`. A homologação foi aprovada em 19/08/2026.
+
+O merge do PR #102 e o deploy ainda são necessários para disponibilidade em
+produção.
 
 ## Impacto
 
-- **Código-fonte:** somente `src/core/version.py` foi alterado.
-- **Runtime:** sem a correção #98; risco residual explicitamente documentado.
-- **Configuração:** nenhuma mudança em `pipe.yml`.
-- **Operação:** monitorar itens sem `Status` e realizar limpeza de resíduos com
-  a esteira parada.
+- **Runtime:** previne novas duplicações e reconcilia ausência de coluna.
+- **Configuração:** nenhuma mudança de schema ou de `pipe.yml`.
+- **Compatibilidade:** itens multi-board com `Status` e issues novas legítimas
+  são preservados.
+- **Operação:** resíduos anteriores, como #84/#85/#86, exigem limpeza manual
+  com a esteira parada.
