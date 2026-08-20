@@ -3,10 +3,34 @@
 ## Registro
 
 **Incidente ID:** 97
-**Status:** Mitigado operacionalmente — correções C1–C5 pendentes
+**Status:** Resolvido — C1–C5 homologadas em conjunto
 **Owner:** engenharia
 **Data de Abertura:** 2026-08-01 13:29
-**Last Updated:** 2026-08-01
+**Data de Resolução:** 2026-08-20
+**Versão da correção:** 1.10.0
+**Last Updated:** 2026-08-20
+
+> **Atualização final:** as cinco frentes preventivas foram implementadas e
+> integradas em `main` pelas stories #138–#142. A homologação do épico #104 foi
+> aprovada em 20/08/2026. As seções de triagem e análise abaixo preservam a
+> evidência e o estado observado em 01/08/2026; referências a correções
+> “pendentes” descrevem aquele momento histórico, não o estado atual.
+
+### Evidência de encerramento
+
+| Frente | Resultado entregue | Rastreabilidade |
+|---|---|---|
+| C1 | resolução determinística do body e isolamento de órfãos | #140, #146, #147 |
+| C2 | sanitização de auto-referência antes do provider | #138, #143 |
+| C3 | classificação, rotação, tentativas e dead-letter | #139, #144, #145 |
+| C4 | restauração de integridade via `SnapshotGuard` | #141, #149 |
+| C5 | exclusividade via `InstanceLock` antes de `startup()` | #142, #150–#152, #196 |
+
+A versão 1.10.0 fecha o padrão de recorrência reproduzido neste ticket. Os
+limites fora do escopo permanecem documentados na arquitetura: lock apenas em
+filesystem compartilhado, guarda inicial limitada a snapshots, ausência de
+replay automático de dead-letter e captura parcial de chat em timeout ainda
+não contemplada.
 
 ### Descrição
 

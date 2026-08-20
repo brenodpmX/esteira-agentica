@@ -686,6 +686,40 @@ no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
 
+## Confiabilidade Parent Recursivo (#97/#104): C1–C5 entregues
+
+O incidente de 01/08/2026 (parent recursivo) está com as cinco frentes de
+correção (C1–C5) implementadas e integradas em `main`. A solução preservou a
+arquitetura hexagonal e adicionou cinco limites no core:
+
+- **C1 — Associação segura:** resolução determinística do body da issue por
+  identidade, sem heurística arbitrária em caso de ambiguidade (#146, story
+  #140).
+- **C2 — Relações válidas:** sanitização de auto-referência em
+  `parent`/`children`/`blocked_by`/`blocks` antes de qualquer chamada ao board
+  (`src/core/commands.py`, story #138/#143).
+- **C3 — Falha isolada:** erros tipados no port, tentativas limitadas e
+  dead-letter persistente por item, sem head-of-line blocking na fila global
+  (story #139/#144/#145).
+- **C4 — Estado protegido:** `SnapshotGuard`/`SnapshotIntegrityError`
+  (`src/core/snapshot.py`) captura, compara e restaura o snapshot ao redor da
+  execução do agente, preservando o modo do arquivo (story #141/#149).
+- **C5 — Instância única:** `InstanceLock`/`LockHeldError` adquirido em
+  `main()` antes do `startup()`, com recusa *fail-fast* quando outra instância
+  já detém o lock sobre o mesmo diretório de estado (story #142/#150/#151).
+  A integração havia sido mergeada apenas em `epic`; a reconciliação #196
+  promoveu-a para `main` (fast-forward, sem conflito).
+
+As decisões, contratos, fluxo de falhas, rollout e testes de regressão estão em
+`doc/architecture/confiabilidade-parent-recursivo/arquitetura.md`. A causa raiz
+e o histórico operacional estão em
+`doc/incidente/parent-recursivo/ticket.md`. Após a conclusão das stories
+#138–#142 e a aprovação de homologação do épico #104 em 20/08/2026, o
+incidente foi reclassificado como **resolvido na versão 1.10.0**. Permanecem
+como limites conhecidos — e não como bloqueadores do encerramento — o lock
+restrito ao filesystem compartilhado, a guarda limitada a snapshots e a
+ausência de replay automático de dead-letter.
+
 ## Post mortem: sub-issues propagadas entre boards (#88/#99/#106)
 
 O GitHub Projects V2 propaga uma sub-issue para os projects do parent quando o

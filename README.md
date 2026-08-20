@@ -626,31 +626,41 @@ inexistente cai na primeira opção do project com warning.
 > que já haviam sido materializados localmente antes da atualização. Esses itens
 > devem ser removidos manualmente do project indevido, com a esteira parada.
 
-### Incidente conhecido: parent recursivo (#97)
+### Incidente resolvido: parent recursivo (#97/#104)
 
 Em 01/08/2026, um arquivo órfão com prefixo numérico foi associado à issue
-`#76` após o caminho salvo para seu body ficar obsoleto. O sync sobrescreveu o
-conteúdo da issue, tentou aplicar `set_parent(76, 76)` e recebeu HTTP 422. Como
-o evento inválido permaneceu na cabeça da fila global, todos os boards ficaram
-sem processamento por 2h37.
+`#76` após o caminho salvo para seu body ficar obsoleto. O sync substituiu o
+conteúdo da issue, tentou aplicar `set_parent(76, 76)` e repetiu a rejeição 225
+vezes, deixando todos os boards sem processamento útil por 2h37.
 
-O estado afetado foi reparado operacionalmente (conteúdo da issue restaurado e
-arquivos órfãos removidos das colunas ativas), mas as correções preventivas de
-código **ainda estão pendentes**. Elas estão divididas em C1–C5: resolução
-segura do body, validação de auto-referência, tratamento de mensagem-veneno,
-proteção de integridade do estado e lock de instância única.
+O caso concreto foi reparado no mesmo dia. As cinco salvaguardas preventivas
+foram posteriormente implementadas, integradas em `main` e homologadas em
+conjunto em 20/08/2026. O incidente está **resolvido na versão 1.10.0**:
 
-Até essas correções serem entregues:
+1. **Associação segura (C1):** `_find_issue_files` resolve o body por identidade
+   inequívoca e isola zero/múltiplos candidatos sem alterar o board.
+2. **Relações válidas (C2):** auto-referências em `parent`, `children`,
+   `blocked_by` e `blocks` são descartadas antes de qualquer chamada externa.
+3. **Falha isolada (C3):** erros definitivos e tentativas transitórias esgotadas
+   saem da fila ativa para dead-letter; um item inválido não monopoliza os
+   demais boards.
+4. **Estado protegido (C4):** `SnapshotGuard` detecta e restaura atomicamente
+   alterações indevidas no snapshot durante a execução do agente.
+5. **Instância única (C5):** `InstanceLock` é adquirido antes de `startup()` e
+   recusa uma segunda instância sobre o mesmo estado.
 
-- crie issues novas somente como `<slug>-body.md`, sem prefixo numérico;
-- não execute duas instâncias da esteira sobre o mesmo estado;
-- não altere arquivos internos da `.pipe` manualmente;
-- trate repetição contínua de `Erro no ciclo (não fatal)` para o mesmo item
-  como incidente: interrompa a instância duplicada, preserve os logs e siga o
-  procedimento registrado no ticket antes de reiniciar.
+As regras operacionais de criar issues como `<slug>-body.md`, não editar a
+memória interna e investigar itens isolados continuam válidas. Os limites
+residuais conhecidos são: o lock coordena apenas processos que compartilham o
+mesmo filesystem; a guarda desta entrega cobre snapshots, não constitui um
+sandbox completo; e dead-letter não possui replay automático.
 
-A análise, a mitigação e o plano completo estão em
-[`doc/incidente/parent-recursivo/ticket.md`](doc/incidente/parent-recursivo/ticket.md).
+Documentação:
+
+- [ticket e causa raiz](doc/incidente/parent-recursivo/ticket.md)
+- [resultado da homologação](doc/incidente/parent-recursivo/homologacao.md)
+- [post-mortem de Produto](doc/product/confiabilidade-parent-recursivo/post-mortem.md)
+- [change file da versão 1.10.0](doc/changelogs/104-pre-producao-c1-c5-integradas.md)
 
 ### Issues fantasmas (erro irrecuperável)
 
