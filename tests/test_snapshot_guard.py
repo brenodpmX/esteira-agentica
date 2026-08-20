@@ -447,3 +447,117 @@ class TestEscritaAtomica:
 
         assert len(replace_calls) == 1
         assert path.read_bytes() == original
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CT-11: restauração devolve o arquivo ao estado anterior, não só aos bytes
+#
+# O objetivo declarado da story é restaurar o snapshot "exatamente ao estado
+# anterior". A escrita atômica cria o arquivo intermediário via
+# `tempfile.mkstemp`, cujo modo default é 0600 — sem tratamento, o
+# `os.replace` final substituiria um snapshot 0644 por um 0600, ou seja, a
+# própria guarda de recuperação alteraria silenciosamente o estado do arquivo
+# que deveria preservar (e divergiria do `AgentGuard`, que restaura via
+# `shutil.copy2`, preservando o modo).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPreservaModoDoArquivo:
+    @pytest.mark.parametrize("mode", [0o644, 0o600, 0o664])
+    def test_restauracao_preserva_modo_original(self, mode):
+        original = _write_snapshot(BOARD_ID, [{"id": "1", "updated_at": "2026-01-01"}])
+        path = _snapshot_path()
+        os.chmod(path, mode)
+
+        with SnapshotGuard(BOARD_ID):
+            path.write_bytes(b'{"board": {}, "issues": [], "last_sync": "corrupted"}')
+
+        assert path.read_bytes() == original
+        assert (path.stat().st_mode & 0o777) == mode
+
+    def test_recriacao_de_arquivo_removido_preserva_modo_original(self):
+        original = _write_snapshot(BOARD_ID, [{"id": "1", "updated_at": "2026-01-01"}])
+        path = _snapshot_path()
+        os.chmod(path, 0o644)
+
+        with SnapshotGuard(BOARD_ID):
+            path.unlink()
+
+        assert path.read_bytes() == original
+        assert (path.stat().st_mode & 0o777) == 0o644
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CT-12: diretório do board removido durante a execução
+#
+# Um agente pode remover o diretório inteiro do board (ex.: `rm -rf
+# .pipe/boards/task`), não apenas o snapshot.json. A restauração precisa
+# recriar a árvore de diretórios antes da escrita atômica.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDiretorioDoBoardRemovido:
+    def test_recria_snapshot_quando_diretorio_do_board_e_removido(self):
+        import shutil
+
+        original = _write_snapshot(BOARD_ID, [{"id": "1", "updated_at": "2026-01-01"}])
+        path = _snapshot_path()
+
+        with SnapshotGuard(BOARD_ID):
+            shutil.rmtree(path.parent)
+            assert not path.parent.exists()
+
+        assert path.exists()
+        assert path.read_bytes() == original
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CT-13: falha de restauração — sem resíduo de arquivo temporário e cobertura
+# do caminho de remoção (não só do caminho de escrita)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestFalhaDeRestauracaoNaoDeixaResiduo:
+    def test_falha_de_replace_nao_deixa_arquivo_temporario_no_diretorio(self, monkeypatch):
+        """Se `os.replace` falha, o temporário criado no diretório do snapshot
+        deve ser removido — senão cada falha acumularia lixo dentro de
+        `.pipe/boards/<board>/`, exatamente o diretório de estado protegido."""
+        _write_snapshot(BOARD_ID, [{"id": "1", "updated_at": "2026-01-01"}])
+        path = _snapshot_path()
+
+        def boom(*args, **kwargs):
+            raise OSError("disco cheio (simulado)")
+
+        monkeypatch.setattr(os, "replace", boom)
+
+        with pytest.raises(SnapshotIntegrityError):
+            with SnapshotGuard(BOARD_ID):
+                path.write_bytes(b'{"board": {}, "issues": [], "last_sync": "corrupted"}')
+
+        residuos = list(path.parent.glob(".snapshot-*"))
+        assert residuos == [], f"Resíduo de arquivo temporário: {residuos}"
+
+    def test_falha_ao_remover_arquivo_criado_indevidamente_levanta_integrity_error(
+        self, monkeypatch
+    ):
+        """Cobre o caminho de remoção (arquivo não existia antes e foi criado
+        durante o bloco): um OSError no `unlink` também deve virar
+        SnapshotIntegrityError, com board_id e causa — nunca um OSError nu."""
+        path = _snapshot_path()
+        assert not path.exists()
+
+        real_unlink = Path.unlink
+
+        def boom_unlink(self, *args, **kwargs):
+            if self == path:
+                raise OSError("permissão negada (simulado)")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", boom_unlink)
+
+        with pytest.raises(SnapshotIntegrityError) as exc_info:
+            with SnapshotGuard(BOARD_ID):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'{"board": {}, "issues": [], "last_sync": "rogue"}')
+
+        err = exc_info.value
+        assert BOARD_ID in str(err)
+        assert err.board_id == BOARD_ID
+        assert "permissão negada" in str(err.cause)

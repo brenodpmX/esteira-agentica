@@ -48,7 +48,7 @@ class TestHandlerSigterm:
 class TestRegistroDoHandler:
     """main() deve registrar o handler de SIGTERM antes de entrar no loop."""
 
-    def test_main_registra_handler_sigterm(self, monkeypatch):
+    def test_main_registra_handler_sigterm(self, monkeypatch, tmp_path):
         """Ao chegar no loop, signal.signal(SIGTERM, _handle_sigterm) foi chamado.
 
         Forçamos a saída imediata do loop erguendo _Shutdown na primeira
@@ -61,8 +61,16 @@ class TestRegistroDoHandler:
         acoplado ao nome da função da fase 1 e um refactor do loop faz o teste
         **travar** (loop infinito, pois `except Exception` dorme e continua) em
         vez de falhar — foi o que ocorreu ao restaurar a descoberta local global.
+
+        main() agora adquire InstanceLock antes de startup() (issue #151).
+        Isolamos .pipe/ em tmp_path e pré-criamos o diretório: acquire() não
+        cria diretórios pais, apenas o arquivo do lock (mesmo padrão usado em
+        tests/test_instance_lock_integration.py).
         """
         import src.__main__ as m
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".pipe").mkdir(exist_ok=True)
 
         registrados = {}
 

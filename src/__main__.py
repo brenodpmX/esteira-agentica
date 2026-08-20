@@ -7,6 +7,7 @@ from src.core.change_queue import ChangeQueue, QUEUE_FILE
 from src.core.sync import sync_remote, detect_local_changes, apply_changes, migrate_agent_level_labels
 from src.core.version import VERSION
 from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
+from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
 from pathlib import Path
@@ -591,107 +592,128 @@ def main():
     log.info("Pipe", f"Iniciando esteira agêntica v{VERSION}")
 
     config = check_config()
-    startup(config)
-    
-    platform = config["boards"]["platform"]
-    if platform not in ADAPTERS:
-        log.error("Config", f"Plataforma '{platform}' não suportada. Use: {list(ADAPTERS.keys())}")
-        raise SystemExit(1)
-    
-    adapter = ADAPTERS[platform]()
-    board = Board(adapter)
-    board.connect(config)
 
-    # Gate de permissões: não inicia a esteira sem poder operar o repositório.
+    # Aquisição do lock de instância única — ANTES de qualquer alteração do
+    # estado persistido (startup() remove QUEUE_FILE). Recusa fail-fast se
+    # outra instância já detém o lock, evitando o incidente #97 (uma 2ª
+    # instância chegando a rodar startup() e destruindo a fila da 1ª).
+    lock = InstanceLock()
     try:
-        board.check_access(config)
-    except BoardAccessError as e:
-        log.error("Startup", f"Permissões insuficientes - esteira não iniciada: {e}")
+        lock.acquire()
+    except LockHeldError as e:
+        log.error(
+            "Startup", str(e),
+            event="instance_lock_refused",
+            lock_path=str(e.path),
+            holder_pid=e.holder_pid,
+            holder_started_at=e.holder_started_at,
+        )
         raise SystemExit(1)
 
-    board_full_sync(config)
-    last_full_sync = datetime.now().date()
+    try:
+        startup(config)
 
-    # Array fixo de boards ordenados por prioridade
-    board_ids = get_board_ids(config)
-    index = 0
+        platform = config["boards"]["platform"]
+        if platform not in ADAPTERS:
+            log.error("Config", f"Plataforma '{platform}' não suportada. Use: {list(ADAPTERS.keys())}")
+            raise SystemExit(1)
 
-    log.info("Pipe", "Esteira agêntica iniciada")
+        adapter = ADAPTERS[platform]()
+        board = Board(adapter)
+        board.connect(config)
 
-    # Handler de SIGTERM: docker compose down/stop envia SIGTERM. Como o Python
-    # roda como PID 1 (ou sob tini via init:true), sem handler o sinal é
-    # ignorado/mata sujo (SIGKILL/137). Aqui encerramos o loop de forma limpa,
-    # simétrico ao tratamento de SIGINT (KeyboardInterrupt). Ver issue #70.
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-
-    running = True
-    while running:
+        # Gate de permissões: não inicia a esteira sem poder operar o repositório.
         try:
-            today = datetime.now().date()
-            if today != last_full_sync:
-                board_full_sync(config)
-                last_full_sync = today
+            board.check_access(config)
+        except BoardAccessError as e:
+            log.error("Startup", f"Permissões insuficientes - esteira não iniciada: {e}")
+            raise SystemExit(1)
 
-            current_board = board_ids[index]
+        board_full_sync(config)
+        last_full_sync = datetime.now().date()
 
-            # Fase 1: Descoberta
-            # 1a. Local (up) em TODOS os boards — efeitos colaterais de agentes
-            #     são cross-board (ex.: issue bloqueante criada em outro board).
-            local_changes = detect_local_all(config)
-            # 1b. Remota (down) apenas no board atual da rotação priorizada.
-            remote_changes = sync_remote_board(current_board)
-            had_changes = local_changes or remote_changes
+        # Array fixo de boards ordenados por prioridade
+        board_ids = get_board_ids(config)
+        index = 0
 
-            # Fase 2: Processamento global da fila
-            process_queue(config)
+        log.info("Pipe", "Esteira agêntica iniciada")
 
-            # Se houve mudanças ou fila ainda tem itens, volta ao início
-            queue = ChangeQueue()
-            if had_changes or queue.size() > 0:
-                index = 0
-                continue
+        # Handler de SIGTERM: docker compose down/stop envia SIGTERM. Como o Python
+        # roda como PID 1 (ou sob tini via init:true), sem handler o sinal é
+        # ignorado/mata sujo (SIGKILL/137). Aqui encerramos o loop de forma limpa,
+        # simétrico ao tratamento de SIGINT (KeyboardInterrupt). Ver issue #70.
+        signal.signal(signal.SIGTERM, _handle_sigterm)
 
-            # Sem mudanças e fila vazia: buscar tarefa no board atual
-            task = keep_task(current_board, config)
+        running = True
+        while running:
+            try:
+                today = datetime.now().date()
+                if today != last_full_sync:
+                    board_full_sync(config)
+                    last_full_sync = today
 
-            if task is AUTO_ADVANCED:
-                # Auto-advance local: mantém o board atual (não avança nem
-                # reinicia em 0). A próxima iteração força a descoberta deste
-                # board (detect_local_all + sync_remote_board + process_queue),
-                # propagando o movimento ao board e reconciliando o estado —
-                # deixando-o realmente pronto antes de selecionar a tarefa.
-                continue
-            elif task:
-                call_agent(config, task)
-                index = 0
-            else:
-                # Nenhuma tarefa neste board, avança para o próximo
-                index += 1
-                if index >= len(board_ids):
-                    # Percorreu todos sem encontrar trabalho — sleep
+                current_board = board_ids[index]
+
+                # Fase 1: Descoberta
+                # 1a. Local (up) em TODOS os boards — efeitos colaterais de agentes
+                #     são cross-board (ex.: issue bloqueante criada em outro board).
+                local_changes = detect_local_all(config)
+                # 1b. Remota (down) apenas no board atual da rotação priorizada.
+                remote_changes = sync_remote_board(current_board)
+                had_changes = local_changes or remote_changes
+
+                # Fase 2: Processamento global da fila
+                process_queue(config)
+
+                # Se houve mudanças ou fila ainda tem itens, volta ao início
+                queue = ChangeQueue()
+                if had_changes or queue.size() > 0:
                     index = 0
-                    sleep_time(config)
+                    continue
 
-        except PenaltyException as e:
-            back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
-            log.warning("Pipe", f"Penalty - aguardando até {back_at}")
-            time.sleep(e.wait_seconds)
-        except KeyboardInterrupt:
-            log.info("Pipe", "Interrompido pelo usuário")
-            running = False
-        except _Shutdown:
-            log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
-            running = False
-        except SnapshotIntegrityError as e:
-            log.error(
-                "Pipe",
-                f"[{e.board_id}] Falha fatal ao restaurar integridade do snapshot "
-                f"- encerrando o processo: {e.cause}",
-            )
-            raise
-        except Exception as e:
-            log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
-            time.sleep(config.get("sleep", 60))
+                # Sem mudanças e fila vazia: buscar tarefa no board atual
+                task = keep_task(current_board, config)
+
+                if task is AUTO_ADVANCED:
+                    # Auto-advance local: mantém o board atual (não avança nem
+                    # reinicia em 0). A próxima iteração força a descoberta deste
+                    # board (detect_local_all + sync_remote_board + process_queue),
+                    # propagando o movimento ao board e reconciliando o estado —
+                    # deixando-o realmente pronto antes de selecionar a tarefa.
+                    continue
+                elif task:
+                    call_agent(config, task)
+                    index = 0
+                else:
+                    # Nenhuma tarefa neste board, avança para o próximo
+                    index += 1
+                    if index >= len(board_ids):
+                        # Percorreu todos sem encontrar trabalho — sleep
+                        index = 0
+                        sleep_time(config)
+
+            except PenaltyException as e:
+                back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
+                log.warning("Pipe", f"Penalty - aguardando até {back_at}")
+                time.sleep(e.wait_seconds)
+            except KeyboardInterrupt:
+                log.info("Pipe", "Interrompido pelo usuário")
+                running = False
+            except _Shutdown:
+                log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
+                running = False
+            except SnapshotIntegrityError as e:
+                log.error(
+                    "Pipe",
+                    f"[{e.board_id}] Falha fatal ao restaurar integridade do snapshot "
+                    f"- encerrando o processo: {e.cause}",
+                )
+                raise
+            except Exception as e:
+                log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
+                time.sleep(config.get("sleep", 60))
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":
