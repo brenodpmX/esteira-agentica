@@ -4,8 +4,39 @@ Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
 ## [Unreleased] - 2026-08-19
 
+### Adicionado
+
+- Proteção de instância única no ciclo de vida da esteira (US-05, story #142).
+  `main()` adquire o `InstanceLock` **antes** de `startup()` — isto é, antes de
+  qualquer alteração do estado persistido — e recusa a execução com *fail-fast*
+  (`SystemExit(1)`) quando outra instância já detém o lock, registrando
+  `instance_lock_refused` com o caminho do lock, o PID e o horário de início do
+  detentor. A liberação fica em `finally` externo, cobrindo término normal,
+  `SIGTERM`, `KeyboardInterrupt`, falhas de startup e exceções do loop. Fecha a
+  lacuna C5 do incidente #97 (duas instâncias sobre o mesmo diretório de
+  estado). Tasks #150 (primitiva `InstanceLock`/`LockHeldError`) e #151
+  (integração, commit `570e699`).
+- Suíte de testes de instância única de ciclo de vida completo (task #152):
+  `tests/test_instance_lock_integration.py`,
+  `tests/test_instance_lock_concurrent.py` e o helper de subprocesso
+  `tests/_main_lock_holder_helper.py`, que exercitam concorrência real via
+  processos separados, além dos testes da primitiva isolada já existentes em
+  `tests/test_instance_lock.py`.
+
 ### Corrigido
 
+- Preservação do modo do arquivo na restauração do `SnapshotGuard`
+  (`src/core/snapshot.py`, task #149, PR #194): a verificação de integridade do
+  snapshot na execução do agente não altera mais as permissões do arquivo
+  restaurado.
+- Reconciliação da defasagem `epic` → `main` (bug #196). As entregas das tasks
+  #151, #152 e #149 estavam mergeadas apenas em `epic`; `main` — a branch que a
+  esteira executa em produção — continha somente a primitiva do lock, sem
+  nenhuma proteção efetiva. A promoção foi fast-forward, sem conflito, e
+  carrega também o change file da story #140 (declaração de escopo, não
+  trabalho novo). O item 5 do ADR
+  [`doc/architecture/instance-lock/sequenciamento-epic-main.md`](doc/architecture/instance-lock/sequenciamento-epic-main.md)
+  foi registrado como superado nesta entrega.
 - Remoção automática de sub-issues propagadas pelo GitHub Projects V2 para
   boards do parent quando o item chega sem `Status`. O pós-hook consulta
   `projectItems`/`fieldValues` via GraphQL e remove por
