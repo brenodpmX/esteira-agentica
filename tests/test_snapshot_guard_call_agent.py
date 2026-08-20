@@ -43,8 +43,13 @@ COL_ID = "doing"
 
 @pytest.fixture(autouse=True)
 def _chdir_tmp(tmp_path, monkeypatch):
-    """Isola .pipe/ em um diretório temporário por teste."""
+    """Isola .pipe/ em um diretório temporário por teste.
+
+    Cria .pipe/ de antemão: InstanceLock.acquire() (issue #151) não cria
+    diretórios pais, apenas o arquivo do lock.
+    """
     monkeypatch.chdir(tmp_path)
+    (tmp_path / ".pipe").mkdir(exist_ok=True)
     yield
 
 
@@ -127,14 +132,6 @@ class _WritesGarbageAndRaises(AgentPort):
             b'{"board": {}, "issues": [], "last_sync": "GARBAGE"}'
         )
         raise RuntimeError("falha simulada do agente")
-
-
-def _patch_agent_guard():
-    """AgentGuard não é o foco deste teste; neutraliza-o como no-op."""
-    return patch("src.__main__.AgentGuard", MagicMock(side_effect=lambda *a, **k: MagicMock(
-        __enter__=MagicMock(return_value=MagicMock()),
-        __exit__=MagicMock(return_value=None),
-    )))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -368,3 +365,69 @@ class TestNaoRegressaoPenaltyEKeyboardInterrupt:
             handled_as = "generic"
 
         assert handled_as == "keyboard"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CT-06: interação real com AgentGuard (defesa em profundidade pré-existente)
+#
+# `call_agent` aninha `AgentGuard` (fora) e `SnapshotGuard` (dentro) — ver
+# src/__main__.py. `AgentGuard.before()` captura o mtime do snapshot.json
+# ANTES do bloco `with SnapshotGuard(...)` iniciar, e `AgentGuard.after()`
+# roda DEPOIS de `SnapshotGuard` já ter restaurado (via os.replace, que
+# sempre altera o mtime, mesmo restaurando bytes idênticos ao original).
+#
+# Consequência: sempre que o agente corromper o snapshot, o mtime capturado
+# por AgentGuard.before() nunca mais é igual ao mtime final — mesmo com o
+# conteúdo já corrigido por SnapshotGuard —, então AgentGuard._check_snapshot
+# emite um segundo log.warning "modificado pelo agente — restaurando" e
+# executa uma restauração própria (a partir do seu backup independente).
+#
+# Isso não corrompe o conteúdo final (ambos os backups têm os mesmos bytes
+# originais), mas gera um warning redundante/confuso a cada violação real —
+# nenhum teste existente cobria os dois guards juntos via call_agent (nem
+# usava o helper `_patch_agent_guard`, que neutralizava AgentGuard e nunca
+# era chamado por nenhum teste). Estes testes fixam o comportamento real
+# (conteúdo final correto) e documentam o warning duplicado como
+# característica observável, para que uma futura correção da duplicação não
+# regrida silenciosamente a integridade do conteúdo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestInteracaoComAgentGuard:
+    def test_conteudo_final_correto_com_agent_guard_real_nao_mockado(self, tmp_path):
+        """AgentGuard não é mockado (comportamento real de call_agent): o
+        conteúdo final do snapshot deve ser byte a byte igual ao original,
+        mesmo com os dois guards restaurando de backups independentes."""
+        from src import __main__ as m
+
+        original = _write_snapshot(BOARD_ID)
+        task = _minimal_task(tmp_path)
+        fake_adapter = _WritesGarbageAndSucceeds(BOARD_ID)
+
+        with patch.object(m, "KiroCliAgent", return_value=fake_adapter):
+            m.call_agent(_minimal_config(), task)
+
+        assert Snapshot(BOARD_ID).path.read_bytes() == original
+
+    def test_agent_guard_emite_warning_redundante_apos_snapshot_guard_restaurar(self, tmp_path):
+        """Caracteriza o warning duplicado: SnapshotGuard já restaurou os
+        bytes originais, mas o os.replace atômico muda o mtime, fazendo
+        AgentGuard (que compara por mtime, não por conteúdo) acreditar que
+        ainda há uma violação pendente e logar/restaurar de novo."""
+        from src import __main__ as m
+
+        _write_snapshot(BOARD_ID)
+        task = _minimal_task(tmp_path)
+        fake_adapter = _WritesGarbageAndSucceeds(BOARD_ID)
+
+        with patch("src.core.agent_guard.log") as mock_agent_guard_log:
+            with patch.object(m, "KiroCliAgent", return_value=fake_adapter):
+                m.call_agent(_minimal_config(), task)
+
+            warnings = [str(c) for c in mock_agent_guard_log.warning.call_args_list]
+            assert any("modificado pelo agente" in w for w in warnings), (
+                "Comportamento atual esperado: AgentGuard também dispara seu "
+                "próprio warning de restauração após SnapshotGuard já ter "
+                "corrigido o conteúdo (duplicação por comparar mtime, não "
+                "bytes). Se esta asserção falhar, o warning redundante foi "
+                "eliminado — ajustar este teste para refletir a correção."
+            )

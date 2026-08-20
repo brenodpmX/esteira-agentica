@@ -13,20 +13,6 @@ Referência: doc/architecture/confiabilidade-parent-recursivo/arquitetura.md
 (ADR-06, seção "5.4 Inicialização" e seção 7 "Observabilidade operacional") e
 doc/requirements/confiabilidade-parent-recursivo/business-rules.md (RN-009).
 
-Origem/migração (issue #166, #104 → #142): esta suíte foi originalmente
-escrita na branch `feature151-...`, nascida de `epic`, junto do delta de
-implementação (`46948aa`/`085a383`). A doc/architecture/instance-lock/
-sequenciamento-epic-main.md determina que `epic` deixa de ser veículo de
-entrega do InstanceLock e que a promoção correta é
-#150 → #151 → story #142 → epic #104 → `main`, proibindo cherry-pick cego do
-commit de implementação porque ele mistura lógica de sincronização (hoje já
-coberta por `SnapshotGuard`/`SnapshotIntegrityError` em `main`) fora do escopo
-do lock. Esta especificação, porém, não depende dessa estrutura interna: os
-fixtures isolam `main()` via monkeypatch e interrompem o loop na primeira
-iteração (antes de `call_agent`/`SnapshotGuard`), por isso permanece válida
-sem alteração como critério de aceite para a reaplicação do delta mínimo da
-#151 sobre a branch canônica da story #142.
-
 Cobertura (critérios de aceite da issue #151):
   1. Lock adquirido antes de startup(); QUEUE_FILE de uma 1ª instância ativa
      não é tocado quando a 2ª é recusada.
@@ -93,6 +79,9 @@ def _patch_main_collaborators(monkeypatch, *, startup_side_effect=None,
 
     Faz a primeira iteração do loop levantar _Shutdown por padrão, a menos
     que loop_side_effect seja fornecido (para simular exceção não tratada).
+
+    O stop é instalado em detect_local_all, sync_remote_board E sync_board —
+    qualquer função de descoberta que o loop chame primeiro encerra a iteração.
     """
     monkeypatch.setattr(m, "check_config", lambda: _minimal_config())
     monkeypatch.setattr(
@@ -106,8 +95,10 @@ def _patch_main_collaborators(monkeypatch, *, startup_side_effect=None,
     def _stop(*_a, **_k):
         raise m._Shutdown()
 
-    monkeypatch.setattr(m, "detect_local_all", loop_side_effect or _stop)
-    monkeypatch.setattr(m, "sync_remote_board", MagicMock(return_value=False))
+    stop_fn = loop_side_effect or _stop
+    monkeypatch.setattr(m, "detect_local_all", stop_fn)
+    monkeypatch.setattr(m, "sync_remote_board", stop_fn)
+    monkeypatch.setattr(m, "sync_board", stop_fn)
     monkeypatch.setattr(m, "ADAPTERS", {"github": lambda: object()})
 
     class _FakeBoard:

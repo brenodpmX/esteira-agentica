@@ -7,6 +7,7 @@ from src.core.change_queue import ChangeQueue, QUEUE_FILE
 from src.core.sync import sync_remote, detect_local_changes, apply_changes, migrate_agent_level_labels
 from src.core.version import VERSION
 from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
+from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
 from pathlib import Path
@@ -592,26 +593,20 @@ def main():
 
     config = check_config()
 
-    # InstanceLock: garante exclusividade de instância por diretório de estado.
-    # Adquire ANTES de startup() para evitar que uma 2ª instância destrua a
-    # fila da 1ª (causa-raiz do incidente #97). A liberação fica no finally
-    # externo, cobrindo término normal, SIGTERM, KeyboardInterrupt, falhas de
-    # startup e exceções do loop.
-    from src.core.lock import InstanceLock, LockHeldError
-
+    # Aquisição do lock de instância única — ANTES de qualquer alteração do
+    # estado persistido (startup() remove QUEUE_FILE). Recusa fail-fast se
+    # outra instância já detém o lock, evitando o incidente #97 (uma 2ª
+    # instância chegando a rodar startup() e destruindo a fila da 1ª).
     lock = InstanceLock()
-    lock.path.parent.mkdir(parents=True, exist_ok=True)
     try:
         lock.acquire()
     except LockHeldError as e:
         log.error(
-            "Pipe",
-            f"Outra instância já está ativa: {e}",
+            "Startup", str(e),
             event="instance_lock_refused",
             lock_path=str(e.path),
             holder_pid=e.holder_pid,
             holder_started_at=e.holder_started_at,
-            holder_host=e.holder_host,
         )
         raise SystemExit(1)
 

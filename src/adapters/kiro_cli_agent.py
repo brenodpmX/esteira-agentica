@@ -28,10 +28,10 @@ class KiroCliAgent(AgentPort):
 
     def execute(self, params: AgentParams) -> None:
         log_path = self._create_log(params)
-        title_part = f" \"{params.title}\"" if params.title else ""
-        col_part = f" @ {params.col_name}" if params.col_name else ""
-        log.info("Agent", f"[{params.board_id}] #{params.issue_id}{title_part}"
-                          f"{col_part} agent='{params.agent_name}' log='{log_path}'")
+        title_part = f" {params.title}" if params.title else ""
+        col_part = f" [{params.col_name}]" if params.col_name else ""
+        log.info("Kiro", f"[{params.board_id}]{col_part} #{params.issue_id}{title_part}"
+                          f" - By: {params.agent_name} - {log_path}")
         try:
             work_dir = Path(params.work_dir)
             if not work_dir.is_dir():
@@ -45,15 +45,15 @@ class KiroCliAgent(AgentPort):
             # análise, uma execução quebrada era logada como "concluída".
             error = self._detect_failure(output)
             if error:
-                log.error("Agent", f"[{params.board_id}] #{params.issue_id} "
+                log.error("Kiro", f"[{params.board_id}] #{params.issue_id} "
                           f"falhou: {error}", log=str(log_path))
             else:
-                log.info("Agent", f"[{params.board_id}] #{params.issue_id} "
+                log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "
                          f"execução concluída: {self._last_meaningful_line(output)}",
                          log=str(log_path))
         except Exception as e:
             self._append_log(log_path, f"\n**ERRO**: {e}\n")
-            log.error("Agent", f"[{params.board_id}] #{params.issue_id} "
+            log.error("Kiro", f"[{params.board_id}] #{params.issue_id} "
                       f"erro: {self._last_meaningful_line(str(e))}",
                       log=str(log_path))
             raise
@@ -105,7 +105,7 @@ class KiroCliAgent(AgentPort):
         known_id = index.get(params.board_id, params.issue_id, params.agent_id)
         if known_id and self._session_exists(known_id, work_dir, env):
             cmd += ["--resume-id", known_id]
-            log.info("Agent", f"[{params.board_id}] #{params.issue_id} "
+            log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "
                      f"retomando sessão {known_id}",
                      session_id=known_id, agent=params.agent_id)
 
