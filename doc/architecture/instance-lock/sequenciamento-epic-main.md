@@ -118,3 +118,52 @@ story e do épico antes de alcançar produção.
 Esses custos são aceitos porque mantêm escopo e responsabilidade claros,
 enquanto renomear ou promover `epic` diretamente preservaria a ambiguidade que
 originou o débito.
+
+## Supersessão do item 5 (2026-08-19, bug #196)
+
+O item 5 da Decisão negocial ("Não haverá merge direto `epic` → `main`") e,
+por consequência, os itens 5 e 6 da Sequência obrigatória (promoção do
+InstanceLock apenas via `epic104` em evento de release) estão **superados**
+para esta frente. O histórico da decisão é preservado; esta seção registra a
+supersessão e sua justificativa.
+
+**Superado por:** débito #165 / PR #180 (que executou a promoção
+`epic` → `main` e deixou em `main` o guard `tests/test_epic_merge_ausente_146_147.py`)
+e pelo bug #196, cuja correção promove `epic` para `main` por PR revisado.
+
+**Motivos:**
+
+1. **A premissa factual caducou.** O item 5 foi escrito em 2026-08-05, quando
+   `main` tinha 27 commits exclusivos, `epic` tinha 121 e havia conflitos em
+   arquivos de runtime. Em 2026-08-19, `main` tem **0** commits exclusivos e é
+   ancestral estrito de `epic` (16 commits à frente); o merge é fast-forward
+   sem nenhum conflito (`git merge-tree --write-tree` retorna árvore idêntica à
+   de `epic`, sem conflito). O risco que motivou a proibição não existe mais.
+2. **A rota prescrita é inexequível.** A branch canônica
+   `epic104-104-post_mortem_de_produto_incidente_reportado_em_01082026` está
+   **181 commits atrás** de `main` (6 à frente), e a issue #104 está em
+   `aguardando-stories` bloqueada pela própria story #142 — dependência
+   circular. Aguardar o evento de release do épico manteria `main` (a branch
+   que a esteira executa em produção) sem proteção contra o incidente #97 por
+   prazo indeterminado.
+3. **Um invariante oposto já vigora em `main`.** O PR #180 deixou em `main` o
+   teste `test_nenhum_commit_de_epic_em_src_falta_em_head`, que **exige**
+   `epic ⊆ HEAD`. Manter o item 5 significaria manter um guard permanentemente
+   vermelho na suíte.
+
+**O que permanece válido:** as *Regras de integridade* deste documento seguem
+integralmente em vigor e foram verificadas na correção do #196 — a promoção não
+removeu nenhum comportamento de sincronização de `main` (`detect_local_all`,
+`AUTO_ADVANCED`, `sync_remote_board`, `process_queue`, `SnapshotIntegrityError`,
+`_Shutdown`) e o delta de `src/__main__.py` é exclusivamente a integração do
+lock (aquisição antes de `startup()`, recusa fail-fast em `LockHeldError`,
+liberação em `finally` externo). A vedação a cherry-pick cego de `46948aa`
+também permanece: a correção **não** usa cherry-pick.
+
+**O que continua fora desta supersessão:** os itens 2, 3 e 7 (aposentadoria da
+branch genérica `epic`, migração de PRs abertos e ajuste do flow) seguem
+pendentes e não são autorizados por esta seção.
+
+Correção factual de rastreabilidade: o commit da integração da #151 é
+`570e699`. O SHA `545089a`, citado no change file da story #142, não existe em
+`main` nem em `epic`.
