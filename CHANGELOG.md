@@ -2,6 +2,34 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.10.1] - 2026-08-20
+
+### Alterado
+
+- Faxina pontual das branches não mergeadas do repositório (#73/#74/#75/#76):
+  removidas do remoto as 12 branches de resíduo já integrado a `main`/`epic`,
+  8 branches órfãs de tarefas arquivadas, e a branch de nomenclatura antiga
+  `feature/1-1-rodar_no_docker`; consolidada a duplicata das issues #46/#47.
+  `temp-hotfix23-merge` e `temp-hotfix24-merge` foram preservadas
+  deliberadamente, pendentes de decisão sobre manter o histórico de
+  incidente em `main`/`epic`.
+- Sem mudança de código de produto: a entrega é operação de
+  `git branch`/`git push --delete` sobre o remoto, sem alteração de
+  comportamento da esteira. Não há mudança de processo nem automação de
+  encerramento de branch — a demanda era pontual.
+- Adicionado runbook de homologação específico
+  (`doc/runbook/homologacao-branches-nao-mergeadas.md`), referenciado no
+  README, cobrindo validação do estado das branches e subida do ambiente
+  Docker Compose com o código mesclado.
+
+### Segurança e compatibilidade
+
+- Sem mudança de schema, `pipe.yml` ou comportamento em runtime; o bump é
+  PATCH.
+- Nenhuma branch de tarefa ativa foi removida; a remoção seguiu estritamente
+  as regras de negócio confirmadas (resíduo comprovado ou ausência de
+  issue/razão que justifique a branch).
+
 ## [1.10.0] - 2026-08-20
 
 ### Adicionado

@@ -728,3 +728,5 @@ penalty indevidamente.
 
 - [Contexto e decisões técnicas](CONTEXT.md)
 - [Changelog](CHANGELOG.md)
+- [Runbook de operação Docker](doc/runbook/docker.md)
+- [Runbook de homologação — Branches não mergeadas (#73)](doc/runbook/homologacao-branches-nao-mergeadas.md)
