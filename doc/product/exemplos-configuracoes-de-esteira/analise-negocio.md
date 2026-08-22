@@ -1,190 +1,278 @@
 # Análise de negócio — exemplos de configurações de Esteira
 
-Status: aguardando validação do dono  
-Owner: product  
-Última atualização: 2026-08-21
+Status: **aguardando segunda validação do dono**
 
-## Decisão executiva provisória
+Responsável pela diligência: Produto
 
-Existe evidência suficiente de uma oportunidade, mas ainda não para aprovar o
-escopo proposto. O produto documenta configuração manual e o runbook afirma
-explicitamente que não há arquivo de exemplo. Produtos alternativos reduzem a
-barreira com starter templates, aplicações completas, galerias importáveis e
-percursos por nível. Porém, a issue não informa baseline, público prioritário,
-meta, ordem dos modelos nem se os seis temas são obrigatórios. Também pede
-caminhos que não correspondem à estrutura documentada atualmente.
+Última atualização: 2026-08-22
 
-A recomendação provisória é **não avançar para aprovação até o dono responder às
-perguntas registradas na issue**. Se as hipóteses forem confirmadas, a menor
-aposta coerente é um catálogo progressivo começando por um modelo mínimo e um
-modelo de referência, ambos utilizáveis e mensuráveis. Os pacotes de domínio
-devem depender de evidência de demanda. Isso é direcionamento de produto, não
-decisão de arquitetura.
+## Decisão executiva
 
-## Problema e evidências
+**Recomendação atual: não avançar para aprovação ainda.** A resposta do dono
+confirma a intenção de usar exemplos como “produtos na vitrine” no lançamento da
+Esteira, aceita a aposta inicial com um exemplo minimalista e outro de referência
+e pede que, após a entrada em produção, seja aberto outro épico para os escopos
+restantes. Isso fecha intenção e recorte inicial, mas não comprova demanda nem
+define público, canal, meta, qualidade mínima, pacote distribuído ou governança.
 
-### Fatos internos
+Há um problema factual: o runbook manda montar `pipe.yml` manualmente e afirma
+que não existe arquivo de exemplo; o README contém somente um trecho, sem os
+contextos necessários para uma experiência completa. O mercado confirma que
+scaffolds, exemplos organizados e galerias reutilizáveis são padrões de descoberta
+e experimentação. As fontes, porém, não provam que esta iniciativa produzirá
+interesse ou adoção para a Esteira; isso deve ser tratado como experimento
+mensurável, não como retorno garantido.
 
-- `doc/runbook/docker.md` orienta o usuário a criar `pipe.yml` manualmente e
-  registra: “não há arquivo de exemplo”.
-- O `README.md` contém um trecho de configuração, mas não um pacote completo,
-  pronto para uso, com os contextos correspondentes.
-- A visão já entregue de Docker define como público o analista/desenvolvedor e
-  como sucesso um usuário novo conseguir operar seguindo apenas a documentação.
-  Um catálogo pode aderir a essa meta, mas o dono ainda precisa confirmar se o
-  público desta iniciativa é o mesmo.
-- A estrutura vigente documenta `contexts/<plataforma>/<agente>.md`. Não foi
-  encontrada ocorrência de `pipe/contexts/kiro-cli` nem de
-  `pipe/contexts/artifacts`; portanto, esses caminhos da demanda precisam ser
-  corrigidos ou explicados antes da aprovação.
+O épico estará apto a avançar quando o dono responder à segunda rodada no fim
+deste documento. Se não houver baseline por ser um produto novo, a ausência de
+histórico não bloqueia por si só: o dono pode aprovar um desenho de experimento
+com público, evento de sucesso, meta, prazo e regra de decisão explícitos.
 
-### Evidência de mercado e alternativas
+## Entrevista do dono: decisões e hipóteses
 
-- A documentação oficial do CrewAI oferece configuração declarativa, scaffold
-  por CLI e biblioteca de templates. Sua coleção oficial de exemplos organizava
-  aplicações completas por nível e domínio, incluindo starter, recrutamento,
-  pesquisa e fluxos com humano no loop. A coleção foi arquivada em 20/04/2026,
-  o que também evidencia o risco de obsolescência de exemplos sem governança.
-- O AutoGen Studio oferece construtor declarativo, playground e galeria para
-  descobrir/importar componentes, mas avisa que o Studio é protótipo e não uma
-  aplicação pronta para produção. A referência reforça duas expectativas:
-  descoberta simples e limites de uso explícitos.
-- O template oficial de retrieval do LangGraph oferecia projeto inicial,
-  configuração, testes e instruções de customização. Foi arquivado em
-  20/08/2026, reforçando que “pronto para baixar” sem política de manutenção
-  perde valor rapidamente.
+Resposta recebida em 2026-08-22:
 
-Conclusão de mercado: exemplos prontos são uma prática de onboarding observável,
-mas quantidade não é valor por si só. Progressão, executabilidade, limites de
-uso, medição de consumo e manutenção são diferenciais necessários.
+- concordância com o escopo candidato de **minimalista + referência**;
+- posicionamento dos exemplos como vitrine para apresentar um produto novo ao
+  mercado e estimular interesse e uso;
+- condição de abrir outro épico quando este entrar em produção, cobrindo os
+  escopos restantes.
 
-## Hipóteses a validar
+Tratamento de diligência:
 
-| Hipótese | Evidência atual | Prova que falta |
+| Declaração | Classificação | Validação necessária |
 |---|---|---|
-| H1 — configurar do zero impede ou atrasa adoção | Lacuna explícita no runbook | tempo atual até primeiro ciclo, abandono e chamados |
-| H2 — pacote mínimo reduz tempo até valor | prática recorrente nas alternativas | teste com novos usuários e meta do dono |
-| H3 — há demanda pelos seis temas sugeridos | apenas a solicitação da issue | demanda por tema, público e frequência de uso |
-| H4 — modelos reduzem custo de tokens | intenção declarada | baseline, unidade de custo, teto e execução comparável |
-| H5 — catálogo melhora a meta de onboarding do Docker | aderência à visão existente | confirmação de que público e jornada são os mesmos |
+| O produto é novo e precisa ser apresentado ao mercado | decisão/contexto do dono | nenhuma para registrar a intenção |
+| Exemplos funcionarão como vitrine e aumentarão vontade de usar | hipótese de valor | teste com público-alvo e funil de descoberta → execução → ação de negócio |
+| Minimalista + referência são a primeira entrega | decisão de escopo | definir conteúdo, ordem e critérios de aceite |
+| O restante deve virar outro épico após produção | decisão de processo incompleta | definir o que é “restante”, gatilho, responsável e se haverá nova priorização por evidência |
 
-## Retorno e como medir
+A resposta não substitui dados sobre comportamento de clientes. Também não
+responde caminhos divergentes, comparação de custo/qualidade, manutenção nem
+qual evento representa “interesse”.
 
-O retorno esperado é reduzir esforço e risco de configuração e aumentar a taxa
-de ativação. A proposta só deve ser aprovada com baseline e metas para:
+## Problema fechado até aqui
 
-1. **tempo até primeiro valor:** mediana entre início do setup e primeiro ciclo
-   completo bem-sucedido;
-2. **ativação:** percentual de usuários novos que completam um ciclo usando
-   apenas um exemplo e sua documentação;
-3. **qualidade operacional:** percentual de exemplos que iniciam, validam e
-   concluem o cenário prometido na versão suportada;
-4. **custo:** tokens e custo monetário por resultado concluído em cenário de
-   referência, com modelo e condições registrados;
-5. **suporte:** dúvidas/falhas de configuração por nova instalação;
-6. **frescor:** exemplos compatíveis com a versão corrente e tempo para corrigir
-   incompatibilidades.
+### Dor comprovada
 
-Sem telemetria de uso, as métricas podem ser coletadas em testes de onboarding e
-execuções controladas. Não se deve prometer “mais baixo custo” sem cenário,
-modelo, qualidade mínima e medição reproduzível.
+Um prospect ou novo usuário não encontra no repositório um pacote completo e
+pronto para experimentar. Para chegar ao primeiro ciclo, precisa transformar um
+trecho do README em `pipe.yml`, criar os contextos exigidos e interpretar a
+documentação. Isso dificulta demonstrar possibilidades concretas do produto e
+introduz passos manuais antes do primeiro resultado.
 
-## Alternativas de produto
+Evidências internas:
 
-| Alternativa | Valor | Custo/risco de negócio |
-|---|---|---|
-| Manter apenas README/runbook | nenhum custo adicional | mantém configuração manual e não fecha a lacuna |
-| Um único starter mínimo | valida H1/H2 rapidamente | não atende comparação de abordagens nem domínios |
-| Catálogo progressivo mínimo + referência + temas validados | combina ativação e descoberta; recomendação provisória | requer priorização e manutenção contínua |
-| Publicar todos os temas de uma vez | cobertura ampla | alto risco de escopo, baixa validação e catálogo obsoleto |
-| Construtor/galeria interativa | ótima descoberta em concorrentes | nova iniciativa; fora desta diligência e sem evidência local |
+- `doc/runbook/docker.md` orienta a criação manual de `pipe.yml` e registra que
+  não há arquivo de exemplo;
+- `README.md` mostra um trecho de configuração, mas não um pacote completo com
+  os contextos correspondentes;
+- a estrutura vigente usa `contexts/<plataforma>/<agente>.md`; os caminhos
+  mencionados originalmente (`pipe/contexts/kiro-cli` e
+  `pipe/contexts/artifacts`) não constam na estrutura atual;
+- a visão de Docker busca permitir que um usuário novo opere apenas com a
+  documentação, criando aderência potencial entre as iniciativas.
 
-## Ordem de grandeza relativa
+### Dor ainda não quantificada
 
-Classificação de conteúdo e validação, não estimativa técnica:
+Não há no repositório nem na resposta do dono volume de prospects, tempo de
+configuração, taxa de conclusão, abandono ou chamados. Portanto, é possível
+comprovar a fricção documental, mas não sua frequência, severidade econômica ou
+impacto atual em conversão.
 
-1. **Minimalista — S:** menor conjunto e principal candidato a experimento.
-2. **Intermediária/referência — M:** precisa ser generalizada e livre de
-   credenciais, IDs e convenções específicas do ambiente atual.
-3. **Kanban e Scrum — M cada:** exigem fidelidade ao método e critérios claros
-   para não vender uma adaptação como modelo canônico.
-4. **XGH — M:** simples em volume, mas demanda posicionamento inequívoco como
-   sátira para não induzir prática inadequada nem confundir novos usuários.
-5. **Acadêmico — L:** mais papéis, revisão, integridade/citação e validação com
-   usuário do domínio.
-6. **Gestão, RH ou atendimento — L cada:** são linhas de produto separadas;
-   envolvem públicos, riscos e resultados próprios e não devem entrar só para
-   aumentar o catálogo.
+## Pesquisa de mercado e alternativas
 
-A ordem definitiva depende de demanda e objetivo confirmados pelo dono.
+Consulta realizada em 2026-08-22 a fontes oficiais:
+
+- **CrewAI:** mantém exemplos curados por tipo — crews, flows, integrações e
+  notebooks — e seu CLI gera o scaffold completo de um projeto. A combinação
+  mostra descoberta por caso de uso e um caminho curto para começar.
+- **AutoGen Studio:** entrega times padrão numa galeria, permite importar e
+  reutilizar coleções e oferece playground com artefatos e métricas como turnos
+  e tokens. Isso torna exemplos comparáveis e testáveis, não apenas inspiracionais.
+- **LangGraph:** oferece templates selecionáveis pelo CLI e um projeto mínimo
+  extensível, reduzindo o trabalho inicial sem esconder que o usuário precisará
+  adaptar a aplicação.
+- **n8n:** usa uma biblioteca pública categorizada com mais de 10 mil templates
+  como superfície de descoberta. O volume demonstra uma estratégia de catálogo,
+  mas não prova que quantidade seja a estratégia adequada para um produto novo.
+
+Leitura para a Esteira: há forte evidência de que alternativas usam exemplos,
+templates e galerias como parte do onboarding e da descoberta. Não foi encontrada
+prova pública comparável de causalidade entre catálogo e conversão que possa ser
+transposta diretamente. A aposta deve começar pequena, com instrumentação e
+manutenção explícitas.
+
+### Alternativas de produto
+
+| Alternativa | Benefício | Limite/risco | Recomendação |
+|---|---|---|---|
+| Manter README/runbook | nenhum esforço novo | mantém a lacuna e uma vitrine abstrata | recusar |
+| Melhorar apenas o trecho do README | baixo esforço relativo | continua sem experiência completa e reproduzível | insuficiente isoladamente |
+| Um starter minimalista | testa redução de fricção rapidamente | demonstra pouca amplitude do produto | útil, mas não atende sozinho ao objetivo de vitrine |
+| Minimalista + referência | combina primeiro sucesso e demonstração realista | exige governança e critério de comparação | **menor aposta recomendada** |
+| Publicar todos os temas agora | amplia variedade aparente | dilui validação, aumenta manutenção e inclui domínios sem demanda provada | adiar |
+| Galeria/construtor interativo | melhora descoberta e reutilização | nova iniciativa, sem evidência local para este investimento | fora deste épico |
+
+## Escopo de negócio proposto
+
+### Dentro da primeira aposta
+
+1. **Exemplo minimalista:** menor fluxo completo capaz de produzir um resultado
+   demonstrável, com consumo medido e limites explícitos.
+2. **Exemplo de referência:** configuração realista, generalizada e anonimizada,
+   que demonstre o valor característico da Esteira sem depender do ambiente do
+   autor.
+3. Para ambos: objetivo, público, resultado esperado, pré-requisitos, instruções
+   de uso e customização, configuração e contextos necessários, versão suportada,
+   cenário reproduzível de avaliação, consumo de tokens/custo, critério mínimo
+   de qualidade e responsável por revisão.
+4. Nenhum segredo, credencial, identificador real ou dado pessoal.
+
+Os caminhos e o meio de distribuição são resultados a esclarecer com o dono;
+esta análise não decide tecnologia ou arquitetura.
+
+### Fora desta primeira aposta
+
+Kanban, Scrum, Acadêmico, XGH, Gestão, RH e Atendimento. A resposta do dono pede
+um épico posterior para os escopos restantes, mas eles continuam candidatos, não
+compromisso automático de construir todos. A recomendação é que o épico futuro
+seja aberto no gatilho acordado e reavalie os temas com dados produzidos pela
+primeira entrega. XGH deve ser identificado como paródia; Acadêmico, RH e
+Atendimento exigem políticas próprias antes de eventual aprovação.
+
+## Retorno esperado e medição
+
+### Cadeia de valor
+
+1. prospect encontra um caso de uso compreensível;
+2. escolhe e inicia um exemplo;
+3. conclui o resultado prometido com custo e qualidade conhecidos;
+4. realiza a ação de negócio desejada — por exemplo, iniciar avaliação, solicitar
+   contato ou adotar o produto.
+
+### Métricas candidatas
+
+- **descoberta:** visitantes elegíveis que abrem/baixam/iniciam um exemplo;
+- **ativação:** usuários que concluem o primeiro ciclo sem ajuda;
+- **tempo até valor:** mediana entre início do setup e primeiro ciclo concluído;
+- **resultado de negócio:** usuários ativados que realizam a ação comercial ou
+  de adoção definida pelo dono;
+- **qualidade:** execuções que atingem o resultado mínimo definido para o cenário;
+- **eficiência:** tokens e custo por resultado aprovado, comparados sob o mesmo
+  cenário, modelo e patamar de qualidade;
+- **suporte:** falhas ou pedidos de ajuda de configuração por participante;
+- **frescor:** percentual de exemplos compatíveis com a versão suportada e prazo
+  de correção após mudança incompatível.
+
+A métrica primária ainda não está escolhida. Como o objetivo declarado é
+“vitrine”, recomenda-se medir o funil inteiro e não usar downloads ou visualizações
+isoladamente como prova de valor. Sem tráfego histórico, a baseline pode ser um
+teste comparativo com novos usuários: documentação atual versus pacote de
+exemplo. O dono ainda precisa definir segmento, tamanho mínimo da avaliação,
+meta, janela e ação de negócio final.
+
+## Ordem relativa de esforço de negócio/conteúdo
+
+Não é estimativa técnica:
+
+1. **Minimalista — S:** menor conteúdo; principal instrumento para testar setup e
+   ativação.
+2. **Referência — M:** exige seleção do caso, generalização, anonimização e
+   explicação de limites.
+3. **Benchmark e validação transversal — M:** cenário fixo, avaliação de qualidade,
+   registro de custo e teste com usuários para os dois exemplos.
+4. **Governança transversal — M:** responsável, compatibilidade, revisão e canal
+   de descoberta.
+5. **Temas posteriores — M a L cada:** Kanban/Scrum demandam fidelidade; XGH,
+   posicionamento; Acadêmico/RH/Atendimento, validação de domínio e políticas.
+
+A primeira aposta é de ordem **M relativa**, dominada menos pela quantidade de
+arquivos e mais pela validação reproduzível e pela manutenção.
 
 ## Custo de não fazer
 
-- continuidade do setup manual e do tempo de suporte associado;
-- maior abandono antes do primeiro valor e menor aproveitamento da entrega
-  Docker já disponível;
-- configurações copiadas de trechos incompletos, com maior risco de erro;
-- ausência de referência para consumo eficiente de tokens;
-- concorrentes e alternativas seguem oferecendo scaffolds e descoberta guiada.
+Fatos: permanece a criação manual descrita no runbook, continua inexistente uma
+experiência completa de demonstração e prospects seguem sem referência oficial
+para comparar resultado, custo e possibilidades.
 
-Não há dados para monetizar esses efeitos. O dono deve fornecer volume de novos
-usuários, tempo médio de setup, abandono e suporte; sem isso, o custo de não
-fazer permanece qualitativo.
+Riscos plausíveis ainda não quantificados: mais tempo até valor, abandono antes
+do primeiro ciclo, suporte evitável e menor capacidade de apresentar o produto.
+Não há base para converter esses riscos em receita perdida ou horas de suporte.
+A decisão deve usar um experimento de baixo escopo em vez de um business case
+financeiro inventado.
 
 ## Aderência a metas e políticas
 
-- **Aderência potencial:** onboarding autônomo e reprodutível definido na visão
-  “Rodar no Docker”. Pendente confirmação do dono.
-- **Segurança:** exemplos não podem conter segredos, credenciais, IDs reais ou
-  dados pessoais; limites de uso devem ser explícitos.
-- **Custo:** cada exemplo deve declarar cenário de referência, modelo, resultado
-  mínimo e medição de consumo; “baixo custo” sem qualidade comparável não é
-  critério aceito.
-- **Domínios sensíveis:** RH e atendimento exigem dados fictícios e aviso contra
-  decisões automatizadas indevidas. O acadêmico deve preservar integridade e
-  rastreabilidade de fontes.
-- **Posicionamento:** XGH deve ser rotulado como paródia, não boa prática.
-- **Manutenção:** compatibilidade dos exemplos deve ser critério obrigatório de
-  mudança do produto, com responsável e versão suportada definidos. O mecanismo
-  de implementação será decidido em etapa técnica posterior.
+- **Estratégia:** aderência declarada pelo dono ao lançamento e apresentação do
+  produto ao mercado; não foi fornecido OKR, meta comercial ou prazo.
+- **Onboarding:** aderência potencial à visão de operação autônoma do Docker.
+- **Segurança e privacidade:** dados fictícios; ausência de segredos, IDs e dados
+  pessoais; credenciais somente por mecanismos já documentados.
+- **Transparência de custo:** consumo só pode ser promovido como baixo quando
+  medido em condições comparáveis e acompanhado de qualidade mínima.
+- **Posicionamento:** não apresentar paródia como prática recomendada nem modelos
+  de método como canônicos sem revisão adequada.
+- **Domínios sensíveis:** RH não pode induzir decisão automatizada indevida;
+  Acadêmico precisa preservar integridade e fontes; Atendimento precisa declarar
+  limites e escalonamento humano.
+- **Manutenção:** todo exemplo deve declarar compatibilidade, responsável e gatilho
+  de revisão; catálogo desatualizado prejudica a confiança que a vitrine busca.
 
-## Critérios de aprovação do épico
+## Critérios para aprovar ou recusar
 
-O épico estará apto a avançar quando houver:
+Aprovar quando houver:
 
-1. público e jornada prioritários;
-2. dor comprovada por baseline ou pesquisa com usuários;
-3. lista de modelos obrigatórios e ordem de entrega;
-4. definição inequívoca do pacote e dos caminhos esperados;
-5. métrica primária, baseline, meta e janela de avaliação;
-6. critério comparável de qualidade/custo de tokens;
-7. política de suporte, versionamento e manutenção;
-8. aceite dos limites para XGH e domínios sensíveis.
+1. público prioritário e ação que se deseja provocar;
+2. escopo minimalista + referência definido em termos de resultado;
+3. pacote esperado e canal de descoberta esclarecidos;
+4. métrica primária, baseline ou desenho de experimento, meta e prazo;
+5. cenário comparável de custo com qualidade mínima;
+6. responsável e política de compatibilidade/manutenção;
+7. regra do épico posterior definida sem prometer temas não validados.
 
-## Perguntas ao dono
+Recusar se o objetivo permanecer apenas “ter boas ideias”, sem público, evento de
+sucesso e regra de decisão, ou se for exigido publicar todos os temas sem prova e
+sem capacidade de manutenção.
 
-1. Quem é o usuário prioritário e qual tarefa tenta concluir?
-2. Quais dados existem sobre tempo de setup, abandono, erros e suporte?
-3. Os seis temas são escopo obrigatório ou ideias? Quais dois têm prioridade?
-4. “Intermediária” deve reproduzir qual configuração, e o que precisa ser
-   anonimizado/generalizado?
-5. `pipe/contexts/...` e `contexts/artifacts` são novos requisitos ou nomes
-   desatualizados? Qual pacote exato o usuário deve baixar?
-6. Qual evento de negócio define sucesso, com baseline, meta e prazo?
-7. Como comparar custo sem sacrificar qualidade: cenário, modelos permitidos,
-   teto de tokens/custo e resultado mínimo?
-8. Onde os exemplos serão descobertos e qual expectativa de suporte?
-9. Quem responde por atualizá-los e quais mudanças obrigam revisão?
-10. XGH deve ser publicado oficialmente como paródia? Há restrições para os
-    exemplos acadêmico, RH e atendimento?
+## Segunda rodada de perguntas ao dono
+
+1. Quem é o primeiro público da vitrine (perfil/segmento) e qual ação concreta
+   deve demonstrar interesse: executar, solicitar demonstração, iniciar piloto ou
+   outra?
+2. Onde a vitrine será descoberta? Se o produto ainda não tem tráfego, podemos
+   tratar a primeira entrega como teste de onboarding com participantes recrutados?
+3. Qual será a métrica primária, meta e prazo? Na ausência de baseline, informe a
+   regra para aprovar o experimento (amostra mínima e taxa/tempo esperado).
+4. Qual caso real deve originar o exemplo de referência e quais elementos precisam
+   ser generalizados ou removidos?
+5. Qual pacote o usuário deve receber? Confirme se vale a estrutura atual
+   `contexts/<plataforma>/<agente>.md` e se os caminhos `pipe/contexts/...`
+   citados originalmente estão desatualizados.
+6. Qual resultado mínimo define qualidade e sob quais cenário/modelo compararemos
+   tokens e custo?
+7. Quem será responsável por manter os exemplos, qual versão será suportada e
+   quais mudanças obrigam revisão?
+8. No gatilho “quando entrar em produção”, o épico posterior deve apenas registrar
+   os temas restantes para nova priorização ou existe compromisso de construir
+   todos? Quem confirma o gatilho e abre o épico?
 
 ## Fontes
 
-- Repositório: `README.md`, `doc/runbook/docker.md` e
-  `doc/product/rodar-no-docker/vision.md`.
-- [CrewAI — Agents](https://docs.crewai.com/en/concepts/agents)
-- [CrewAI — coleção oficial de exemplos](https://github.com/crewAIInc/crewAI-examples)
-- [Microsoft AutoGen Studio](https://microsoft.github.io/autogen/stable/user-guide/autogenstudio-user-guide/index.html)
-- [LangGraph Retrieval Agent Template](https://github.com/langchain-ai/retrieval-agent-template)
+### Internas
+
+- `README.md`
+- `doc/runbook/docker.md`
+- `doc/product/rodar-no-docker/vision.md`
+- histórico da issue #93, resposta do dono em 2026-08-22
+
+### Mercado — fontes oficiais
+
+- [CrewAI — Examples](https://docs.crewai.com/examples/example)
+- [CrewAI — Installation e scaffold por CLI](https://docs.crewai.com/en/installation)
+- [Microsoft AutoGen Studio — Usage, Gallery e métricas](https://microsoft.github.io/autogen/stable/user-guide/autogenstudio-user-guide/usage.html)
+- [LangGraph — servidor local e template inicial](https://docs.langchain.com/oss/python/langgraph/local-server)
+- [LangGraph — deployment quickstart e seleção de templates](https://docs.langchain.com/langsmith/deployment-quickstart)
+- [n8n — biblioteca de workflow templates](https://n8n.io/workflows/)
 
 Conteúdo externo resumido e reformulado para cumprir restrições de licenciamento.
