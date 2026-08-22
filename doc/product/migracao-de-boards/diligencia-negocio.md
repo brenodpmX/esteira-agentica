@@ -1,8 +1,8 @@
 # Diligência de negócio — Migração segura de colunas de boards
 
-**Épico:** #91 — Migração de boards  
-**Responsável pela análise:** Helena Costa — Product Manager  
-**Data:** 22/08/2026  
+**Épico:** #91 — Migração de boards
+**Responsável pela análise:** Helena Costa — Product Manager
+**Data:** 22/08/2026
 **Decisão recomendada:** aprovar com métricas obrigatórias de resultado
 
 ## 1. Resumo executivo
@@ -35,8 +35,8 @@ A entrevista foi conduzida pelo histórico da issue em 21/08/2026. As respostas 
 
 Hoje, retirar da configuração uma coluna ainda ocupada pode retirar sua opção de Status antes de realocar os itens. A consequência é trabalho sem etapa inequívoca, com perda de visibilidade, priorização, execução e métricas do fluxo. A recuperação depende de encontrar e reclassificar itens manualmente, algo incompatível com uma sincronização automatizada e não assistida.
 
-**Usuário afetado:** pessoa ou equipe que opera a esteira e depende do board para conduzir trabalho.  
-**Momento da dor:** sincronização seguinte a uma alteração estrutural que remove uma coluna ocupada.  
+**Usuário afetado:** pessoa ou equipe que opera a esteira e depende do board para conduzir trabalho.
+**Momento da dor:** sincronização seguinte a uma alteração estrutural que remove uma coluna ocupada.
 **Impacto:** classificação inconsistente, recuperação manual e risco de decisões baseadas em um board incompleto.
 
 ## 4. Resultado de produto aprovado
