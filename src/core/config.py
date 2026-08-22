@@ -111,19 +111,19 @@ def _validate_boards(boards: dict, known_agents: set[str] | None = None):
             if agent and known_agents and agent not in known_agents:
                 raise ConfigError(f"{ctx}.agent: agente '{agent}' não definido em 'agents'")
 
-            # override-agent: mapa nível → agente
-            override = col.get("override-agent")
+            # agent-hub: mapa <valor> → agente (roteamento por hub)
+            override = col.get("agent-hub")
             if override is not None:
                 if not isinstance(override, dict):
-                    raise ConfigError(f"{ctx}.override-agent: deve ser um mapa <nível>: <agente>")
+                    raise ConfigError(f"{ctx}.agent-hub: deve ser um mapa <valor>: <agente>")
                 if not col.get("agent"):
                     raise ConfigError(
-                        f"{ctx}.override-agent: requer um 'agent' default na coluna"
+                        f"{ctx}.agent-hub: requer um 'agent' default na coluna"
                     )
-                for level, ov_agent in override.items():
+                for value, ov_agent in override.items():
                     if known_agents and ov_agent not in known_agents:
                         raise ConfigError(
-                            f"{ctx}.override-agent.{level}: agente '{ov_agent}' não definido em 'agents'"
+                            f"{ctx}.agent-hub.{value}: agente '{ov_agent}' não definido em 'agents'"
                         )
 
 

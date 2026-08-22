@@ -2,6 +2,35 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.11.0] - 2026-08-22
+
+### Alterado
+
+- Renomeado o mecanismo de roteamento de agente de `agent-level` para
+  `agent-hub`, com sufixo livre (não mais restrito a níveis `low/medium/high`;
+  pode representar função, profundidade ou qualquer critério):
+  - Label no board: `agent-level-<nível>` → `agent-hub-<valor>`.
+  - Comando no body (bloco `@---`): `/agent_level <nível>` →
+    `/agent-hub-<valor>` (token único, no mesmo formato do label, análogo a
+    `/need_human`).
+  - Chave de configuração da coluna: `override-agent` → `agent-hub`.
+  - Identificadores internos: `AGENT_LEVEL_PREFIX` → `AGENT_HUB_PREFIX`,
+    `agent_level()` → `agent_hub()`, campo `IssueCommands.agent_level` →
+    `agent_hub`.
+
+### Removido
+
+- Removida a migração automática one-shot `migrate_agent_level_labels`
+  (renomeada temporariamente para `migrate_agent_hub_labels`) e sua chamada no
+  `board_full_sync`. Issues legadas com o comando/label antigo devem ser
+  corrigidas manualmente onde necessário.
+
+### Segurança e compatibilidade
+
+- **Breaking change (MINOR):** `pipe.yml` que use `override-agent` deve migrar
+  para `agent-hub`; bodies que usem `/agent_level <nível>` devem migrar para
+  `/agent-hub-<valor>`. Sem migração automática — correção manual.
+
 ## [1.10.1] - 2026-08-20
 
 ### Alterado
