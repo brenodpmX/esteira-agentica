@@ -1,7 +1,7 @@
 # Vision — Reorganização das documentações públicas
 
-Status: aguardando decisões do dono para aprovação de negócio  
-Owner: product / mantenedor a confirmar  
+Status: aguardando decisões do dono para aprovação de negócio
+Owner: product / mantenedor a confirmar
 Last updated: 2026-08-22
 
 ## Resultado pretendido

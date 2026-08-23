@@ -1,7 +1,7 @@
 # Épicos — Reorganização das documentações públicas
 
-Status: blocos de entrega propostos; aguardando aprovação de negócio  
-Owner: product / responsáveis de conteúdo a confirmar  
+Status: blocos de entrega propostos; aguardando aprovação de negócio
+Owner: product / responsáveis de conteúdo a confirmar
 Last updated: 2026-08-22
 
 ## Inputs

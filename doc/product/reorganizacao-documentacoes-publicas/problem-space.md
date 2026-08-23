@@ -1,7 +1,7 @@
 # Problem Space — Reorganização das documentações públicas
 
-Status: dor plausível, ainda sem validação suficiente  
-Owner: product  
+Status: dor plausível, ainda sem validação suficiente
+Owner: product
 Last updated: 2026-08-22
 
 ## Contexto

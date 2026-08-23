@@ -1,7 +1,7 @@
 # Análise de negócio — Reorganização das documentações públicas
 
-**Épico:** #202  
-**Data da diligência:** 22/08/2026  
+**Épico:** #202
+**Data da diligência:** 22/08/2026
 **Status:** aguardando decisões do dono; ainda não apto para aprovação
 
 Esta página preserva o ponto de entrada citado na primeira rodada da entrevista.
