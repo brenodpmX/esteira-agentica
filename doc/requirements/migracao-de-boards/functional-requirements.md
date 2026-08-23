@@ -1,6 +1,6 @@
 # Requisitos Funcionais — Migração Segura de Colunas de Boards
 
-Status: em elaboração
+Status: aprovado
 Owner: requirements
 Last updated: 2026-08-22
 
