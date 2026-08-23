@@ -326,44 +326,45 @@ automaticamente em três situações:
 | `create-merge` | Cria branch + cria PR |
 | `no-branch` | Sem operações de git |
 
-### Substituição de agente por nível (`override-agent`)
+### Roteamento de agente por hub (`agent-hub`)
 
-Cada coluna define um agente default no atributo `agent`. O nível de execução
-de uma issue é armazenado como label `agent-level-<nível>` no GitHub (ex.:
-`agent-level-low`, `agent-level-medium`, `agent-level-high`). Essa label é
-sincronizada nativamente pelo board, garantindo que o nível persista entre
+Cada coluna define um agente default no atributo `agent`. O valor de
+roteamento de uma issue é armazenado como label `agent-hub-<valor>` no GitHub
+(ex.: `agent-hub-low`, `agent-hub-senior`, `agent-hub-deep`). O sufixo é livre —
+pode representar nível, função, profundidade ou qualquer critério. Essa label é
+sincronizada nativamente pelo board, garantindo que o valor persista entre
 ciclos de sync.
 
-Se a issue possuir uma label `agent-level-<nível>` e esse `<nível>` for uma
-chave do mapa `override-agent` da coluna, a esteira usa o agente indicado no
+Se a issue possuir uma label `agent-hub-<valor>` e esse `<valor>` for uma
+chave do mapa `agent-hub` da coluna, a esteira usa o agente indicado no
 valor. Caso contrário, usa o `agent` default.
 
-No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
-`@---` do body. O sync-up lê esse campo via `all_labels()` e grava a label
-`agent-level-<nível>` no GitHub automaticamente. A resolução de agente em
-`resolve_agent_id()` lê diretamente `issue["labels"]` — sem dependência de
-arquivo local.
+No fluxo do planning-poker, o agente escreve `/agent-hub-<valor>` no bloco
+`@---` do body — um token único, no mesmo formato do label. O sync-up lê esse
+campo via `all_labels()` e grava a label `agent-hub-<valor>` no GitHub
+automaticamente. A resolução de agente em `resolve_agent_id()` lê diretamente
+`issue["labels"]` — sem dependência de arquivo local.
 
-Como cada agente carrega o próprio `model`, trocar o agente por nível troca
+Como cada agente carrega o próprio `model`, trocar o agente por hub troca
 também o model efetivo da execução.
 
 ```yaml
 columns:
   desenvolvimento:
     agent: engineering          # default
-    override-agent:
-      low: generic              # agent-level-low  -> generic
-      high: senior-engineering  # agent-level-high -> senior-engineering
+    agent-hub:
+      low: generic              # agent-hub-low  -> generic
+      high: senior-engineering  # agent-hub-high -> senior-engineering
 ```
 
-Validação (`config.py`): `override-agent` deve ser um mapa `<nível>: <agente>`,
+Validação (`config.py`): `agent-hub` deve ser um mapa `<valor>: <agente>`,
 a coluna precisa ter um `agent` default, e todo agente referenciado deve existir
 em `agents`.
 
 ### Log de execução
 
 Cada execução gera um arquivo em `logs/<issue_id>/<timestamp>.md` com:
-- **Parâmetros**: plataforma, agente, model, agent_level, board, coluna, issue
+- **Parâmetros**: plataforma, agente, model, agent_hub, board, coluna, issue
 - **Prompt**: prompt completo enviado ao agente
 - **Chat**: diálogo da execução (preenchido pelo adapter)
 
@@ -459,7 +460,7 @@ presente garante a relação/atributo; ausente, remove. Não há comandos de
 | `/blocked_by #N, #M` | esta issue está bloqueada por N e M |
 | `/blocks #N, #M` | esta issue bloqueia N e M |
 | `/labels a, b, c` | define (SET) as labels da issue |
-| `/agent_level low\|medium\|high` | nível de agente (chave de `override-agent`) |
+| `/agent-hub-<valor>` | roteamento de agente por hub (chave do mapa `agent-hub`); `<valor>` livre |
 | `/need_human` | marca intervenção humana (label especial) |
 | `/close [completed\|not_planned]` | fecha a issue |
 | `/reopen` | reabre a issue |
@@ -479,7 +480,7 @@ Validar credenciais e retornar JWT.
 /parent #10
 /blocked_by #42, #58
 /labels backend, security
-/agent_level high
+/agent-hub-high
 ```
 
 ### Incidente: sub-issues propagadas entre boards (#88/#98/#99/#106)

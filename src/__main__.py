@@ -4,7 +4,7 @@ from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
 from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
 from src.core.change_queue import ChangeQueue, QUEUE_FILE
-from src.core.sync import sync_remote, detect_local_changes, apply_changes, migrate_agent_level_labels
+from src.core.sync import sync_remote, detect_local_changes, apply_changes
 from src.core.version import VERSION
 from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
 from src.core.lock import InstanceLock, LockHeldError
@@ -177,18 +177,6 @@ def board_full_sync(config: dict):
                     recovered += 1
     if recovered:
         log.info("Board", f"{recovered} item(ns) recuperado(s) de execução anterior")
-
-    # Migração one-shot: issues com /agent_level no body mas sem label no board.
-    # DEVE ocorrer ANTES de detect_board_changes para garantir que o CHANGE_UP
-    # de migração entre na fila antes de qualquer CHANGE_DOWN da mesma issue.
-    # Assim o sync-up grava a label no board antes do sync-down reescrever o
-    # body — evitando perda silenciosa do agent_level em issues legadas que
-    # foram alteradas remotamente no mesmo ciclo de full sync.
-    total_migrated = 0
-    for board_id in board.board_ids(config):
-        total_migrated += migrate_agent_level_labels(board_id, queue)
-    if total_migrated:
-        log.info("Board", f"Migração agent_level: {total_migrated} issue(s) enfileirada(s) para gravar label")
 
     # Detectar mudanças remotas
     log.info("Board", "Detectando mudanças remotas")
