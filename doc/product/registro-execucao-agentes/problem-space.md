@@ -18,7 +18,7 @@ A esteira gera um Markdown detalhado por execução com parâmetros, prompt e ch
 
 O dono confirmou como usuários o operador de IA, SRE, monitoramento e pessoas interessadas no custo operacional. A decisão desejada é entender uma execução individual e, depois, o total de uma entrega ponta a ponta: volume, duração, consumo, resultados e repetições de uma issue principal somada aos seus descendentes históricos.
 
-A amostra local de 21–22/08/2026 registrada na entrevista contém 22 execuções com resumo, 123,99 créditos e 1,12 hora; mediana de 5,81 créditos e 3,14 minutos. Ela comprova que a versão observada do Kiro reporta créditos e duração, mas não é baseline histórico e não permite classificar com segurança avanço, falha terminal ou repetição.
+A amostra local de 21–22/08/2026 registrada na entrevista contém 24 arquivos em 11 issues. Em 22 deles havia resumo extraível, totalizando 123,99 créditos e 1,12 hora; mediana de 5,81 créditos e 3,14 minutos, com intervalos de 0,35–11,54 créditos e 0,57–5,73 minutos. Dois arquivos ainda não tinham resumo no instante da aferição. Ela comprova que a versão observada do Kiro reporta créditos e duração, mas não é baseline histórico e não permite classificar com segurança avanço, falha terminal ou repetição. Sete registros continham marcadores de falha interna de ferramenta, o que não prova sete execuções malsucedidas porque uma falha pode ter sido recuperada.
 
 O dono aceitou como resultados `concluída`, `falha terminal`, `timeout`, `interrompida` e `desconhecida`, separados de `issue avançou: sim/não`. Também aceitou medir “repetição sem avanço” como uma nova execução da mesma issue na mesma etapa após execução que não a fez avançar.
 
