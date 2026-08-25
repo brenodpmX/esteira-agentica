@@ -1,140 +1,156 @@
-# Épicos — Reorganização das documentações públicas
+# Blocos de entrega — Reorganização das documentações públicas
 
-Status: blocos de entrega propostos; aguardando aprovação de negócio
-Owner: product / responsáveis de conteúdo a confirmar
-Last updated: 2026-08-22
+Status: proposta apta à aprovação de negócio
+Owner: product
+Last updated: 2026-08-25
 
 ## Inputs
 
-- `doc/product/reorganizacao-documentacoes-publicas/vision.md`
-- `doc/product/reorganizacao-documentacoes-publicas/problem-space.md`
-- Issue #202 e entrevista do dono em 22/08/2026
+- Issue #202 e entrevista com o dono.
+- `vision.md`.
+- `problem-space.md`.
 
-Os itens abaixo são blocos de resultado e ordem de esforço, não stories nem
-decisões de arquitetura.
+## Princípios de execução
 
-## Ordem recomendada
+- Os blocos descrevem resultados de negócio, não stories nem solução técnica.
+- A ordem é obrigatória porque a capacidade até 31/08 é desconhecida.
+- Nenhum bloco autoriza decisão de arquitetura, ferramenta ou hospedagem.
+- O baseline antecede reorganização ampla; o pós-teste decide continuidade.
+- O agente reviewer aprova conteúdo público. O inventário atribui o responsável
+  de manutenção de cada fonte.
 
-| Ordem | Bloco | Esforço relativo | Razão |
-|---|---|---:|---|
-| 1 | Validar público, tarefas e baseline | Pequeno | Evita reorganização guiada por opinião |
-| 2 | Porta de entrada e primeiro sucesso | Médio | Entrega valor para a apresentação e testa a hipótese principal |
-| 3 | Inventário e fontes canônicas | Médio | Reduz duplicação e delimita público/interno |
-| 4 | Comunicação e operação de releases | Médio | Resolve consistência e responsabilidade futuras |
-| 5 | Validação final e manutenção | Pequeno/médio | Demonstra retorno e impede regressão |
-| 6 | Expansão do acervo | Grande, posterior | Só se dados mostrarem demanda além das jornadas prioritárias |
+## Ordem, esforço relativo e dependências
 
-## Épico: Validar público, tarefas e baseline
+| Ordem | Bloco | Esforço relativo de negócio | Dependência | Regra de parada |
+|---|---|---:|---|---|
+| 1 | Evidência e fronteira editorial | Médio | Participantes e amostra de mudanças | Sem fricção material: ir ao fallback mínimo |
+| 2 | Porta de entrada e jornadas prioritárias | Médio | Baseline e classificação inicial | Não publicar conteúdo sensível ou sem fonte canônica |
+| 3 | Comunicação pública de versões | Pequeno a médio | Regra de elegibilidade e aprovação | Sem responsável/gate: manter processo mínimo explícito |
+| 4 | Validação e manutenção | Médio e recorrente | Blocos 2 e 3 | Sem melhora ou capacidade de manutenção: não expandir |
 
-**Objetivo:** transformar o relato inicial em evidência de comportamento e
-fixar a unidade de decisão.
+“Esforço relativo” serve apenas para ordenar investimento; estimativa técnica e
+capacidade são decisões de etapas posteriores.
 
-**Escopo:**
+## Bloco 1 — Evidência e fronteira editorial
 
-- confirmar público primário e três trabalhos prioritários;
-- recrutar ao menos cinco representantes;
-- medir sucesso sem ajuda, tempo, abandono e dúvidas;
-- auditar dez mudanças candidatas a comunicação pública e esforço editorial;
-- registrar indicadores disponíveis e limitações.
+**Objetivo:** provar onde o público falha e estabelecer o que pode ser público
+antes de mover ou reescrever conteúdo.
 
-**Definição de pronto:** baseline reproduzível, tarefas e participantes
-registrados, regra preliminar de elegibilidade de release e decisão entre
-prosseguir, limitar ao README ou recusar.
+**Resultados esperados:**
 
-**Fora de escopo:** analytics novo, pesquisa ampla de marca ou desenho técnico.
+- baseline das três tarefas com pelo menos cinco representantes;
+- auditoria de dez mudanças candidatas a comunicação;
+- inventário priorizado com audiência, sensibilidade, fonte canônica,
+  responsável, gatilho de atualização e destino proposto;
+- classificação público/interno/misto segundo a finalidade confirmada;
+- lista de erros críticos e lacunas da jornada que precisam de correção.
 
-## Épico: Porta de entrada e primeiro sucesso
+**Critérios de conclusão:**
 
-**Objetivo:** permitir que o público primário entenda e experimente o produto sem
-consultar o código ou pedir ajuda.
+- sucesso sem ajuda, tempo, dúvidas, abandono e consulta ao código registrados
+  por tarefa;
+- participantes incluem representantes do público primário;
+- dez mudanças classificadas por elegibilidade, prazo e qualidade da mensagem;
+- nenhum conteúdo misto é publicizado sem decisão explícita;
+- agente reviewer valida o recorte público.
 
-**Escopo:**
+**Fallback:** se o baseline não revelar fricção material, seguir apenas com
+README/material da apresentação, correções críticas e regra mínima de release.
 
-- proposta de valor, público, capacidades, limites e pré-requisitos;
-- README como índice das jornadas prioritárias;
-- caminho local testado do zero como primeira opção e container como alternativa
-  suportada;
-- configuração e exemplo necessários para a avaliação inicial;
-- correção de contradições críticas encontradas no teste.
+**Fora de escopo:** produzir arquitetura de informação definitiva ou escolher
+ferramenta.
 
-**Definição de pronto:** os três trabalhos são executáveis apenas com conteúdo
-público, comandos foram testados em ambiente limpo e o pós-teste registra
-sucesso e tempo comparáveis ao baseline.
+## Bloco 2 — Porta de entrada e jornadas prioritárias
 
-**Fora de escopo:** escolher portal, gerador, hospedagem ou traduzir conteúdo.
+**Objetivo:** permitir avaliação e primeira execução sem ajuda, código ou
+conhecimento da estrutura interna do repositório.
 
-## Épico: Inventário e fontes canônicas
+**Resultados esperados:**
 
-**Objetivo:** reduzir ambiguidade e manutenção acidental sem reescrever conteúdo
-que não participa das jornadas prioritárias.
+- narrativa concisa de problema, valor, capacidades, limites e pré-requisitos;
+- README atuando como porta de entrada para conteúdo canônico;
+- jornada de primeira execução local apresentada primeiro;
+- container apresentado como alternativa oficialmente suportada;
+- configuração e exemplos localizáveis a partir da porta de entrada;
+- conteúdo duplicado removido ou apontado para uma única fonte canônica;
+- instruções críticas validadas nos modos suportados que forem tocados.
 
-**Escopo:**
+**Critérios de conclusão:**
 
-- inventariar cada documento por público, trabalho, sensibilidade, estado,
-  responsável e fonte canônica;
-- definir destino para duplicações e conteúdo obsoleto;
-- separar conteúdo público de memória de produto/engenharia por política de
-  audiência, não apenas pelo caminho `doc/`;
-- garantir navegação e indicar conteúdo substituído.
+- os três caminhos podem ser executados de ponta a ponta por revisão;
+- nenhum caminho exige navegar por documentação interna de issues/desenvolvimento;
+- nenhum erro crítico de segurança, compatibilidade ou pré-requisito permanece;
+- cada página priorizada informa ou possui registro de responsável e gatilho de
+  atualização;
+- agente reviewer aprova clareza, consistência e fronteira pública.
 
-**Definição de pronto:** todo conteúdo em escopo tem público, finalidade,
-responsável e fonte canônica; não há link público apontando inadvertidamente
-para conteúdo classificado como interno.
+**Fora de escopo:** reescrita total, tradução, portal, identidade visual ampla,
+SEO ou escolha de tecnologia.
 
-**Fora de escopo:** uniformização total de documentos internos ou migração
-tecnológica.
+## Bloco 3 — Comunicação pública de versões
 
-## Épico: Comunicação e operação de releases
+**Objetivo:** comunicar mudanças elegíveis no mesmo dia da versão, em linguagem
+útil para usuários e avaliadores.
 
-**Objetivo:** tornar mudanças relevantes compreensíveis e publicáveis de forma
-consistente.
+**Resultados esperados:**
 
-**Escopo:**
+- definição de versão/mudança elegível para comunicação pública;
+- texto curado por versão com melhoria criada, benefício, impacto,
+  compatibilidade e ação necessária;
+- ausência de referências a issues, épicos, stories e detalhes internos;
+- fonte canônica pública e ligação previsível a partir da porta de entrada;
+- fluxo interno mínimo com gatilho, autor, agente reviewer, prazo e definição de
+  pronto.
 
-- definir se o gatilho é merge elegível ou release versionada;
-- considerar elegíveis versões com épico ou incidente de impacto público,
-  conforme confirmação do dono;
-- formato público centrado em benefício, impacto, compatibilidade, ação
-  necessária, data e versão;
-- manual interno com entradas, responsável, aprovação, prazo e definição de
-  pronto;
-- relação inequívoca entre changelog consolidado, notas detalhadas e materiais
-  internos.
+**Critérios de conclusão:**
 
-**Definição de pronto:** regra aplicada à amostra de dez mudanças sem ambiguidade
-e 100% das versões elegíveis do piloto têm nota e checklist completos no prazo
-acordado.
+- 100% das versões elegíveis da amostra possuem nota no mesmo dia;
+- as notas auditadas permitem entender impacto e ação sem consultar artefatos
+  internos;
+- responsáveis e exceções estão explícitos;
+- conteúdo automático, se usado como insumo, passa por curadoria antes da
+  publicação.
 
-**Fora de escopo:** publicar cada commit, automatizar arquitetura de release ou
-expor detalhes internos de incidentes.
+**Fora de escopo:** definir pipeline, automação ou plataforma de release.
 
-## Épico: Validação final e manutenção
+## Bloco 4 — Validação e manutenção
 
-**Objetivo:** demonstrar retorno e sustentar a qualidade após a entrega.
+**Objetivo:** demonstrar retorno comportamental e impedir que a nova organização
+se degrade após a apresentação.
 
-**Escopo:**
+**Resultados esperados:**
 
-- repetir com representantes as mesmas tarefas do baseline;
-- comparar sucesso, tempo, dúvidas e erros;
-- medir completude e prazo das comunicações elegíveis;
-- definir responsável, gatilho de revisão e tratamento de obsolescência;
-- registrar decisão de expandir, manter, corrigir ou interromper.
+- pós-teste com participantes e tarefas comparáveis ao baseline;
+- comparação de sucesso sem ajuda e tempo mediano;
+- registro de dúvidas, erros e consultas ao código;
+- verificação de prazo das comunicações elegíveis;
+- rotina mínima de revisão de conteúdo e tratamento de conteúdo sem dono;
+- decisão documentada de manter, ajustar, expandir ou interromper.
 
-**Definição de pronto:** resultado antes/depois publicado, nenhum erro crítico no
-caminho recomendado, responsáveis aceitos e decisão de continuidade baseada em
-evidência.
+**Critérios de aprovação do resultado:**
 
-**Fora de escopo:** declarar ganho financeiro sem dados ou expandir tipos/canais
-por preferência.
+- pelo menos 4 de 5 participantes concluem as três tarefas sem ajuda e sem
+  consultar o código;
+- sucesso aumenta e tempo mediano diminui, ou não há regressão quando o baseline
+  já estiver no teto;
+- nenhum erro crítico nos caminhos prioritários;
+- 100% das versões elegíveis comunicadas no mesmo dia;
+- conteúdo público priorizado possui fonte canônica e responsável;
+- expansão só ocorre se houver capacidade explícita de manutenção.
 
-## Sequenciamento e corte de prazo
+**Fora de escopo:** atribuir causalidade a adoção ou retorno financeiro sem
+telemetria apropriada.
 
-O corte para 31/08 deve abranger, no máximo, baseline enxuto, porta de entrada,
-primeiro sucesso e regra mínima de release. Inventário completo e expansão só
-entram no mesmo prazo se a capacidade confirmada comportar. Caso contrário,
-são posteriores; o prazo não justifica omitir teste, segurança ou responsável.
+## Sequenciamento mínimo para o prazo
 
-A issue #93 é o custo de oportunidade declarado. Se a capacidade disponível não
-cobrir ao menos os dois primeiros blocos e a manutenção, a recomendação é
-limitar a entrega ao README e ao material da apresentação, em vez de iniciar uma
-reorganização ampla incompleta.
+Até 31/08, priorizar na ordem:
+
+1. baseline e inventário apenas do conteúdo necessário às três tarefas;
+2. README/narrativa e correções críticas dos caminhos prioritários;
+3. regra e modelo mínimo de comunicação pública de versão;
+4. pós-teste e decisão de continuidade.
+
+Itens não essenciais não entram silenciosamente para cumprir uma “reorganização
+completa”. Se a capacidade for insuficiente, o resultado mínimo permanece
+publicável e mensurável, e o restante volta para decisão de prioridade após a
+apresentação.
