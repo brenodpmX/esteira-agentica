@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timezone, timedelta
+from enum import Enum
 from pathlib import Path
 
 from src.core.agent import AgentPort, AgentParams
@@ -22,11 +23,96 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\].*?(?:\x07|\x1b\\)|\x1b[@-Z\\-
 # UUID de sessão do kiro-cli (formato canônico 8-4-4-4-12).
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
+# request_id / Request ID do bloco de erro estruturado do kiro-cli. A vírgula e
+# o espaço ficam fora da captura porque o padrão real é
+# "request_id: <id>,\n      error: dispatch failure ...".
+_REQUEST_ID = re.compile(
+    r"request[_ ]?id\s*[:=]\s*([0-9A-Za-z][0-9A-Za-z._-]*)", re.IGNORECASE
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Política fail-closed para abort transitório do kiro-cli
+# ══════════════════════════════════════════════════════════════════════════════
+# Definição normativa: doc/architecture/retry-kiro-cli/idempotencia.md
+# (ADR aceita na resolução do débito #217; implementação na issue #208).
+#
+# O kiro-cli aborta o turno no meio (`dispatch failure`, `InternalServerError`)
+# sem rollback — bug upstream kirodotdev/Kiro#6065, fechado como "not planned".
+# O abort pode ocorrer DEPOIS de o agente já ter feito `git commit`, `git push`
+# ou movido os arquivos da issue de coluna (evidência: execução de #175 no
+# incidente #203). Nem o output parcial nem o `--resume-id` provam ausência de
+# efeitos: o stream pode quebrar entre o efeito e a recepção do evento.
+#
+# Logo, esses resultados são AMBÍGUOS e a política é fail-closed: uma única
+# invocação do subprocesso por entrega, evidência preservada, nenhum
+# retry/backoff inline. A reentrega ocorre pelo loop normal, depois da
+# reconciliação de filesystem/git/board e respeitando `rerun_cooldown`.
+
+# Invocações do `kiro-cli chat` permitidas por entrega ao agente.
+_MAX_INVOCATIONS = 1
+
+# Saída sintética do adapter quando o binário não está no PATH.
+_KIRO_NOT_FOUND = "[ERRO] kiro-cli não encontrado no PATH"
+
+
+class Outcome(str, Enum):
+    """Estado terminal de uma execução do agente (ADR, seção 5).
+
+    - ``SUCCEEDED``: execução concluída sem falha detectada.
+    - ``DEFINITE_NOT_STARTED``: há evidência positiva e estruturada de que o
+      subprocesso não chegou a executar. Único estado que admitiria retry.
+    - ``UNKNOWN_OUTCOME``: resultado ambíguo (`dispatch failure`,
+      `InternalServerError`, timeout ou qualquer falha sem prova de
+      não-inicialização). Encerra a entrega sem retry inline.
+    """
+
+    SUCCEEDED = "SUCCEEDED"
+    DEFINITE_NOT_STARTED = "DEFINITE_NOT_STARTED"
+    UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
+
+
+class SingleInvocationViolation(RuntimeError):
+    """Tentativa de invocar o kiro-cli mais de uma vez na mesma entrega."""
+
+
+class _DeliveryBudget:
+    """Orçamento de invocações do `kiro-cli chat` em uma entrega ao agente.
+
+    Existe para que a política deixe de ser "ausência de código de retry" e
+    passe a ser uma restrição explícita: se alguém reintroduzir retry/backoff
+    dentro de `_run` — por exemplo lendo apenas o título histórico da issue
+    #208 —, a segunda invocação falha alto em vez de duplicar silenciosamente
+    um commit, um push ou uma movimentação de coluna já aplicados.
+    """
+
+    max_calls = _MAX_INVOCATIONS
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def spend(self) -> None:
+        if self.calls >= self.max_calls:
+            raise SingleInvocationViolation(
+                "política fail-closed: o kiro-cli pode ser invocado apenas "
+                f"{self.max_calls}x por entrega — retry/backoff inline é "
+                "proibido porque o abort pode ter ocorrido após efeitos "
+                "colaterais já aplicados (ver "
+                "doc/architecture/retry-kiro-cli/idempotencia.md)"
+            )
+        self.calls += 1
+
 
 class KiroCliAgent(AgentPort):
     """Adapter de agente para kiro-cli."""
 
+    def __init__(self) -> None:
+        # Evidência da última entrega, para observabilidade e continuidade.
+        self._last_session_id: str | None = None
+        self._invocations = 0
+
     def execute(self, params: AgentParams) -> None:
+        self._last_session_id = None
+        self._invocations = 0
         log_path = self._create_log(params)
         title_part = f" {params.title}" if params.title else ""
         col_part = f" [{params.col_name}]" if params.col_name else ""
@@ -44,18 +130,28 @@ class KiroCliAgent(AgentPort):
             # modelo/servidor voltam como texto no output com exit 0. Sem esta
             # análise, uma execução quebrada era logada como "concluída".
             error = self._detect_failure(output, returncode)
+            outcome = self._classify(output, returncode, error)
+            request_id = self._extract_request_id(output)
+            marker = self._ambiguous_marker(output) if error else None
+            self._append_outcome(log_path, outcome, returncode, request_id,
+                                 error, marker)
             if error:
                 log.error("Kiro", f"[{params.board_id}] #{params.issue_id} "
-                          f"falhou: {error}", log=str(log_path))
+                          f"falhou: {error}", log=str(log_path),
+                          **self._evidence(outcome, request_id, marker))
             else:
                 log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "
                          f"execução concluída: {self._last_meaningful_line(output)}",
                          log=str(log_path))
         except Exception as e:
+            # Exceção antes da invocação prova não-inicialização; depois dela, o
+            # resultado é ambíguo (o subprocesso pode ter aplicado efeitos).
+            outcome = (Outcome.DEFINITE_NOT_STARTED if self._invocations == 0
+                       else Outcome.UNKNOWN_OUTCOME)
             self._append_log(log_path, f"\n**ERRO**: {e}\n")
             log.error("Kiro", f"[{params.board_id}] #{params.issue_id} "
                       f"erro: {self._last_meaningful_line(str(e))}",
-                      log=str(log_path))
+                      log=str(log_path), **self._evidence(outcome, None))
             raise
 
     def _run(self, params: AgentParams, work_dir: Path) -> tuple[str, int | None]:
@@ -73,6 +169,13 @@ class KiroCliAgent(AgentPort):
         recupera o raciocínio da execução anterior). Após executar, captura o id
         da sessão (mais recente do cwd) e grava no índice. A esteira não gerencia
         o ciclo de vida das sessões — o kiro-cli cuida disso.
+
+        Política fail-closed (ADR doc/architecture/retry-kiro-cli/idempotencia.md):
+        o subprocesso é invocado no máximo `_MAX_INVOCATIONS` vez por entrega.
+        Não há retry nem backoff aqui — um abort transitório pode ter ocorrido
+        depois de efeitos já aplicados (commit, push, movimentação de coluna) e
+        reexecutar duplicaria esses efeitos. A nova tentativa é responsabilidade
+        do loop, após reconciliar filesystem/git/board.
         """
         # Sem cor nos logs do kiro-cli (facilita parsing/limpeza).
         # KIRO_HOME: aponta o kiro-cli para o diretório .kiro da esteira.
@@ -108,12 +211,17 @@ class KiroCliAgent(AgentPort):
         known_id = index.get(params.board_id, params.issue_id, params.agent_id)
         if known_id and self._session_exists(known_id, work_dir, env):
             cmd += ["--resume-id", known_id]
+            self._last_session_id = known_id
             log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "
                      f"retomando sessão {known_id}",
                      session_id=known_id, agent=params.agent_id)
 
         cmd.append(self._compose_input(params))
 
+        # Uma única invocação por entrega — sem retry/backoff inline.
+        budget = _DeliveryBudget()
+        budget.spend()
+        self._invocations = budget.calls
         try:
             result = subprocess.run(
                 cmd,
@@ -124,21 +232,38 @@ class KiroCliAgent(AgentPort):
                 env=env,
             )
         except subprocess.TimeoutExpired:
+            # Timeout é UNKNOWN_OUTCOME: o processo pode ter produzido efeitos
+            # antes de exceder o limite. A sessão é capturada para que a
+            # reentrega pelo loop retome o raciocínio de onde parou.
+            self._capture_session(index, params, work_dir, env)
             return f"[TIMEOUT] Agente excedeu {_TIMEOUT}s", None
         except FileNotFoundError:
-            return "[ERRO] kiro-cli não encontrado no PATH", None
+            # kiro-cli ausente do PATH: evidência positiva de não-inicialização.
+            # Nada executou, então não há sessão nova a capturar.
+            return _KIRO_NOT_FOUND, None
 
         # Captura o id da sessão recém-usada (mais recente do cwd) e persiste.
         # O loop da esteira é sequencial, então a sessão do topo é a desta
         # execução (mesma quando retomada por id, nova quando criada agora).
-        current_id = self._latest_session_id(work_dir, env)
-        if current_id:
-            index.set(params.board_id, params.issue_id, params.agent_id, current_id)
+        self._capture_session(index, params, work_dir, env)
 
         output = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0:
             output += f"\n[exit-code: {result.returncode}]"
         return output, result.returncode
+
+    def _capture_session(self, index: SessionIndex, params: AgentParams,
+                         work_dir: Path, env: dict) -> None:
+        """Persiste o session_id da execução recém-encerrada, se houver.
+
+        Roda independentemente do resultado (sucesso, abort ou timeout): a
+        continuidade do raciocínio é justamente o que permite a reentrega
+        posterior retomar com `--resume-id`.
+        """
+        current_id = self._latest_session_id(work_dir, env)
+        if current_id:
+            self._last_session_id = current_id
+            index.set(params.board_id, params.issue_id, params.agent_id, current_id)
 
     def _list_session_ids(self, work_dir: Path, env: dict) -> list[str]:
         """Lista os session_ids do cwd (mais recente primeiro) via kiro-cli."""
@@ -224,6 +349,22 @@ class KiroCliAgent(AgentPort):
     # processo encerrar.
     _TAIL_LINES = 30
 
+    # Marcadores de abort **ambíguo** do kiro-cli: o turno quebrou no meio, sem
+    # rollback. Não provam que nada executou — pelo contrário, na evidência de
+    # #175 o commit e o push já haviam sido aplicados quando o abort ocorreu.
+    _AMBIGUOUS_MARKERS = (
+        "dispatch failure",
+        "InternalServerError",
+        "[TIMEOUT]",
+    )
+
+    # Evidência positiva e estruturada de que o subprocesso não chegou a rodar.
+    # Só isso autoriza DEFINITE_NOT_STARTED (ADR, seção 5): ausência de tool
+    # call em output parcial não é evidência.
+    _NOT_STARTED_MARKERS = (
+        _KIRO_NOT_FOUND,
+    )
+
     def _detect_failure(self, output: str, returncode: int | None = None) -> str | None:
         """Detecta falha na execução do kiro-cli usando canais estruturados.
 
@@ -292,6 +433,99 @@ class KiroCliAgent(AgentPort):
             relevant = all_lines[-3:]
 
         return " | ".join(relevant) if relevant else None
+
+    # ── Classificação do resultado (ADR retry-kiro-cli/idempotencia.md) ──────
+
+    def _classify(self, output: str, returncode: int | None,
+                  error: str | None) -> Outcome:
+        """Classifica o resultado da execução na máquina de estados da ADR.
+
+        - Sem falha detectada → ``SUCCEEDED``.
+        - Falha com evidência positiva de não-inicialização →
+          ``DEFINITE_NOT_STARTED`` (único estado que admitiria retry).
+        - Qualquer outra falha → ``UNKNOWN_OUTCOME`` (fail-closed). Inclui
+          `dispatch failure`, `InternalServerError` e timeout: o abort ocorre no
+          meio do turno, sem rollback, e o output parcial não prova ausência de
+          efeitos porque o stream pode quebrar entre o efeito e a recepção do
+          evento.
+
+        O default ambíguo é deliberado: classificar como "não executou" sem
+        prova permitiria retry sobre um turno que já fez commit/push.
+        """
+        if not error:
+            return Outcome.SUCCEEDED
+        clean = self._strip_ansi(output)
+        if any(marker in clean for marker in self._NOT_STARTED_MARKERS):
+            return Outcome.DEFINITE_NOT_STARTED
+        return Outcome.UNKNOWN_OUTCOME
+
+    def _ambiguous_marker(self, output: str) -> str | None:
+        """Retorna o marcador de abort ambíguo presente no output, se houver.
+
+        Serve à observabilidade: nomeia no log qual dos aborts conhecidos de
+        #203 ocorreu, sem alterar a classificação (que já é ambígua por
+        default).
+        """
+        clean = self._strip_ansi(output).lower()
+        for marker in self._AMBIGUOUS_MARKERS:
+            if marker.lower() in clean:
+                return marker
+        return None
+
+    def _extract_request_id(self, output: str) -> str | None:
+        """Extrai o request ID do bloco de erro estruturado do kiro-cli.
+
+        Cobre `request_id: <id>` (abort de dispatch) e `Request ID: <id>`
+        (erro de servidor). É a chave para correlacionar o abort com o upstream.
+        """
+        match = _REQUEST_ID.search(self._strip_ansi(output))
+        return match.group(1) if match else None
+
+    def _evidence(self, outcome: Outcome, request_id: str | None,
+                  marker: str | None = None) -> dict:
+        """Extras de log com a evidência da entrega (omite campos ausentes)."""
+        extra = {"outcome": outcome.value, "invocations": self._invocations}
+        if request_id:
+            extra["request_id"] = request_id
+        if marker:
+            extra["marker"] = marker
+        if self._last_session_id:
+            extra["session_id"] = self._last_session_id
+        return extra
+
+    def _append_outcome(self, log_path: Path, outcome: Outcome,
+                        returncode: int | None, request_id: str | None,
+                        error: str | None, marker: str | None = None) -> None:
+        """Registra o bloco de resultado no log de execução (auditoria).
+
+        O output integral já foi gravado antes; este bloco é o resumo
+        estruturado que permite auditar o turno abortado sem reler o chat.
+        """
+        lines = [
+            "", "---", "", "## Resultado", "",
+            f"- **classificação**: {outcome.value}",
+            f"- **invocações do kiro-cli**: {self._invocations}",
+            f"- **exit-code**: "
+            f"{returncode if returncode is not None else '(não finalizou)'}",
+        ]
+        if request_id:
+            lines.append(f"- **request_id**: {request_id}")
+        if self._last_session_id:
+            lines.append(f"- **session_id**: {self._last_session_id}")
+        if marker:
+            lines.append(f"- **marcador**: {marker}")
+        if error:
+            lines.append(f"- **erro**: {error}")
+        if outcome is Outcome.UNKNOWN_OUTCOME:
+            lines += [
+                "",
+                "> Resultado ambíguo: o turno pode ter aplicado efeitos "
+                "(commit, push, movimentação de coluna) antes do abort. Sem "
+                "retry inline — a reentrega ocorre pelo loop normal, após a "
+                "reconciliação e respeitando `rerun_cooldown`, retomando a "
+                "sessão quando ela existir.",
+            ]
+        self._append_log(log_path, "\n".join(lines) + "\n")
 
     def _append_log(self, log_path: Path, content: str) -> None:
         """Adiciona conteúdo ao final do log."""
