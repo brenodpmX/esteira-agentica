@@ -1,0 +1,193 @@
+<!--
+# Protótipo — Circuit-break de agente / Log de bloqueio
+
+Status: draft
+Owner: ux
+Last updated: 2026-08-25
+
+Inputs:
+- doc/requirements/circuit-break-de-agente/functional-requirements.md (RF-001, RF-003, RF-005, RF-008)
+- doc/requirements/circuit-break-de-agente/non-functional-requirements.md (NFR-003)
+- doc/ux/circuit-break-de-agente/navigation-flow.md (tela 3)
+- src/core/log.py (formato: "HH:MM:SS [Modulo] mensagem" no terminal;
+  "YYYY-MM-DD HH:MM:SS - NIVEL - Modulo - mensagem | extras" no arquivo diário)
+- src/__main__.py (linha existente do KeepTask usada como vizinha na copy)
+
+Decisões de UX:
+- Módulo próprio 'CircuitBreak' no log, para o operador filtrar por esse nome
+  sem confundir com as linhas de KeepTask e Sync.
+- Formato "5/5 execuções em 1h" repete limite e janela na própria linha: quem lê
+  log não tem o pipe.yml aberto ao lado.
+- A linha diz o que a esteira fez (bloqueou, marcou) e o que não fez (não parou
+  o restante) sem depender de cor: cor é redundante com o nível WARNING escrito
+  no arquivo.
+- Não são citados caminhos de estado interno protegidos; o caminho oferecido é
+  logs/<issue>/, artefato público de execução.
+
+Dúvidas:
+- Emitir a linha informativa de franquia quase esgotada (4/5)? Proposta: sim, só
+  em log, sem comentário na issue.
+- A linha informativa deve sair em toda execução contada ou apenas na última
+  antes do limite? Proposta: apenas na última.
+-->
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Protótipo — Log de bloqueio por circuit-break</title>
+  <style>
+    body {
+      font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+      color: #1f2328;
+      background: #ffffff;
+      line-height: 1.5;
+      margin: 0;
+      padding: 24px;
+    }
+    main { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; border-bottom: 1px solid #d1d9e0; padding-bottom: 8px; }
+    h2 { font-size: 1.15rem; margin-top: 40px; }
+    h3 { font-size: 1rem; margin-bottom: 6px; }
+    .nota {
+      background: #fff8c5;
+      border: 1px solid #d4a72c;
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-size: 0.9rem;
+    }
+    .terminal {
+      background: #0d1117;
+      color: #e6edf3;
+      border-radius: 6px;
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+    .terminal .mod { color: #e6edf3; font-weight: 700; }
+    .terminal .warn { color: #f0c674; font-weight: 700; }
+    .terminal .err { color: #ff9492; font-weight: 700; }
+    .terminal .dim { color: #9198a1; }
+    .arquivo {
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 16px 0;
+    }
+    .arquivo-nome {
+      background: #f6f8fa;
+      border-bottom: 1px solid #d1d9e0;
+      padding: 8px 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      margin: 0;
+    }
+    pre {
+      margin: 0;
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.82rem;
+      overflow-x: auto;
+    }
+    code {
+      background: #f0f1f3;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9em;
+    }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.9rem; }
+    caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
+    th, td { border: 1px solid #d1d9e0; padding: 6px 10px; text-align: left; vertical-align: top; }
+    th { background: #f6f8fa; }
+  </style>
+</head>
+<body>
+<main>
+
+  <h1>Protótipo — Log de bloqueio por circuit-break</h1>
+
+  <p class="nota">
+    <strong>Draft para validação.</strong> Os valores <code>5</code> e
+    <code>1h</code> são exemplo de preenchimento pelo operador. O formato das
+    linhas respeita o log atual da esteira: no terminal
+    <code>HH:MM:SS [Modulo] mensagem</code>, no arquivo diário
+    <code>data hora - NÍVEL - Modulo - mensagem</code>.
+  </p>
+
+  <!-- Tela 3: log -->
+  <h2>Tela 3a — franquia consumindo (informativo, antes do bloqueio)</h2>
+
+  <div class="terminal" role="img" aria-label="Terminal mostrando a linha informativa de franquia quase esgotada">23:57:12 <span class="mod">[KeepTask]</span> [epic] #175 selecionada em 'ux'
+23:57:12 <span class="mod">[CircuitBreak]</span> [epic] #175 em 'ux': 5/5 execuções na janela de 1h — última antes do bloqueio</div>
+
+  <h2>Tela 3b — bloqueio acionado</h2>
+
+  <div class="terminal" role="img" aria-label="Terminal mostrando a linha de bloqueio acionado">00:12:03 <span class="warn">[CircuitBreak]</span> [epic] #175 em 'ux': limite de 5 execuções em 1h atingido — execução bloqueada, need_human aplicado
+00:12:03 <span class="warn">[CircuitBreak]</span> [epic] #175 franquia reiniciada; remova need_human para liberar (diagnóstico em logs/175/)
+00:12:03 <span class="mod">[KeepTask]</span> [story] #182 selecionada em 'desenvolvimento'</div>
+
+  <p>
+    A terceira linha é deliberada no protótipo: mostra outro board sendo
+    selecionado no mesmo instante. É a evidência, no próprio log, de que o
+    bloqueio é local (RF-008) — o operador não precisa inferir isso.
+  </p>
+
+  <h2>Tela 3c — falha ao sinalizar</h2>
+
+  <div class="terminal" role="img" aria-label="Terminal mostrando falha ao publicar a sinalização do bloqueio">00:12:03 <span class="warn">[CircuitBreak]</span> [epic] #175 em 'ux': limite de 5 execuções em 1h atingido — execução bloqueada, need_human aplicado
+00:12:04 <span class="err">[CircuitBreak]</span> [epic] #175 falha ao publicar o comentário de bloqueio — need_human aplicado; nova tentativa no próximo ciclo</div>
+
+  <p>
+    A copy separa o que valeu do que falhou: a execução <em>não</em> aconteceu
+    (contenção preservada) e a marcação foi aplicada (sinal mínimo preservado);
+    apenas o detalhamento faltou.
+  </p>
+
+  <h2>Arquivo diário</h2>
+
+  <div class="arquivo">
+    <p class="arquivo-nome">logs/2026-08-25.json</p>
+<pre>2026-08-25 00:12:03 - WARNING - CircuitBreak - [epic] #175 em 'ux': limite de 5 execuções em 1h atingido — execução bloqueada, need_human aplicado | {'board': 'epic', 'column': 'ux', 'issue': 175, 'executions': 5, 'limit': 5, 'window': 3600}
+2026-08-25 00:12:03 - WARNING - CircuitBreak - [epic] #175 franquia reiniciada; remova need_human para liberar (diagnóstico em logs/175/)</pre>
+  </div>
+
+  <table>
+    <caption>Estados da tela 3</caption>
+    <thead>
+      <tr><th scope="col">Estado</th><th scope="col">O que o operador vê</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Política não configurada</td>
+        <td>Nenhuma linha <code>[CircuitBreak]</code>. O log fica idêntico ao de hoje.</td>
+      </tr>
+      <tr>
+        <td>Contando, longe do limite</td>
+        <td>Nenhuma linha — evita ruído em operação saudável.</td>
+      </tr>
+      <tr>
+        <td>Última execução da franquia</td>
+        <td>Linha informativa (tela 3a).</td>
+      </tr>
+      <tr>
+        <td>Bloqueio</td>
+        <td>Duas linhas de aviso (tela 3b): o que foi contido e o que fazer.</td>
+      </tr>
+      <tr>
+        <td>Issue já marcada com <code>need_human</code></td>
+        <td>Nenhuma linha nova. A issue é pulada pelo gate existente; o aviso não se repete a cada ciclo.</td>
+      </tr>
+      <tr>
+        <td>Falha ao sinalizar</td>
+        <td>Linha de erro (tela 3c), sem perder a contenção.</td>
+      </tr>
+    </tbody>
+  </table>
+
+</main>
+</body>
+</html>

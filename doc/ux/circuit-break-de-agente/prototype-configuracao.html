@@ -1,0 +1,188 @@
+<!--
+# Protótipo — Circuit-break de agente / Configuração e erro de arranque
+
+Status: draft
+Owner: ux
+Last updated: 2026-08-25
+
+Inputs:
+- doc/requirements/circuit-break-de-agente/functional-requirements.md (RF-003, RF-004, RF-006)
+- doc/requirements/circuit-break-de-agente/business-rules.md (RN-007, RN-008)
+- doc/requirements/circuit-break-de-agente/glossary.md
+- doc/ux/circuit-break-de-agente/navigation-flow.md (telas 1 e 2)
+- src/core/config.py (_validate_boards, padrão de mensagem de rerun_cooldown)
+
+Decisões de UX:
+- O bloco fica dentro de 'boards', irmão de 'rerun_cooldown': é onde o operador
+  já procura política de seleção de tarefas, e a política é geral para a
+  instância (RN-008), não por board.
+- Chave nomeada por efeito ('circuit_break') e campos nomeados pelo que medem
+  ('executions', 'window'), evitando 'max'/'cota' — 'cota' está reservada ao
+  épico #177 pelo glossário.
+- Nenhum valor é sugerido no exemplo comentado do pipe.yml de referência nem na
+  mensagem de erro: o dono decidiu não ter padrão.
+- Mensagem de erro segue o padrão já existente ("<chave>: deve ser ..."), cita a
+  unidade e diz o que foi recebido.
+
+Dúvidas:
+- Confirmar nome/forma da chave e a unidade da janela: segundos (coerente com
+  sleep e rerun_cooldown) ou string legível ('2h')?
+- Par incompleto: falhar no arranque (proposta) ou avisar e manter inativa?
+-->
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Protótipo — Configuração do circuit-break e erro de arranque</title>
+  <style>
+    body {
+      font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+      color: #1f2328;
+      background: #ffffff;
+      line-height: 1.5;
+      margin: 0;
+      padding: 24px;
+    }
+    main { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; border-bottom: 1px solid #d1d9e0; padding-bottom: 8px; }
+    h2 { font-size: 1.15rem; margin-top: 40px; }
+    h3 { font-size: 1rem; margin-bottom: 6px; }
+    .nota {
+      background: #fff8c5;
+      border: 1px solid #d4a72c;
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-size: 0.9rem;
+    }
+    .arquivo {
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .arquivo-nome {
+      background: #f6f8fa;
+      border-bottom: 1px solid #d1d9e0;
+      padding: 8px 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      margin: 0;
+    }
+    pre {
+      margin: 0;
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      overflow-x: auto;
+      background: #ffffff;
+    }
+    .terminal {
+      background: #0d1117;
+      color: #e6edf3;
+      border-radius: 6px;
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+    .terminal .erro { color: #ff9492; font-weight: 700; }
+    .destaque { background: #ddf4e4; display: block; }
+    code {
+      background: #f0f1f3;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9em;
+    }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.9rem; }
+    caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
+    th, td { border: 1px solid #d1d9e0; padding: 6px 10px; text-align: left; vertical-align: top; }
+    th { background: #f6f8fa; }
+  </style>
+</head>
+<body>
+<main>
+
+  <h1>Protótipo — Configuração do circuit-break e erro de arranque</h1>
+
+  <p class="nota">
+    <strong>Draft para validação.</strong> O nome da chave, o nome dos campos e a
+    unidade da janela são <em>proposta</em> de UX, pendentes de confirmação. Os
+    números <code>5</code> e <code>3600</code> são exemplo de preenchimento pelo
+    operador — não há valor padrão.
+  </p>
+
+  <!-- Tela 1: configuração -->
+  <h2>Tela 1 — política configurada (opt-in)</h2>
+
+  <div class="arquivo">
+    <p class="arquivo-nome">pipe.yml</p>
+<pre>sleep: 60
+
+boards:
+  platform: github
+  rerun_cooldown: 300        # já existente: espaça reexecuções
+<span class="destaque">  circuit_break:             # opcional: contém reexecução repetida
+    executions: 5            # limite de execuções por issue, board e coluna
+    window: 3600             # janela, em segundos</span>
+
+  backlog:
+    name: Backlog
+    ...</pre>
+  </div>
+
+  <table>
+    <caption>Leitura da política pelo operador</caption>
+    <thead>
+      <tr><th scope="col">Estado do <code>pipe.yml</code></th><th scope="col">Comportamento</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Bloco <code>circuit_break</code> ausente</td>
+        <td>Nenhum bloqueio por este mecanismo; comportamento vigente preservado,
+            inclusive <code>rerun_cooldown</code>. Sem aviso no arranque — a
+            ausência é legítima.</td>
+      </tr>
+      <tr>
+        <td><code>executions</code> e <code>window</code> presentes e válidos</td>
+        <td>Política ativa para toda a instância (não há política por board,
+            coluna ou agente nesta versão).</td>
+      </tr>
+      <tr>
+        <td>Apenas um dos dois campos presente</td>
+        <td>Arranque falha com mensagem explícita (ver tela 2). Um limite sem
+            janela — ou o inverso — não descreve política nenhuma, e ativá-la pela
+            metade produziria bloqueio imprevisível.</td>
+      </tr>
+      <tr>
+        <td>Valor não inteiro, zero ou negativo</td>
+        <td>Arranque falha com mensagem explícita citando a chave, o tipo e a
+            unidade.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Tela 2: erro de arranque -->
+  <h2>Tela 2 — erro de configuração no arranque</h2>
+
+  <h3>Par incompleto</h3>
+  <div class="terminal" role="img" aria-label="Saída do terminal mostrando erro de configuração por par incompleto">00:12:03 [Config] validando pipe.yml
+<span class="erro">ERRO de configuração:</span> boards.circuit_break: exige 'executions' e 'window' juntos (recebido apenas 'executions'). Remova o bloco para desativar a política.</div>
+
+  <h3>Valor inválido</h3>
+  <div class="terminal" role="img" aria-label="Saída do terminal mostrando erro de configuração por valor inválido">00:12:03 [Config] validando pipe.yml
+<span class="erro">ERRO de configuração:</span> boards.circuit_break.window: deve ser inteiro >= 1 (segundos)</div>
+
+  <p>
+    Ambas as mensagens seguem o padrão já usado por
+    <code>boards.rerun_cooldown</code> em <code>src/core/config.py</code>:
+    caminho completo da chave, o que se espera, e a unidade entre parênteses.
+    Nenhuma mensagem sugere um valor — sugerir número na mensagem de erro
+    criaria um padrão de fato, contra a decisão do dono de não fixar padrão.
+  </p>
+
+</main>
+</body>
+</html>

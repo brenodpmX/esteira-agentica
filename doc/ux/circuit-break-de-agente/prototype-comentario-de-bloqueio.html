@@ -1,0 +1,243 @@
+<!--
+# Protótipo — Circuit-break de agente / Comentário de bloqueio
+
+Status: draft
+Owner: ux
+Last updated: 2026-08-25
+
+Inputs:
+- doc/requirements/circuit-break-de-agente/functional-requirements.md (RF-003, RF-005, RF-007, RF-008)
+- doc/requirements/circuit-break-de-agente/business-rules.md (RN-005, RN-006)
+- doc/requirements/circuit-break-de-agente/non-functional-requirements.md (NFR-003)
+- doc/requirements/circuit-break-de-agente/glossary.md
+- doc/ux/circuit-break-de-agente/navigation-flow.md (telas 4, 5 e 6)
+
+Decisões de UX:
+- Estrutura fixa da copy: o que aconteceu -> dados do bloqueio -> próximo passo numerado.
+- Dados mínimos de RN-005 em tabela (motivo, issue, board, coluna, limite, janela),
+  para o operador varrer sem ler prosa.
+- Caminho de log citado é 'logs/<issue>/' (artefato público). Nenhum arquivo de
+  estado interno protegido é citado.
+- Linha final declara que as outras issues seguiram, evitando falso incidente.
+- Gesto de liberação único e explícito, com o efeito esperado declarado
+  (nova franquia de N execuções).
+- Vocabulário idêntico ao glossário: execução, janela, limite, franquia, bloqueio.
+
+Dúvidas:
+- Conteúdo além do mínimo: manter primeira/última execução, caminho de log e
+  agente/model? (proposta: sim, todos)
+- Um comentário novo por bloqueio (proposta) ou um único comentário atualizado?
+- O gesto canônico de liberação é remover a label no board ou o /need_human do body?
+- Confirmar o pressuposto de silêncio: nenhum comentário novo enquanto need_human
+  estiver presente.
+-->
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Protótipo — Comentário de bloqueio por circuit-break</title>
+  <style>
+    body {
+      font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+      color: #1f2328;
+      background: #ffffff;
+      line-height: 1.5;
+      margin: 0;
+      padding: 24px;
+    }
+    main { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; border-bottom: 1px solid #d1d9e0; padding-bottom: 8px; }
+    h2 { font-size: 1.15rem; margin-top: 40px; }
+    .nota {
+      background: #fff8c5;
+      border: 1px solid #d4a72c;
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-size: 0.9rem;
+    }
+    .issue-head {
+      border: 1px solid #d1d9e0;
+      border-radius: 6px 6px 0 0;
+      padding: 16px;
+      background: #f6f8fa;
+    }
+    .issue-title { font-size: 1.2rem; font-weight: 600; margin: 0 0 8px; }
+    .labels { list-style: none; margin: 8px 0 0; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+    .label {
+      border: 1px solid #7d4e00;
+      background: #fff1e5;
+      color: #7d4e00;
+      border-radius: 999px;
+      padding: 2px 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .comment {
+      border: 1px solid #d1d9e0;
+      border-top: none;
+      border-radius: 0 0 6px 6px;
+      padding: 0;
+    }
+    .comment-head {
+      background: #f6f8fa;
+      border-bottom: 1px solid #d1d9e0;
+      padding: 8px 16px;
+      font-size: 0.85rem;
+      color: #59636e;
+    }
+    .comment-body { padding: 16px; }
+    .comment-body > h3 {
+      font-size: 1.05rem;
+      margin-top: 0;
+    }
+    .comment-body > h4 { font-size: 0.95rem; margin-bottom: 4px; }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.9rem; }
+    caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
+    th, td { border: 1px solid #d1d9e0; padding: 6px 10px; text-align: left; vertical-align: top; }
+    th[scope="row"] { background: #f6f8fa; width: 34%; font-weight: 600; }
+    code {
+      background: #f0f1f3;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9em;
+    }
+    ol { padding-left: 22px; }
+    .rodape-copy { color: #59636e; font-size: 0.9rem; border-top: 1px solid #d1d9e0; padding-top: 12px; }
+    .fonte {
+      background: #f6f8fa;
+      border: 1px dashed #8c959f;
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.82rem;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+    .estado { border-left: 4px solid #8c959f; padding-left: 12px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+<main>
+
+  <h1>Protótipo — Comentário de bloqueio por circuit-break</h1>
+
+  <p class="nota">
+    <strong>Draft para validação.</strong> Os valores <code>5 execuções</code> e
+    <code>1 hora</code> são apenas exemplo de preenchimento: por decisão do dono
+    não existe valor padrão de limite nem de janela. A issue e os horários são
+    fictícios.
+  </p>
+
+  <!-- Tela 4 + 5: issue marcada com need_human e o comentário de bloqueio -->
+  <h2>Telas 4 e 5 — issue marcada e comentário publicado</h2>
+
+  <div class="issue-head">
+    <p class="issue-title">Circuit-break de agente <span style="font-weight:400;color:#59636e">#175</span></p>
+    <p style="margin:0;font-size:0.85rem;color:#59636e">Board <code>epic</code> · Coluna <code>ux</code> · Aberta</p>
+    <ul class="labels">
+      <li class="label">⚑ need_human</li>
+    </ul>
+  </div>
+
+  <article class="comment" aria-label="Comentário de bloqueio publicado pela esteira">
+    <p class="comment-head"><strong>esteira-agentica</strong> comentou há 2 minutos</p>
+    <div class="comment-body">
+
+      <h3>⛔ Execução bloqueada pelo circuit-break</h3>
+
+      <p>
+        A esteira <strong>não iniciou</strong> uma nova execução desta issue: o
+        limite de execuções configurado para a janela foi atingido nesta coluna.
+      </p>
+
+      <table>
+        <caption>Dados do bloqueio</caption>
+        <tbody>
+          <tr><th scope="row">Motivo</th><td>limite de execuções atingido na janela configurada</td></tr>
+          <tr><th scope="row">Issue</th><td>#175</td></tr>
+          <tr><th scope="row">Board</th><td><code>epic</code></td></tr>
+          <tr><th scope="row">Coluna</th><td><code>ux</code></td></tr>
+          <tr><th scope="row">Limite</th><td>5 execuções</td></tr>
+          <tr><th scope="row">Janela</th><td>1 hora</td></tr>
+          <tr><th scope="row">Execuções na janela</th><td>5 — primeira às 23:02, última às 23:57</td></tr>
+          <tr><th scope="row">Agente</th><td><code>ux</code> (model <code>claude-opus-5</code>)</td></tr>
+          <tr><th scope="row">Log das execuções</th><td><code>logs/175/</code></td></tr>
+        </tbody>
+      </table>
+
+      <h4>Próximo passo</h4>
+      <ol>
+        <li>Verifique por que a issue não avançou — cada arquivo em <code>logs/175/</code>
+            traz os parâmetros, o prompt enviado e o diálogo da execução.</li>
+        <li>Corrija ou redirecione a issue (ajuste o enunciado, a coluna, o agente
+            ou as dependências, conforme o caso).</li>
+        <li>Remova a marcação <code>need_human</code> para liberar. A issue recebe
+            uma <strong>nova franquia de 5 execuções</strong> nesta mesma coluna.</li>
+      </ol>
+
+      <p class="rodape-copy">
+        Nenhuma outra issue foi afetada — os demais boards e colunas seguiram
+        sendo processados normalmente.
+      </p>
+    </div>
+  </article>
+
+  <h2>Fonte da copy (Markdown enviado ao board)</h2>
+
+  <div class="fonte">## ⛔ Execução bloqueada pelo circuit-break
+
+A esteira **não iniciou** uma nova execução desta issue: o limite de execuções
+configurado para a janela foi atingido nesta coluna.
+
+| Dado | Valor |
+|------|-------|
+| Motivo | limite de execuções atingido na janela configurada |
+| Issue | #175 |
+| Board | `epic` |
+| Coluna | `ux` |
+| Limite | 5 execuções |
+| Janela | 1 hora |
+| Execuções na janela | 5 — primeira às 23:02, última às 23:57 |
+| Agente | `ux` (model `claude-opus-5`) |
+| Log das execuções | `logs/175/` |
+
+### Próximo passo
+
+1. Verifique por que a issue não avançou — cada arquivo em `logs/175/` traz os
+   parâmetros, o prompt enviado e o diálogo da execução.
+2. Corrija ou redirecione a issue (ajuste o enunciado, a coluna, o agente ou as
+   dependências, conforme o caso).
+3. Remova a marcação `need_human` para liberar. A issue recebe uma **nova
+   franquia de 5 execuções** nesta mesma coluna.
+
+Nenhuma outra issue foi afetada — os demais boards e colunas seguiram sendo
+processados normalmente.</div>
+
+  <!-- Tela 6: retomada -->
+  <h2>Tela 6 — retomada</h2>
+
+  <div class="estado">
+    <p><strong>Antes:</strong> <code>need_human</code> presente. A issue é pulada na
+    seleção de tarefas e <em>nenhum comentário novo</em> é publicado — o aviso não
+    se repete a cada ciclo.</p>
+  </div>
+
+  <div class="estado">
+    <p><strong>Gesto do operador:</strong> remover a marcação <code>need_human</code>.
+    Único gesto necessário; nada mais precisa ser editado.</p>
+  </div>
+
+  <div class="estado">
+    <p><strong>Depois:</strong> a issue volta a ser elegível com a franquia zerada no
+    momento do bloqueio, ou seja, 5 execuções disponíveis. Não há confirmação
+    publicada na issue — a retomada aparece apenas no log, para não poluir a
+    thread. Se a causa não foi resolvida, um novo bloqueio ocorre após as 5
+    execuções, com um novo comentário.</p>
+  </div>
+
+</main>
+</body>
+</html>
