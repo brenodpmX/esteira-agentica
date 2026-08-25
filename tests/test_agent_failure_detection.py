@@ -170,7 +170,7 @@ class TestExecuteUsaDeteccao:
             col_name="Doing", title="Uma issue",
         )
 
-    def _execute_capturando_logs(self, monkeypatch, tmp_path, output):
+    def _execute_capturando_logs(self, monkeypatch, tmp_path, output, returncode=0):
         registros = []
 
         from src.adapters import kiro_cli_agent as mod
@@ -178,7 +178,7 @@ class TestExecuteUsaDeteccao:
         monkeypatch.setattr(mod.KiroCliAgent, "_create_log",
                             lambda self, params: tmp_path / "exec.md")
         monkeypatch.setattr(mod.KiroCliAgent, "_run",
-                            lambda self, params, work_dir: output)
+                            lambda self, params, work_dir: (output, returncode))
         monkeypatch.setattr(mod.log, "info",
                             lambda *a, **k: registros.append(("info", a, k)))
         monkeypatch.setattr(mod.log, "error",
