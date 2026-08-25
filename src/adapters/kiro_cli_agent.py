@@ -38,12 +38,12 @@ class KiroCliAgent(AgentPort):
                 raise FileNotFoundError(
                     f"Diretório de trabalho (repo) não encontrado: {work_dir}"
                 )
-            output = self._run(params, work_dir)
+            output, returncode = self._run(params, work_dir)
             self._append_log(log_path, self._strip_ansi(output) + "\n")
             # O exit-code do kiro-cli nem sempre reflete a falha: erros de
             # modelo/servidor voltam como texto no output com exit 0. Sem esta
             # análise, uma execução quebrada era logada como "concluída".
-            error = self._detect_failure(output)
+            error = self._detect_failure(output, returncode)
             if error:
                 log.error("Kiro", f"[{params.board_id}] #{params.issue_id} "
                           f"falhou: {error}", log=str(log_path))
@@ -58,8 +58,11 @@ class KiroCliAgent(AgentPort):
                       log=str(log_path))
             raise
 
-    def _run(self, params: AgentParams, work_dir: Path) -> str:
+    def _run(self, params: AgentParams, work_dir: Path) -> tuple[str, int | None]:
         """Executa kiro-cli chat em modo headless DENTRO de repo/<repo_id>.
+
+        Retorna (output, returncode). returncode é None quando o processo não
+        chegou a finalizar normalmente (TimeoutExpired, FileNotFoundError).
 
         O cwd do processo é o clone do repositório alvo, garantindo que toda
         operação git/arquivos do agente fique confinada ao repo — nunca no
@@ -121,9 +124,9 @@ class KiroCliAgent(AgentPort):
                 env=env,
             )
         except subprocess.TimeoutExpired:
-            return f"[TIMEOUT] Agente excedeu {_TIMEOUT}s"
+            return f"[TIMEOUT] Agente excedeu {_TIMEOUT}s", None
         except FileNotFoundError:
-            return "[ERRO] kiro-cli não encontrado no PATH"
+            return "[ERRO] kiro-cli não encontrado no PATH", None
 
         # Captura o id da sessão recém-usada (mais recente do cwd) e persiste.
         # O loop da esteira é sequencial, então a sessão do topo é a desta
@@ -135,7 +138,7 @@ class KiroCliAgent(AgentPort):
         output = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0:
             output += f"\n[exit-code: {result.returncode}]"
-        return output
+        return output, result.returncode
 
     def _list_session_ids(self, work_dir: Path, env: dict) -> list[str]:
         """Lista os session_ids do cwd (mais recente primeiro) via kiro-cli."""
@@ -184,6 +187,8 @@ class KiroCliAgent(AgentPort):
         return lines[-1] if lines else "(sem output)"
 
     # Marcadores que indicam que a execução do kiro-cli falhou.
+    # Buscados apenas nos canais estruturados (tail do output ou saída
+    # sintética do adapter), nunca no corpo/narrativa inteiro do agente.
     _FAILURE_MARKERS = (
         "[exit-code:",
         "[TIMEOUT]",
@@ -207,38 +212,86 @@ class KiroCliAgent(AgentPort):
         "[TIMEOUT]",
     )
 
-    def _detect_failure(self, output: str) -> str | None:
-        """Detecta falha na execução do kiro-cli e extrai o erro real.
+    # Indicador de sucesso do kiro-cli: impresso como última linha útil quando
+    # a execução completa normalmente. Presença desta linha no epilogo indica
+    # que qualquer marcador de falha no corpo é narrativa do agente, não erro
+    # estruturado do processo.
+    _SUCCESS_INDICATOR = "\u25b8 Credits:"
 
-        O kiro-cli nem sempre sinaliza falha só pelo exit-code: erros de
-        modelo/servidor aparecem como blocos de texto ('Kiro is having trouble
-        responding...', 'InternalServerError', 'The model ... is temporarily
-        unavailable', 'error: ...'). Sem isso, o log de conclusão mostrava
-        apenas a última linha (ex.: 'Request ID: ...'), escondendo a causa.
+    # Quantidade de linhas finais (não-vazias) consideradas como canal
+    # estruturado do kiro-cli quando returncode == 0 e não há indicador de
+    # sucesso. O bloco de erro do kiro-cli é impresso imediatamente antes do
+    # processo encerrar.
+    _TAIL_LINES = 30
 
-        Retorna uma mensagem de uma linha com o erro real (linhas relevantes
-        unidas por ' | '), ou None se a execução foi bem-sucedida. O output
-        completo continua gravado no arquivo de log da issue.
+    def _detect_failure(self, output: str, returncode: int | None = None) -> str | None:
+        """Detecta falha na execução do kiro-cli usando canais estruturados.
+
+        A decisão de falha é baseada exclusivamente em:
+        1. Saída sintética do adapter (timeout, kiro-cli ausente): o output
+           inteiro É o canal estruturado.
+        2. returncode != 0: falha confirmada pelo processo; extrai causa do
+           tail do output.
+        3. returncode == 0: se a última linha significativa é o indicador de
+           sucesso do kiro-cli (`▸ Credits: ...`), a execução é bem-sucedida
+           independente do que o agente narrou. Se NÃO há indicador de sucesso,
+           busca marcadores de falha no tail (erros de modelo/servidor com
+           exit 0 que o kiro-cli reporta no encerramento sem imprimir Credits).
+
+        Retorna mensagem de uma linha com o erro real (linhas relevantes
+        unidas por ' | '), ou None se a execução foi bem-sucedida.
         """
         clean = self._strip_ansi(output)
         non_empty = [l.strip() for l in clean.splitlines() if l.strip()]
         if not non_empty:
             return None
 
-        if not any(m in clean for m in self._FAILURE_MARKERS):
+        # Caso 1: saída sintética do adapter (processo não executou/completou).
+        # O output inteiro é o canal estruturado — usa-o diretamente.
+        if returncode is None:
+            if any(m in clean for m in self._FAILURE_MARKERS):
+                return self._extract_error(non_empty, non_empty)
             return None
 
+        # Caso 2: processo encerrou com exit-code != 0.
+        # Falha confirmada; extrai causa do tail.
+        if returncode != 0:
+            tail = non_empty[-self._TAIL_LINES:]
+            return self._extract_error(tail, non_empty)
+
+        # Caso 3: returncode == 0.
+        # Se o kiro-cli imprimiu seu indicador de sucesso como última linha
+        # significativa, a execução completou normalmente — qualquer marcador
+        # no corpo é narrativa do agente (falso positivo que queremos evitar).
+        if any(self._SUCCESS_INDICATOR in line for line in non_empty[-3:]):
+            return None
+
+        # Sem indicador de sucesso e returncode == 0: possível erro de
+        # modelo/servidor reportado no encerramento. Busca marcadores apenas
+        # no tail (onde o kiro-cli imprime o bloco de erro).
+        tail = non_empty[-self._TAIL_LINES:]
+        tail_text = "\n".join(tail)
+        if not any(m in tail_text for m in self._FAILURE_MARKERS):
+            return None
+
+        return self._extract_error(tail, non_empty)
+
+    def _extract_error(self, search_lines: list[str], all_lines: list[str]) -> str | None:
+        """Extrai as linhas relevantes de erro de search_lines.
+
+        Procura linhas que casam com _ERROR_HINTS em search_lines. Se nenhuma
+        casar, usa as últimas 3 linhas de all_lines como contexto.
+        """
         relevant: list[str] = []
-        for line in non_empty:
+        for line in search_lines:
             if any(hint in line for hint in self._ERROR_HINTS):
                 if line not in relevant:
                     relevant.append(line)
 
-        # Falhou, mas sem padrão conhecido: usa as últimas linhas como contexto.
         if not relevant:
-            relevant = non_empty[-3:]
+            relevant = all_lines[-3:]
 
-        return " | ".join(relevant)
+        return " | ".join(relevant) if relevant else None
 
     def _append_log(self, log_path: Path, content: str) -> None:
         """Adiciona conteúdo ao final do log."""
