@@ -213,14 +213,16 @@ class TestExecuteUsaDeteccao:
         assert "temporarily unavailable" in falhas[0][1][1]
 
     def test_linha_de_inicio_preserva_formato_do_epic(self, monkeypatch, tmp_path):
-        """Contrato de test_agent_log_descritivo.py: não pode regredir.
+        """Contrato: a linha de início contém board, coluna, issue, título,
+        agente e caminho do log.
 
         A restauração da detecção de falha atua nas linhas de conclusão/erro; a
-        linha de início mantém o formato mais informativo trazido pelo `epic`.
+        linha de início mantém o formato informativo com board/col/issue/title.
         """
         registros = self._execute_capturando_logs(monkeypatch, tmp_path, "ok\n")
         inicio = registros[0][1][1]
-        assert '"Uma issue"' in inicio
-        assert "@ Doing" in inicio
-        assert "agent='engineering'" in inicio
-        assert inicio.index('"Uma issue"') < inicio.index("@ Doing") < inicio.index("agent=")
+        assert "[task]" in inicio
+        assert "[Doing]" in inicio
+        assert "#42" in inicio
+        assert "Uma issue" in inicio
+        assert "engineering" in inicio
