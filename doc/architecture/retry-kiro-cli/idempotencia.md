@@ -70,6 +70,28 @@ esses marcadores. Seu escopo seguro deve ser ajustado para:
 Essa revisão é uma restrição técnica de segurança, não depende de definição de
 Produto ou UX.
 
+### Contrato normativo de entrega de #208
+
+Em 2026-08-25, o objetivo, o escopo e os critérios de aceite de #208 foram
+alinhados a esta decisão. Para evitar interpretações conflitantes nas etapas de
+QA e implementação, o contrato é:
+
+- `dispatch failure`, `InternalServerError` após output parcial e timeout
+  resultam em `UNKNOWN_OUTCOME`;
+- cada um desses resultados permite exatamente uma invocação do subprocesso
+  por entrega, sem sleep/backoff seguido de nova chamada;
+- output, request ID quando disponível, erro e `session_id` são preservados;
+- uma entrega posterior pode usar `--resume-id` somente pelo fluxo normal,
+  depois da reconciliação de filesystem, git e board; e
+- os testes devem demonstrar a ausência de retry inline, a preservação e
+  retomada posterior da sessão e a ausência de regressão no caminho de
+  sucesso.
+
+O título histórico de #208 menciona retry com backoff, mas não prevalece sobre
+este contrato. Alterar a classificação desses aborts ou habilitar retry inline
+exige nova decisão arquitetural e o atendimento prévio das condições da seção
+4.
+
 ## 3. Alternativas rejeitadas
 
 ### 3.1 Retry apenas com `--resume-id`
