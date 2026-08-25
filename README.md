@@ -47,7 +47,7 @@ agents:
   kiro-cli:
     dev:
       name: engineering
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4.5
 
 boards:
   platform: github
