@@ -1,0 +1,21 @@
+# Glossário — Limitador de consumo de IA
+
+Status: draft · Owner: requirements · Updated: 2026-08-25
+Inputs: issue #177, `doc/product/limitador-consumo-ia/{vision,problem-space,epicos}.md`
+
+| Termo | Definição | Sinônimos / Evitar |
+|-------|-----------|--------------------|
+| Pipe | Uma instância em execução da esteira, identificada por um `pipe.yml` e um processo próprio. Hoje o `pipe.yml` não possui um campo de nome/identificador de pipe; este é um gap de requisitos (ver RF-006 e RN-011) — sem ele, não é possível compor a chave pipe/plataforma nem exibi-la no warning/registro. | Evitar usar "instalação" como sinônimo de pipe: "instalação" no problem-space se refere a um ambiente/host inteiro, que pode rodar mais de uma pipe. |
+| Plataforma | Um provedor de agente de IA integrado via adapter (ex.: `kiro-cli`), identificado pela chave de primeiro nível em `agents.<plataforma>` no `pipe.yml`. | Evitar confundir com "agente" (ver abaixo). |
+| Agente | Uma configuração nomeada dentro de uma plataforma (ex.: `agents.kiro-cli.dev`), usada por uma ou mais colunas. Múltiplos agentes de uma mesma plataforma compartilham a mesma cota de consumo da combinação pipe/plataforma (RN-002). | — |
+| Combinação pipe/plataforma | Unidade de aplicação da política de consumo: uma pipe específica cruzada com uma plataforma específica (ex.: `pipe-A` × `kiro-cli`). É o escopo do limite, do bloqueio e do reset — nunca a pipe inteira nem a plataforma inteira. | Evitar "pipe" ou "plataforma" isoladamente ao descrever o escopo do bloqueio. |
+| Consumo reconhecido | Valor de consumo, na unidade autoritativa da plataforma, que a esteira já capturou e atribuiu à combinação pipe/plataforma em um período, a partir do retorno de execuções concluídas. Não inclui execuções em andamento. | Evitar "consumo atual" (ambíguo sobre incluir ou não a execução em andamento). |
+| Unidade autoritativa | A unidade de consumo tal como reportada pela própria plataforma (ex.: créditos fracionários no Kiro), sem conversão para tokens, requisições ou moeda. | Evitar chamar toda unidade de "token" — ver RN-001. |
+| Consumo indisponível | Estado em que a plataforma não reportou (ou a esteira não conseguiu capturar) o consumo de uma execução. Distinto de consumo zero. Não bloqueia (falha aberta) e deve ficar visível na evidência. | Evitar tratar como zero ou omitir da evidência. |
+| Limite / cota | Valor configurado pelo cliente para um período (diário, semanal ou mensal) de uma combinação pipe/plataforma. Opcional; ausência preserva o comportamento atual (sem bloqueio). | Evitar "teto absoluto" — ver Excedente. |
+| Período / janela | Um dos três recortes de acumulação de consumo: diário (reinicia à meia-noite), semanal (reinicia no dia da semana escolhido) ou mensal (reinicia no dia do mês escolhido). Independentes e combináveis; a ordem entre eles não importa (RN-003). | — |
+| Reset | Momento em que o consumo acumulado de um período volta a zero para a combinação pipe/plataforma, tornando-a elegível novamente se o bloqueio decorria apenas daquele período. | — |
+| Bloqueio (da combinação) | Decisão de não acionar o agente na próxima tentativa de uma combinação pipe/plataforma porque o consumo reconhecido está maior ou igual a um limite aplicável. Localizado: não afeta outras combinações. | Evitar "bloqueio da pipe" ou "bloqueio da plataforma" — ver Combinação pipe/plataforma. |
+| Excedente | Diferença entre o consumo de uma execução já iniciada (abaixo do limite) e o limite, quando essa execução termina acima do limite. Medido, não impedido; o controle não promete teto absoluto. | Evitar "estouro" sem qualificar que é sempre da execução anterior, nunca da tentativa impedida. |
+| Tentativa impedida | Um acionamento de agente que não ocorreu porque a combinação estava bloqueada no momento da seleção da tarefa. Deve ser registrada e explicada; nunca é contabilizada como consumo ou economia. | — |
+| Baseline | Conjunto de métricas do primeiro ciclo completo de operação da política (tentativas impedidas, excedente, indisponibilidade, falsos bloqueios, tempo de retomada, impacto em trabalho prioritário), publicado pelo responsável designado pelo implantador para decidir manter, ajustar ou retirar o controle. | — |
