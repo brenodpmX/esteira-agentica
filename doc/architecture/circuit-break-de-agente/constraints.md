@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: architecture
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 ## Inputs
 - `doc/architecture/circuit-break-de-agente/overview.md`
@@ -25,12 +25,12 @@ Last updated: 2026-08-25
 - Adicionar o arquivo a `PROTECTED_PATHS`, às instruções de contexto gerado e à cobertura de integridade aplicável. Prompt, comentário e logs nunca expõem seu conteúdo.
 - Tratar estado ilegível/corrompido como erro de integridade explícito; não assumir contador vazio silenciosamente. Escrita que falha nega a admissão daquela issue.
 - Persistir o evento de bloqueio e limpar a franquia antes de chamadas ao board. Em `keep_task`, reconciliar `trip` pendente antes de `_is_blocked`; a nova admissão ocorre somente depois dos filtros/cooldown. Enquanto label/comentário estiverem pendentes, a execução permanece negada e outras issues continuam sendo avaliadas.
-- Reutilizar `Board.add_label`, `Board.list_comments` e `Board.add_comment`. Comentário deve carregar marcador técnico oculto por `event_id` para retry idempotente.
+- Reutilizar `Board.add_label`, `Board.list_comments` e `Board.add_comment`. Como `BoardPort.add_label` possui default no-op, política ativa exige adapter que sobrescreva explicitamente essa operação; ausência da capacidade deve falhar no startup, nunca simular sinalização bem-sucedida. Comentário deve carregar marcador técnico oculto por `event_id` para retry idempotente.
 - Produzir exatamente um comentário por evento de bloqueio. Novo bloqueio após liberação cria novo `event_id` e nova evidência; ciclos enquanto `need_human` está ativo não criam comentários.
 - O comentário contém no mínimo motivo, issue, board, coluna, limite e janela. Campos adicionais propostos pela UX não fazem parte do contrato até validação.
 - Não mover a issue de coluna como efeito do bloqueio. `need_human` é o mecanismo de parada e sua remoção é o gesto de retomada.
 - Não alterar semântica, chave ou cache de `boards.rerun_cooldown`; os mecanismos devem compor na ordem dos gates atuais.
-- Configuração parcial ou inválida deve falhar no startup antes de lock/startup/sync; configuração ausente é válida e silenciosa.
+- Configuração parcial ou inválida deve falhar no startup antes de lock/startup/sync; configuração ausente é válida e silenciosa. O bloco global deve ficar fora de `boards`: `_validate_boards`, `Board.board_ids` e `get_board_ids` tratam todo valor `dict` nesse mapa como um board.
 - `bool` não é aceito como inteiro para limite ou janela.
 - Usar relógio injetável nos testes e epoch UTC no estado. A sincronização correta do relógio do host é premissa; correção de clock skew distribuído está fora de escopo.
 - O escopo não inclui política por board/coluna/agente, half-open automático, dashboard, diagnóstico de causa, SLA, tokens/custo ou loops de sincronização.
@@ -52,7 +52,7 @@ Last updated: 2026-08-25
 | Corretude temporal | Timestamps com idade `< T` contam; `>= T` não contam, com relógio controlável em teste. |
 | Recuperabilidade | Crash/restart não apaga ocorrências nem abre o gate; retry completa label/comentário sem duplicação. |
 | Observabilidade | 100% dos bloqueios têm warning estruturado, `need_human` e comentário mínimo; pendências de sinalização têm erro acionável. |
-| Compatibilidade | Sem `boards.circuit_break`, nenhum bloqueio novo ocorre e cooldown/auto-advance mantêm comportamento vigente. |
+| Compatibilidade | Sem `agent_circuit_break`, nenhum bloqueio novo ocorre e cooldown/auto-advance mantêm comportamento vigente. |
 | Performance | Admissão normal faz somente leitura/poda/escrita local; nenhuma API externa. Custo por avaliação é O(k), sendo k as ocorrências do contexto. |
 | Escalabilidade | Estado mantém um contexto ativo por `(board, issue)` e remove contextos órfãos após full sync; não varre histórico de outros contextos para admitir uma issue. |
 | Segurança | Estado interno e marcadores não contêm body, prompt, chat, token ou credencial; permissões seguem o diretório `.pipe`. |
@@ -68,4 +68,4 @@ Last updated: 2026-08-25
 | Reinício usado para contornar limite | Contagem e `trip` são persistentes e carregados no startup. |
 | Arquivo cresce sem política | Um contexto ativo por issue; limpeza em mudança/remoção e poda quando T existir; documentar métrica de tamanho. |
 | Falha externa bloqueia o loop global | Captura por issue, manutenção de `trip` e continuação da varredura. |
-| Configuração com typo parece ativa | Validação estrita do bloco e rejeição de campo desconhecido. |
+| Configuração com typo parece ativa | Validação estrita do bloco raiz `agent_circuit_break` e rejeição de campo desconhecido. |

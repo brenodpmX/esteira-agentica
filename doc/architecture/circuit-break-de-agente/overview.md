@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: architecture
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 ## Inputs
 - `README.md` — arquitetura hexagonal, loop principal, cooldown, `need_human` e proteção de estado.
@@ -42,7 +42,7 @@ O nome “circuit-break” é mantido por aderência ao domínio do produto. Tec
 ## Componentes
 | Componente | Responsabilidade |
 |-----------|------------------|
-| `config.py` | Validar a política opcional e completa (`executions` e `window`, inteiros positivos), sem valores padrão implícitos. |
+| `config.py` | Validar a política raiz opcional `agent_circuit_break` (`executions` e `window`, inteiros positivos), sem valores padrão implícitos. O bloco fica fora de `boards`, onde todo valor `dict` é hoje enumerado como board. |
 | `AgentCircuitBreaker` (novo, core) | Executar `admit`, podar a janela, persistir ocorrência antes da entrega, abrir bloqueio, zerar franquia e reconciliar sinalização pendente. |
 | `CircuitBreakStore` (novo, core) | Ler e gravar atomicamente o estado versionado em `.pipe/agentCircuitBreak.json`; nunca expor seu path ao agente. |
 | `keep_task` | Preservar filtros atuais; antes de `_is_blocked`, reconciliar eventual `trip` pendente; depois dos filtros/cooldown, chamar `admit`; ao bloquear, continuar a varredura em vez de retornar a issue. |
@@ -110,7 +110,7 @@ Essa ordem garante que falha de rede, crash ou reinício entre os passos não pe
 - Não há movimento automático de coluna, diagnóstico de causa, dashboard, SLA, orçamento de tokens ou políticas segmentadas.
 - Não há reset por reinício do processo: estado persistente evita contornar o limite reiniciando a esteira.
 - O relógio de parede UTC do host é premissa operacional; testes usam relógio injetável.
-- A UX ainda precisa validar nomes/copy e dados extras. O contrato arquitetural fixa somente os dados mínimos de RN-005 e a necessidade de configuração completa; detalhes adicionais não afetam o core.
+- A UX ainda precisa validar copy e dados extras. O contrato proposto usa `agent_circuit_break` na raiz para não colidir com a enumeração atual de `boards`; eventual renomeação deve preservar esse isolamento. Os dados mínimos de RN-005 e a necessidade de configuração completa não mudam.
 
 ## Estratégia de validação
 - **Unitários:** bordas `T-1`, `T`, `T+1`; N permitido e N+1 bloqueado; sucesso/erro do agente contam igualmente; ausência de política; retorno à mesma coluna; escrita atômica; estado corrompido; relógio injetado.
