@@ -1,11 +1,13 @@
 # Requisitos Funcionais — Otimizar prompts, contextos e comandos
 
-Status: approved · Owner: requirements · Updated: 2026-08-25
+Status: approved (exceto RF-007, RF-008 e RF-009 — ver bloqueios) · Owner: requirements
+Updated: 2026-08-26
 Inputs: `doc/product/otimizar-prompts-contextos-comandos/analise-negocio.md`;
 código-fonte (`src/core/agent.py`, `src/core/commands.py`,
-`src/core/context_generator.py`, `src/core/config.py`,
+`src/core/context_generator.py`, `src/core/config.py`, `src/core/session.py`,
 `src/adapters/kiro_cli_agent.py`); histórico da issue #92 (respostas do dono
-em 22 e 25/08/2026); `business-rules.md` e `glossary.md` deste mesmo diretório.
+em 22, 25 e 26/08/2026); `business-rules.md` e `glossary.md` deste mesmo
+diretório.
 
 > Nenhum requisito abaixo define arquitetura, tecnologia ou nome de arquivo de
 > implementação. Onde o "como" é decisão técnica, o requisito descreve apenas
@@ -49,6 +51,18 @@ em 22 e 25/08/2026); `business-rules.md` e `glossary.md` deste mesmo diretório.
   `target-prompt` em objetivo (`target-prompt`) e passo a passo opcional
   (`steps-prompt`), e de expor duas granularidades de contexto —
   principal (`/context`) e secundário/sob demanda (`/knowledge`).
+- **Configuração de flow (`git.flow.<id>`):** hoje fixa implicitamente o
+  formato de nome de branch em `{prefix}{issue_id}-{slug}` dentro de
+  `build_prompt` (`src/core/agent.py`); passa a ser candidata a um template
+  configurável (RF-008).
+- **Metadados de projeto (`pipe.yml`):** nova hierarquia de chaves,
+  ainda a nomear pela arquitetura, para nome do projeto, descrição breve e
+  humanos envolvidos (nome/função) — candidata a entrar no contexto
+  persistente (RF-009).
+- **Estado de sessão (`.pipe/sessions.json` via `SessionIndex`):** já indica,
+  antes da execução, se a issue está sendo retomada (`session_id` conhecido)
+  ou iniciada pela primeira vez. `build_prompt` hoje não consome esse sinal —
+  passa a ser entrada de composição do prompt (RF-010).
 - **Inventário de instruções:** artefato a produzir (RF-001) que classifica
   cada trecho hoje presente no prompt/contexto por camada (política
   invariável, contexto do operador, workflow da etapa, dado da tarefa) e por
@@ -285,14 +299,163 @@ em 22 e 25/08/2026); `business-rules.md` e `glossary.md` deste mesmo diretório.
 - Fonte: análise de negócio, escopo aprovado; resposta do dono, item 4
   (25/08/2026) · Regras: RN-007.
 
-> **Bloqueio:** a rodada de 23/08/2026 perguntou se "sem copy mecânico"
-> significa apenas liberdade de composição de texto, mantendo a obrigação de
-> commitar/dar push/abrir PR sempre que `gitevents` exigir. O dono respondeu
-> em 25/08/2026 devolvendo a pergunta ("quais são os caminhos aceitáveis? o
-> que ganhamos ao mudar? quais são os limites de mudanças?") em vez de
-> decidir. Este RF não pode ser fechado com critérios de aceitação testáveis
-> até essa decisão existir, porque o limite de liberdade do agente (por
-> exemplo, se ele pode decidir não commitar quando julgar não haver mudança
-> relevante) é uma escolha de risco de negócio, não uma inferência que o
-> Analista de Requisitos deva fazer sozinho. Ver pedido de esclarecimento
-> registrado no addcomment desta rodada.
+> **Bloqueio (persiste após a rodada de 26/08/2026):** a rodada de 23/08/2026
+> perguntou se "sem copy mecânico" significa apenas liberdade de composição
+> de texto, mantendo a obrigação de commitar/dar push/abrir PR sempre que
+> `gitevents` exigir. O dono respondeu em 25/08/2026 devolvendo a pergunta
+> ("quais são os caminhos aceitáveis? o que ganhamos ao mudar? quais são os
+> limites de mudanças?") em vez de decidir. Em 26/08/2026 o dono trouxe uma
+> dor concreta relacionada — o core erra o nome de branch a criar/mergear —
+> e propôs comandos genéricos ("faça o merge request na branch da issue
+> pai"), o que amplia o RF de "texto da mensagem" para "quem resolve o nome
+> da branch e o comando exato" (ver RF-008, que fecha a parte de nomenclatura
+> configurável). Mas a pergunta original de risco — se o agente pode também
+> decidir *não* commitar/pular a etapa quando julgar não haver mudança
+> relevante — continua sem resposta explícita. Este RF permanece bloqueado
+> até essa escolha existir; é risco de negócio (consistência de workflow),
+> não inferência que o Analista deva fazer sozinho. Pergunta objetiva
+> reencaminhada no addcomment desta rodada, restrita a uma escolha binária
+> (ou uma terceira opção, se nenhuma capturar a intenção).
+
+### RF-008 — Formato de nome de branch configurável por flow
+- Descrição: o sistema deve permitir configurar, em `git.flow.<flow_id>`, o
+  formato/template do nome de branch usado por `build_prompt` ao instruir
+  criação/uso de branch, em vez de um formato fixo embutido no código
+  (`{prefix}{issue_id}-{slug}`). O operador deve poder ler no próprio
+  `pipe.yml` qual é o padrão vigente sem precisar inspecionar o código-fonte.
+- Ator: Operador (configura `git.flow.<flow_id>` em `pipe.yml`); Esteira
+  (resolve o nome de branch a partir do template configurado).
+- Pré-condição: flow configurado em `pipe.yml` (`git.flow.<flow_id>`).
+- Fluxo principal: operador define o template de nome de branch para um flow
+  (ex.: variáveis disponíveis como id da issue, slug, prefixo) → esteira
+  resolve o nome efetivo da branch a partir do template ao montar o prompt →
+  o prompt exibe o nome já resolvido (não o template) ao agente.
+- Alternativos/exceções: flow sem template explícito mantém o comportamento
+  atual (`{prefix}{issue_id}-{slug}`) como default — configuração existente
+  não quebra.
+- Critérios de aceitação:
+  - Dado um `git.flow.<flow_id>` sem o novo campo de template, quando o
+    prompt é composto, então o nome de branch resolvido é idêntico ao
+    comportamento atual (`{prefix}{issue_id}-{slug}`).
+  - Dado um `git.flow.<flow_id>` com um template customizado válido, quando
+    o prompt é composto, então o nome de branch usado em todos os blocos de
+    Git (Setup, Commit/Push, PR, Cleanup) é o resultado da resolução do
+    template — sem divergência entre blocos.
+  - Dado um template inválido (referencia variável inexistente ou sintaxe
+    malformada), quando `pipe.yml` é validado, então a validação falha com
+    erro identificando o flow e o problema — não falha silenciosamente em
+    tempo de execução do agente.
+- Fonte: resposta do dono (26/08/2026): "o core erra muito o nome da branch
+  a se criada, a ser mergeada (...) me incomoda não poder colocar no gitflow
+  no arquivo pipe.yml o formato que quero que as branchs sejam criadas" ·
+  Regras: RN-006, RN-010.
+
+### RF-009 — Metadados de projeto no `pipe.yml` incluídos no contexto persistente
+- Descrição: o sistema deve permitir configurar, em uma nova seção de
+  `pipe.yml`, metadados do projeto — nome do projeto, descrição breve, e
+  humanos envolvidos (nome e função/papel) — e incluir esse conteúdo no
+  contexto persistente gerado (`generate_context`), tornando-o disponível ao
+  agente sem exigir que o operador o repita no prompt dinâmico ou no contexto
+  do operador (`contexts/<plataforma>/<agente>.md`).
+- Ator: Operador (preenche os metadados em `pipe.yml`); Esteira (inclui os
+  metadados na seção apropriada do contexto persistente gerado).
+- Pré-condição: nenhuma — seção é opcional.
+- Fluxo principal: operador preenche nome, descrição e lista de humanos
+  (nome + função) em `pipe.yml` → `generate_context` inclui uma seção com
+  esse conteúdo no `.pipe/CONTEXT.md`/agente gerado → o agente passa a ter
+  acesso a "quem é o dono", "qual é o projeto" sem essa informação estar
+  duplicada em cada `target-prompt`.
+- Alternativos/exceções: `pipe.yml` sem a seção de metadados mantém o
+  contexto persistente sem essa seção (comportamento atual, sem quebra).
+- Critérios de aceitação:
+  - Dado um `pipe.yml` sem a nova seção de metadados, quando o contexto
+    persistente é gerado, então o resultado é idêntico ao comportamento
+    atual (sem a seção).
+  - Dado um `pipe.yml` com nome, descrição e ao menos um humano (nome +
+    função) preenchidos, quando o contexto persistente é gerado, então essas
+    três informações aparecem em uma seção identificável do contexto
+    persistente.
+  - Dado que o conteúdo de metadados muda no `pipe.yml`, quando o próximo
+    startup ocorre, então a regeneração do contexto persistente (regra já
+    existente de "pipe.yml mais novo que CONTEXT.md") reflete o novo
+    conteúdo.
+- Fonte: resposta do dono (26/08/2026): "me incomoda não ter uma hierarquia
+  de chaves no pipe.yml para falar do projeto (...) informar o nome do
+  projeto, uma breve descrição, nome e função dos humanos envolvidos" ·
+  Regras: RN-003 (não se aplica — é metadado da esteira, não conteúdo do
+  operador), RN-006.
+
+### RF-010 — Prompt alternativo de continuidade em reexecução de issue
+- Descrição: quando a esteira detecta, antes de montar o prompt, que a issue
+  corrente está sendo retomada (já existe `session_id` conhecido em
+  `SessionIndex` para o par board/issue/agente — ver glossário "sessão
+  retomada"), o prompt dinâmico deve refletir esse fato — instruindo o
+  agente a continuar o trabalho em andamento a partir do contexto retomado —
+  em vez de repetir a montagem completa como se fosse a primeira execução.
+- Ator: Esteira (detecta reexecução via `SessionIndex.get`; compõe o prompt
+  de continuidade).
+- Pré-condição: `SessionIndex.get(board_id, issue_id, agent_id)` retorna um
+  `session_id` não nulo para a task corrente.
+- Fluxo principal: esteira resolve a task (`keep_task`) → antes de montar o
+  prompt, verifica se há sessão conhecida para board/issue/agente → se sim,
+  compõe o prompt no formato de continuidade (referencia o trabalho já
+  iniciado, sem repetir instruções redundantes já entregues na execução
+  anterior) → se não, compõe o prompt completo (comportamento atual).
+- Alternativos/exceções: se a sessão indicada pelo índice não existir mais no
+  kiro-cli (foi descartada), o comportamento de fallback para sessão nova
+  já é responsabilidade do adapter (comportamento preexistente, não alterado
+  por este RF); o prompt de continuidade não pode assumir que o histórico
+  de raciocínio sempre estará disponível.
+- Critérios de aceitação:
+  - Dado que não existe `session_id` registrado para board/issue/agente,
+    quando o prompt é composto, então o resultado é equivalente ao
+    comportamento atual (prompt completo de primeira execução).
+  - Dado que existe `session_id` registrado para board/issue/agente, quando
+    o prompt é composto, então o texto instrui explicitamente o agente a
+    retomar o trabalho em andamento, sem reconstruir do zero as seções cujo
+    conteúdo não muda entre a execução anterior e esta.
+  - Dado o cenário de continuidade, quando medido o total de palavras do
+    prompt de continuidade, então ele não é maior que o prompt de primeira
+    execução para a mesma coluna/tarefa (a continuidade deve reduzir, nunca
+    aumentar, o texto).
+- Fonte: resposta do dono (26/08/2026): "sobre a reexecução da issue pelo
+  agente, faz falta um prompt alternativo como 'continue o que estava
+  fazendo' obviamente que mantendo o contexto" · Regras: RN-001 (continuidade
+  não pode omitir guardrails), RN-005.
+
+### RF-011 — Contexto persistente gerado fora de `.pipe/`, na raiz do projeto [BLOQUEADO — aguarda decisão de nomenclatura/arquitetura]
+- Descrição: o arquivo de contexto persistente gerado pela esteira
+  (atualmente `.pipe/CONTEXT.md`) deve nascer no mesmo diretório do
+  `pipe.yml` ("raiz do projeto", conforme definido pelo dono — não a raiz de
+  cada repositório clonado em `repo/`), e não dentro de `.pipe/`.
+- Ator: Esteira (`generate_context`, `_needs_regeneration`).
+- Pré-condição: nenhuma.
+- Fluxo principal: no startup, a esteira gera o contexto persistente em um
+  caminho na raiz do projeto (ao lado de `pipe.yml`), não em `.pipe/`.
+- Alternativos/exceções: **não definido** — ver bloqueio.
+- Critérios de aceitação: **pendentes.**
+- Fonte: resposta do dono (26/08/2026): "sobre o arquivo de contexto, me
+  incomoda ele nascer no `.pipe/` (...) o arquivo de contexto tem que nascer
+  na raiz do projeto (...) no mesmo diretório do arquivo pipe.yml" ·
+  Regras: RN-006.
+
+> **Bloqueio:** este requisito é observável e não depende de arquitetura para
+> ser *descrito* (onde o arquivo nasce), mas colide com uma garantia de
+> segurança que este mesmo épico não pode regredir (RN-001): hoje
+> `PROTECTED_PATHS` e a lista de "Restrições de sistema" do contexto gerado
+> cobrem exclusivamente caminhos dentro de `.pipe/`; o próprio arquivo de
+> contexto gerado (`.pipe/CONTEXT.md`) é hoje implicitamente protegido por
+> estar fora do que o agente lista como escopo de escrita permitido (o
+> workdir é `repo/<repo_id>`, não a raiz do projeto). Mover o contexto
+> gerado para a raiz do projeto expõe, na mesma árvore de diretórios, o
+> `pipe.yml`, o próprio contexto gerado e potencialmente outros arquivos de
+> estado — nenhum dos quais o agente deveria escrever, já que o agente opera
+> confinado a `repo/<repo_id>` (RN-001, `_assert_no_protected`).
+> Preciso de decisão do dono sobre **um** destes pontos antes de escrever
+> critério de aceitação testável: (a) o novo arquivo na raiz do projeto
+> entra em `PROTECTED_PATHS` com o mesmo nível de proteção do que hoje tem
+> dentro de `.pipe/`, ou (b) existe alguma razão para ele precisar ser
+> gravável/acessível de outro modo que hoje não se aplica a `.pipe/CONTEXT.md`.
+> Sem essa resposta, o requisito ficaria ambíguo sobre se a mudança de local
+> é puramente de conveniência de leitura humana ou se implica mudança de
+> superfície de proteção. Pergunta reencaminhada no addcomment desta rodada.

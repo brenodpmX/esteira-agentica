@@ -1,10 +1,11 @@
 # Regras de Negócio — Otimizar prompts, contextos e comandos
 
-Status: approved · Owner: requirements · Updated: 2026-08-25
+Status: approved (exceto RN-007, pendência mantida) · Owner: requirements
+Updated: 2026-08-26
 Inputs: `doc/product/otimizar-prompts-contextos-comandos/analise-negocio.md`;
 `src/core/agent.py`, `src/core/commands.py`, `src/core/context_generator.py`,
-`src/core/config.py`; histórico da issue #92 (respostas do dono em
-22 e 25/08/2026).
+`src/core/config.py`, `src/core/session.py`; histórico da issue #92
+(respostas do dono em 22, 25 e 26/08/2026).
 
 > Estas regras não redefinem o que a esteira já garante — extraem, do
 > comportamento atual e da decisão de negócio aprovada, o que **não pode
@@ -112,12 +113,16 @@ altera a obrigação de commitar/dar push/abrir PR quando `gitevents` exigir
 compor a mensagem — em especial, se o agente pode decidir não commitar ou
 pular a etapa quando julgar não haver mudança relevante — **ainda não foram
 definidos pelo dono do produto** (ver observação de bloqueio no
-`functional-requirements.md`, RF-007). Esta regra vale apenas para "conteúdo
-da mensagem", não para "se commitar".
+`functional-requirements.md`, RF-007). Em 26/08/2026 o dono trouxe uma dor
+relacionada (nome de branch incorreto) e propôs comandos genéricos, o que é
+tratado separadamente em RF-008/RN-010 (nomenclatura de branch); a pergunta
+de risco original sobre "pular a etapa" continua sem resposta. Esta regra
+vale apenas para "conteúdo da mensagem", não para "se commitar".
 **Fonte:** análise de negócio, escopo aprovado: "garantir que mensagens de
 commit e PR reflitam a mudança realizada, sem obrigar copy mecânico quando o
 agente dispõe do resultado real"; resposta do dono, item 4 (25/08/2026), que
-devolveu a pergunta sobre limites sem fechá-los.
+devolveu a pergunta sobre limites sem fechá-los; resposta do dono de
+26/08/2026, que endereçou a dor de nomenclatura mas não a pergunta de risco.
 
 ## RN-008 — Meta de redução é medida sobre matriz fixa de cenários, não sobre um caso isolado
 
@@ -146,3 +151,19 @@ comprovado.
 **Fonte:** análise de negócio, seção "Entrevista com o dono e tratamento das
 hipóteses": "Hipótese ainda não provada: mais palavras causam mais erros ou
 delírios."
+
+## RN-010 — Template de nome de branch é resolvido uma única vez e usado de forma consistente em todos os blocos do prompt
+
+**Regra:** quando `git.flow.<flow_id>` define um template de nome de branch
+(RF-008), a esteira deve resolvê-lo uma única vez por execução e usar o
+resultado idêntico em todos os blocos do prompt que referenciam a branch
+(Git Setup, Commit/Push, Pull Request, Cleanup). Nenhum bloco pode conter um
+nome de branch resolvido de forma diferente dos demais na mesma execução.
+**Contexto:** aplica-se à composição do prompt dinâmico quando o flow da
+coluna usa template customizado.
+**Exceções:** nenhuma — divergência de nome de branch entre blocos do mesmo
+prompt é o tipo de erro relatado pelo dono em 26/08/2026 ("o core erra muito
+o nome da branch a se criada, a ser mergeada") e não pode ser reintroduzido
+pela própria funcionalidade que o corrige.
+**Fonte:** resposta do dono (26/08/2026): dor com nomes de branch incorretos
+entre criação e merge.

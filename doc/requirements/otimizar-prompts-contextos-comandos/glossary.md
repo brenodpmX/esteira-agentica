@@ -1,6 +1,6 @@
 # Glossário — Otimizar prompts, contextos e comandos
 
-Status: approved · Owner: requirements · Updated: 2026-08-25
+Status: approved · Owner: requirements · Updated: 2026-08-26
 
 > Criado porque o histórico do épico já registrou uma ambiguidade real: em
 > 23/08/2026 a análise de negócio foi lida como se o "manual `@---`" fosse a
@@ -24,3 +24,6 @@ Status: approved · Owner: requirements · Updated: 2026-08-25
 | Referência sob demanda | Conteúdo de referência (ex.: manual de anotações completo) disponibilizado para o agente sem ser concatenado em toda execução — acessível quando a tarefa realmente o exige. O mecanismo concreto (arquivo separado, seção condicional, etc.) é decisão de arquitetura. | "conteúdo lazy"; "documentação externa" |
 | Prova de carregamento | Evidência verificável de que uma instrução obrigatória foi de fato composta e entregue ao adapter antes da execução (ver RF-004 e RN-004). Não é evidência de que o modelo obedeceu à instrução — apenas de que ela chegou ao adapter. | "confirmação de leitura pelo modelo" (fora do que é verificável) |
 | Cenário de referência | Uma das combinações fixas de `gitevents` × presença de `change` × presença de `agent-hub` usadas no benchmark antes/depois (ver RF-006). Termo do benchmark, não da execução real de uma issue. | "caso de teste" isolado (cenário é o dado de entrada; caso de teste é o RF-006 completo) |
+| Sessão retomada | Situação em que `SessionIndex.get(board_id, issue_id, agent_id)` (`src/core/session.py`) retorna um `session_id` não nulo antes da execução — indica que o agente já iniciou trabalho nessa issue e deve continuar, em vez de recomeçar (ver RF-010). Não garante que o kiro-cli ainda tenha a sessão viva; é apenas o sinal conhecido pela esteira. | "retomar sessão" (verbo, referir-se ao substantivo definido aqui) |
+| Template de nome de branch | Formato configurável em `git.flow.<flow_id>` (RF-008) que define como a esteira resolve o nome de branch de uma issue, substituindo o formato fixo `{prefix}{issue_id}-{slug}` hoje embutido em `build_prompt`. Resolvido uma única vez por execução (RN-010). | "padrão de branch" isolado sem indicar que é configurável |
+| Metadados de projeto | Conteúdo descritivo do projeto (nome, descrição breve, humanos envolvidos e sua função) configurável em `pipe.yml` (RF-009) e incluído no contexto persistente — distinto do "contexto do operador" (RN-003), pois é mantido pela esteira a partir de configuração declarativa, não como texto livre do operador. | "informações do projeto" sem qualificador |

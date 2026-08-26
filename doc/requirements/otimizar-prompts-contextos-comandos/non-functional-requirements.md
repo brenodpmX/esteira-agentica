@@ -1,6 +1,6 @@
 # Requisitos Não-Funcionais — Otimizar prompts, contextos e comandos
 
-Status: approved · Owner: requirements · Updated: 2026-08-25
+Status: approved · Owner: requirements · Updated: 2026-08-26
 Inputs: `doc/product/otimizar-prompts-contextos-comandos/analise-negocio.md`;
 `functional-requirements.md` e `business-rules.md` deste mesmo diretório.
 
@@ -17,6 +17,8 @@ redefine escopo funcional.
 | NFR-005 | Compatibilidade / Não regressão | 100% dos cenários de referência de workdir, branch, proteção de estado, leitura/escrita dos arquivos da issue (`-body.md`, `-history.md`, `-addcomment.md`), finalização e transição de coluna devem continuar se comportando de forma idêntica à versão-base após a simplificação. | Suíte de regressão existente (`tests/test_build_prompt_git_setup.py`, `tests/test_build_prompt_protected_paths.py` e equivalentes) executada contra a versão proposta, sem nenhum teste de comportamento preexistente quebrado ou removido sem substituição equivalente. |
 | NFR-006 | Segurança / Isolamento | Zero ocorrências, na suíte de regressão e nos cenários da matriz fixa, de acesso indevido a `PROTECTED_PATHS` ou de execução fora do workdir resolvido (`resolve_work_dir`) para o board/repositório correto. | `_assert_no_protected` (ou verificação equivalente na versão proposta) executado sobre o prompt e o contexto persistente de cada cenário da matriz; nenhuma ocorrência de path protegido tolerada. |
 | NFR-007 | Manutenibilidade | O inventário de instruções (RF-001) deve ser mantido atualizado: qualquer instrução nova adicionada ao prompt dinâmico ou ao contexto persistente após esta entrega deve ser classificável em uma das quatro camadas (política invariável, contexto do operador, workflow da etapa, dado da tarefa) sem exigir uma quinta categoria ad hoc. | Revisão de PR/change file: toda alteração em `build_prompt`/`generate_context` que adicione texto sempre carregado deve referenciar sua classificação de camada no inventário. |
+| NFR-008 | Eficiência de contexto | O prompt de continuidade (RF-010, sessão retomada) nunca deve ter mais palavras que o prompt de primeira execução da mesma coluna/tarefa. | Comparação, para cada cenário da matriz fixa (RF-006) com e sem sessão retomada, da contagem de palavras do prompt gerado em cada caso. |
+| NFR-009 | Consistência | Zero divergência de nome de branch resolvido entre os blocos do mesmo prompt (Git Setup, Commit/Push, Pull Request, Cleanup) quando `git.flow.<flow_id>` usa template customizado (RF-008, RN-010). | Inspeção do prompt gerado por cenário da matriz fixa que use flow com template customizado: extrair o nome de branch de cada bloco e confirmar igualdade textual entre todos. |
 
 ## Observações de medição
 
