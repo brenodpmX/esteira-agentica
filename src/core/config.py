@@ -168,6 +168,70 @@ def resolve_max_attempts(config: dict) -> int:
     return sync_cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
 
 
+CROSS_BOARD_LINKS_VALUES = {"enabled", "suspended"}
+
+
+def validate_cross_board_parent_links(config: dict) -> None:
+    """Valida a chave opcional safety.cross_board_parent_links do pipe.yml.
+
+    Se presente, deve ser a string "enabled" ou "suspended". Levanta
+    ConfigError com mensagem acionável para qualquer outro valor (inclusive
+    tipos não-string, vazio ou variações de caixa). Ausência da chave ou de
+    toda a seção `safety` é permitida e equivale a "enabled" (ver
+    resolve_cross_board_parent_links).
+    """
+    safety_cfg = config.get("safety") or {}
+    if "cross_board_parent_links" not in safety_cfg:
+        return
+    value = safety_cfg["cross_board_parent_links"]
+    if value not in CROSS_BOARD_LINKS_VALUES:
+        raise ConfigError(
+            "safety.cross_board_parent_links: deve ser 'enabled' ou 'suspended' "
+            f"(valor recebido: {value!r})"
+        )
+
+
+def resolve_cross_board_parent_links(config: dict) -> str:
+    """Retorna o valor efetivo de safety.cross_board_parent_links.
+
+    Default "enabled" quando a chave ou a seção `safety` estão ausentes.
+    Não valida — assume que validate_cross_board_parent_links já rodou em
+    check_config. Usada pelo gate de contingência (outra task) a cada
+    tentativa de nova relação pai/filho, relendo o pipe.yml do disco por
+    mtime a cada chamada (sem cache em memória do processo) — ver
+    load_current_config.
+    """
+    return (config.get("safety") or {}).get("cross_board_parent_links", "enabled")
+
+
+def load_current_config() -> dict:
+    """Recarrega o pipe.yml do disco (sem validação completa).
+
+    Usada pelo gate de contingência para reler safety.cross_board_parent_links
+    a cada tentativa de nova relação pai/filho, sem exigir restart do
+    processo — a config carregada uma única vez no startup (check_config)
+    não reflete edições posteriores ao pipe.yml em disco.
+
+    Levanta ConfigError se o arquivo não existir ou estiver vazio (mesmas
+    mensagens de check_config). Não roda as demais validações (git, agents,
+    boards) — é uma leitura leve para uma única chave de segurança, chamada
+    potencialmente a cada relação pai/filho durante o loop principal;
+    repetir a validação completa a cada chamada seria desproporcional ao
+    propósito (reler uma chave), mesmo que o custo de I/O de um arquivo
+    pequeno já seja aceitável.
+    """
+    if not PIPE_FILE.exists():
+        raise ConfigError(f"Arquivo {PIPE_FILE} não encontrado")
+
+    with open(PIPE_FILE, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    if not config:
+        raise ConfigError("pipe.yml está vazio")
+
+    return config
+
+
 def check_config() -> dict:
     """Valida e retorna configuração do pipe.yml."""
     _validate_env()
@@ -188,6 +252,8 @@ def check_config() -> dict:
     _validate_sleep(config["sleep"])
 
     validate_max_attempts(config)
+
+    validate_cross_board_parent_links(config)
 
     git = _require(config, "git", "pipe.yml")
     _validate_git(git)
