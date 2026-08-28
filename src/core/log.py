@@ -29,6 +29,35 @@ _LEVEL_COLOR = {
 
 _BRACKET = re.compile(r"\[([^\]]+)\]")
 
+# Chaves de kwargs de log consideradas sensíveis. Superconjunto conservador do
+# que os eventos estruturados da story #246 (e das stories #241/#244/#245)
+# utilizam. A garantia é por NOME de campo/disciplina de call site, não por
+# scanner de conteúdo - detectar segredo por valor exigiria heurística frágil
+# (mesma decisão registrada no README sobre não escanear corpo de resposta
+# em busca de "rate limit").
+FORBIDDEN_LOG_KWARGS = {"token", "ssh_key", "body", "gh_token", "kiro_api_key"}
+
+
+def assert_no_sensitive_kwargs(extra: dict) -> None:
+    """Levanta ValueError se `extra` contiver alguma chave proibida.
+
+    Chaves proibidas (comparação exata, case-insensitive): token, ssh_key,
+    body, gh_token, kiro_api_key - superconjunto conservador do que os
+    eventos desta story usam. Não inspeciona valores (apenas chaves) -
+    detectar segredo por conteúdo de string exigiria heurística frágil;
+    a garantia real é de disciplina de nomes de campo nos call sites,
+    verificada também pelos testes desta task por inspeção de código.
+
+    Não chamada automaticamente por Log._log (mudaria o comportamento de
+    todo log existente na base, fora do escopo desta story) - é uma
+    ferramenta de teste/asserção usada pela suíte de conformidade e,
+    opcionalmente, pelos call sites desta story antes de logar.
+    """
+    lower_keys = {k.lower() for k in extra}
+    hit = lower_keys & FORBIDDEN_LOG_KWARGS
+    if hit:
+        raise ValueError(f"kwargs de log contêm chave(s) proibida(s): {sorted(hit)}")
+
 
 class Log:
     _instance = None
