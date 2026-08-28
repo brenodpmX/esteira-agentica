@@ -557,6 +557,7 @@ def call_agent(config: dict, task: dict | None):
         repo_id=repo_id,
         col_name=col.get("name", col_id),
         title=title,
+        participation_intent=issue.get("participation_intent"),
     )
 
     adapter = KiroCliAgent()
