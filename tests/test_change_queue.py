@@ -8,8 +8,18 @@ persistência de participation_intent — fora de escopo (ver #251).
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from src.core.board import ChangeItem, SyncEvent
 from src.core.change_queue import ChangeQueue
+
+
+@pytest.fixture(autouse=True)
+def _chdir_tmp(tmp_path, monkeypatch):
+    """Isola o .pipe/changeQueue.json de cada teste em um diretório temporário
+    (mesmo padrão de tests/test_sync_optimization.py), evitando vazamento de
+    estado entre testes e uso do estado real da esteira."""
+    monkeypatch.chdir(tmp_path)
 
 
 def _iso(dt: datetime) -> str:

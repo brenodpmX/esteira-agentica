@@ -50,6 +50,14 @@ class ChangeItem:
     uuid: str = None        # id único na fila (atribuído por add/addAll)
     fullsync: bool = False  # se True, reconcilia todas as propriedades + deps
     attempts: int = 0       # tentativas de processamento já feitas (erro transitório)
+    next_attempt_at: str = None  # ISO 8601 UTC (formato de now()); quando
+    # preenchido, o item não deve ser processado antes desse instante. Usado
+    # por pendências unresolved (ver #242 e a política de classificação de
+    # intenção) para aguardar prova sem contar como tentativa esgotada
+    # (sync.max_attempts). É independente de attempts: attempts mede
+    # tentativas que FALHARAM; next_attempt_at mede uma pendência AGUARDANDO
+    # prova, que não necessariamente falhou (ex.: consulta bem-sucedida com
+    # evidência ambígua).
 
     @staticmethod
     def now() -> str:
