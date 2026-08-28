@@ -98,6 +98,16 @@ class Issue:
     archived: bool = False
 
 
+@dataclass
+class Participation:
+    """Uma participação (item de Project V2) de uma issue em um board."""
+    board_id: str | None   # board configurado resolvido; None se não resolvido
+    item_id: str           # id do ProjectV2Item (necessário para deleteProjectV2Item)
+    project_id: str        # id do Project V2 (GraphQL), mesmo quando board_id é None
+    status: str | None     # nome da coluna (Status) remota; None/"" quando vazio
+    archived: bool = False
+
+
 class BoardPort(ABC):
     """Port para adapters de board (GitHub, ClickUp, etc)."""
 
@@ -231,6 +241,16 @@ class BoardPort(ABC):
         """Remove um item de um project (via deleteProjectV2Item)."""
         log.warning("Board", "remove_from_board não implementado neste adapter")
 
+    def list_participations(self, issue_id: str) -> list["Participation"]:
+        """Lista as participações (itens de Project V2) da issue em qualquer project.
+
+        Cada `Participation` representa um item, resolvido ou não a um board
+        configurado no pipe.yml. Não decide intenção/classificação - isso é
+        responsabilidade do core (ParticipationPolicy, story #242).
+        """
+        log.warning("Board", "list_participations não implementado neste adapter")
+        return []
+
 
 class Board:
     """Core de boards - usa port para operações."""
@@ -247,6 +267,10 @@ class Board:
         Levanta BoardAccessError quando o token não pode operar o board.
         """
         self._port.check_access(config)
+
+    def list_participations(self, issue_id: str) -> list[Participation]:
+        """Delega ao port a listagem de participações da issue."""
+        return self._port.list_participations(issue_id)
 
     def sync_boards(self, config: dict):
         """Extrai boards do config e sincroniza via port."""
