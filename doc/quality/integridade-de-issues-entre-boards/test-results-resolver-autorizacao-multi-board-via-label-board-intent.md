@@ -2,7 +2,7 @@
 
 Status: approved
 Owner: quality
-Last updated: 2026-08-28
+Last updated: 2026-08-28 (revalidado — 3ª passagem por Execução de Testes)
 
 ## Inputs
 
@@ -109,26 +109,30 @@ Last updated: 2026-08-28
 
 - `python -m pytest tests/test_participation_policy.py -v` → **12 passed**
   (100% dos testes desta issue).
-- `python -m pytest tests/` (suíte completa) → **1265 passed, 29 skipped,
-  1 xpassed, 23 failed**.
-  - Baseline documentado pela QA na etapa de Casos de Teste: 1255 passed,
-    21 failed (ignorando `test_participation_policy.py`). Sem os 12 novos
-    testes: `python -m pytest tests/ --ignore=tests/test_participation_policy.py`
-    → **1253 passed, 23 failed** nesta execução.
-  - As 23 falhas se dividem em duas origens, ambas pré-existentes e sem
-    relação com `authorized_boards`/`board-intent-`:
+- `python -m pytest tests/` (suíte completa) → **1263 passed, 29 skipped,
+  1 xpassed, 25 failed** (revalidação de 2026-08-28, após o 2º retrabalho
+  de Desenvolvimento ter resolvido o cleanup de branch/PR pendente).
+  - As 25 falhas se dividem em duas origens, ambas pré-existentes/ambientais
+    e sem relação com `authorized_boards`/`board-intent-` (confirmado por
+    grep em `participation`/`board_intent` na saída do pytest — nenhuma
+    ocorrência):
     - 21 falhas já documentadas nas etapas anteriores
       (`test_agent_log_descritivo.py` e `test_dockerfile.py`).
-    - 2 falhas adicionais em `test_epic_merge_ausente_146_147.py`
-      (`test_epic_e_ancestral_de_head`,
-      `test_commits_exclusivos_de_epic_zerados`), causadas por
-      `origin/epic` ter avançado 2 commits (merge do PR #277, não
-      relacionados a esta issue) desde a criação desta branch de feature —
-      divergência de sincronismo de branch, não regressão de código. `git
-      log --oneline HEAD..origin/epic` confirma os 2 commits
-      (`2d147d4`, `5238e72`) como merges de outra story.
-  - Com os 12 novos testes: 1253 + 12 = 1265 passed — confirma que a nova
-    suíte soma exatamente ao total, sem quebrar nada.
+    - 4 falhas em `test_epic_merge_ausente_146_147.py`
+      (`test_nenhum_commit_de_epic_em_src_falta_em_head`,
+      `test_epic_e_ancestral_de_head`,
+      `test_commits_exclusivos_de_epic_zerados`,
+      `test_diff_head_epic_sem_divergencia_de_producao_apos_merge`),
+      causadas por `origin/epic` ter avançado desde o último merge desta
+      branch de feature (commits do PR #283/#284, de outra story sobre
+      `safety.cross_board_parent_links` em `src/core/config.py`) —
+      divergência de sincronismo de branch, não regressão de código
+      introduzida por esta task. `git log --oneline HEAD..origin/epic`
+      confirma os commits como alheios a `authorized_boards`/
+      `participation_policy`. Reconciliar com `origin/epic` é atribuição da
+      etapa de Merge Request, não desta etapa.
+  - Nenhuma falha nova relacionada ao código desta issue em nenhuma das
+    passagens por esta etapa (1ª e 2ª execuções, e esta revalidação).
 
 ## Resumo
 
