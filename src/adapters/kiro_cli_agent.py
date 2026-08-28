@@ -556,6 +556,7 @@ class KiroCliAgent(AgentPort):
         lines.append(f"- **model**: {params.model}")
         lines.append(f"- **board**: {params.board_id}")
         lines.append(f"- **coluna**: {params.col_id}")
+        lines.append(f"- **participation_intent**: {params.participation_intent or '(ausente)'}")
         lines.append(f"- **issue**: #{params.issue_id}")
         if params.repo_id:
             lines.append(f"- **repo**: {params.repo_id}")

@@ -170,6 +170,10 @@ class AgentParams:
     context: str = None
     col_name: str = ""     # nome humanizado da coluna/etapa (log de terminal)
     title: str = ""        # título da issue (log de terminal)
+    participation_intent: str | None = None
+    # ^ intenção de participação classificada, lida do cache do snapshot (RF-07).
+    #   Board de origem já é `board_id` (campo existente); este campo cobre
+    #   apenas a intenção classificada.
 
 
 class AgentPort(ABC):
