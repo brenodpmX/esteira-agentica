@@ -1,6 +1,6 @@
 # Dependências para liberar os casos de teste de #253
 
-Data da decisão: 28/08/2026  
+Data da decisão: 28/08/2026
 Responsável: Helena Costa — Product Manager
 
 ## Decisão

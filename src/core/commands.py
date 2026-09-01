@@ -13,7 +13,7 @@ Exemplo de body completo:
     /parent #10
     /blocked_by #42, #58
     /labels backend, security
-    /agent-hub-high
+    /agent_level high
     /need_human
 
 Regras:
@@ -32,7 +32,7 @@ Comandos suportados:
 - /blocked_by #N, #M    esta issue está bloqueada por N e M
 - /blocks #N, #M        esta issue bloqueia N e M
 - /labels a, b, c       labels da issue (SET completo)
-- /agent-hub-<valor>    roteamento de agente (hub); <valor> é livre (ex.: low, senior, deep)
+- /agent_level low|medium|high
 - /close [completed|not_planned]
 - /archive
 - /need_human           label especial (não entra em /labels)
@@ -50,10 +50,8 @@ SEP = "@---"
 # separadamente (não aparece na lista de /labels).
 NEED_HUMAN_LABEL = "need_human"
 
-# Prefixo das labels de roteamento de agente (hub). O sufixo é livre
-# (ex.: agent-hub-low, agent-hub-senior, agent-hub-deep) e é mapeado no board
-# como uma label comum.
-AGENT_HUB_PREFIX = "agent-hub-"
+# Prefixo das labels de nível de agente (ex.: agent-level-high).
+AGENT_LEVEL_PREFIX = "agent-level-"
 
 
 @dataclass
@@ -64,7 +62,7 @@ class IssueCommands:
     blocked_by: list[str] = field(default_factory=list)
     blocks: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
-    agent_hub: str | None = None
+    agent_level: str | None = None
     close: str | None = None        # 'completed' | 'not_planned'
     reopen: bool = False
     archive: bool = False
@@ -74,19 +72,19 @@ class IssueCommands:
         """True se nenhum comando foi declarado."""
         return not (
             self.parent or self.children or self.blocked_by or self.blocks
-            or self.labels or self.agent_hub or self.close or self.reopen
+            or self.labels or self.agent_level or self.close or self.reopen
             or self.archive or self.need_human
         )
 
     def all_labels(self) -> list[str]:
-        """Labels efetivas no board, incluindo as especiais need_human e agent-hub-*."""
+        """Labels efetivas no board, incluindo as especiais need_human e agent-level-*."""
         result = list(self.labels)
         if self.need_human and NEED_HUMAN_LABEL not in result:
             result.append(NEED_HUMAN_LABEL)
-        if self.agent_hub:
-            agent_hub_label = f"{AGENT_HUB_PREFIX}{self.agent_hub}"
-            if agent_hub_label not in result:
-                result.append(agent_hub_label)
+        if self.agent_level:
+            agent_level_label = f"{AGENT_LEVEL_PREFIX}{self.agent_level}"
+            if agent_level_label not in result:
+                result.append(agent_level_label)
         return result
 
 
@@ -100,19 +98,19 @@ def from_issue(issue) -> IssueCommands:
     Labels especiais são extraídas para campos próprios e não aparecem na
     lista de labels:
     - need_human → campo need_human
-    - agent-hub-<valor> → campo agent_hub
+    - agent-level-<nível> → campo agent_level
     """
     labels = list(issue.labels or [])
     need_human = NEED_HUMAN_LABEL in labels
     labels = [l for l in labels if l != NEED_HUMAN_LABEL]
 
-    # Extrai agent_hub a partir de labels com prefixo agent-hub-
-    agent_hub_value = None
+    # Extrai agent_level a partir de labels com prefixo agent-level-
+    agent_level_value = None
     filtered_labels = []
     for lbl in labels:
-        if lbl.startswith(AGENT_HUB_PREFIX):
-            if agent_hub_value is None:  # usa a primeira encontrada
-                agent_hub_value = lbl[len(AGENT_HUB_PREFIX):]
+        if lbl.startswith(AGENT_LEVEL_PREFIX):
+            if agent_level_value is None:  # usa a primeira encontrada
+                agent_level_value = lbl[len(AGENT_LEVEL_PREFIX):]
         else:
             filtered_labels.append(lbl)
 
@@ -123,7 +121,7 @@ def from_issue(issue) -> IssueCommands:
         blocks=list(getattr(issue, "blocks", None) or []),
         labels=filtered_labels,
         need_human=need_human,
-        agent_hub=agent_hub_value,
+        agent_level=agent_level_value,
     )
 
 
@@ -234,11 +232,8 @@ def parse_commands(text: str) -> IssueCommands:
             cmds.blocks = _parse_refs(arg)
         elif name == "labels":
             cmds.labels = _parse_labels(arg)
-        elif name.startswith(AGENT_HUB_PREFIX):
-            # Token único no formato do label, ex.: /agent-hub-low.
-            # O sufixo (após "agent-hub-") é o valor do hub, livre.
-            value = name[len(AGENT_HUB_PREFIX):]
-            cmds.agent_hub = value or None
+        elif name == "agent_level":
+            cmds.agent_level = arg.split()[0] if arg else None
         elif name == "close":
             cmds.close = arg.split()[0] if arg else "completed"
         elif name == "reopen":
@@ -289,8 +284,8 @@ def serialize_commands(cmds: IssueCommands) -> str:
         lines.append("/blocks " + ", ".join(f"#{c}" for c in cmds.blocks))
     if cmds.labels:
         lines.append("/labels " + ", ".join(cmds.labels))
-    if cmds.agent_hub:
-        lines.append(f"/{AGENT_HUB_PREFIX}{cmds.agent_hub}")
+    if cmds.agent_level:
+        lines.append(f"/agent_level {cmds.agent_level}")
     if cmds.need_human:
         lines.append("/need_human")
     if cmds.close:
@@ -338,7 +333,7 @@ Comandos disponíveis:
 - `/blocked_by #N, #M`    esta issue está bloqueada por N e M (não avança até fecharem)
 - `/blocks #N, #M`        esta issue bloqueia N e M
 - `/labels a, b, c`       define as labels da issue (substitui todas)
-- `/agent-hub-<valor>`    roteamento de agente (hub); escreva como um label, ex.: `/agent-hub-low`
+- `/agent_level low|medium|high`  nível de agente para a issue (planning poker)
 - `/need_human`           marca que precisa de intervenção humana
 - `/close [completed|not_planned]`  fecha a issue
 - `/archive`              arquiva a issue no board
@@ -358,7 +353,7 @@ Exemplo de bloco no final do body:
     /parent #10
     /blocked_by #42, #58
     /labels backend, security
-    /agent-hub-high
+    /agent_level high
     /need_human
 """
 

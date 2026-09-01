@@ -326,45 +326,44 @@ automaticamente em três situações:
 | `create-merge` | Cria branch + cria PR |
 | `no-branch` | Sem operações de git |
 
-### Roteamento de agente por hub (`agent-hub`)
+### Substituição de agente por nível (`override-agent`)
 
-Cada coluna define um agente default no atributo `agent`. O valor de
-roteamento de uma issue é armazenado como label `agent-hub-<valor>` no GitHub
-(ex.: `agent-hub-low`, `agent-hub-senior`, `agent-hub-deep`). O sufixo é livre —
-pode representar nível, função, profundidade ou qualquer critério. Essa label é
-sincronizada nativamente pelo board, garantindo que o valor persista entre
+Cada coluna define um agente default no atributo `agent`. O nível de execução
+de uma issue é armazenado como label `agent-level-<nível>` no GitHub (ex.:
+`agent-level-low`, `agent-level-medium`, `agent-level-high`). Essa label é
+sincronizada nativamente pelo board, garantindo que o nível persista entre
 ciclos de sync.
 
-Se a issue possuir uma label `agent-hub-<valor>` e esse `<valor>` for uma
-chave do mapa `agent-hub` da coluna, a esteira usa o agente indicado no
+Se a issue possuir uma label `agent-level-<nível>` e esse `<nível>` for uma
+chave do mapa `override-agent` da coluna, a esteira usa o agente indicado no
 valor. Caso contrário, usa o `agent` default.
 
-No fluxo do planning-poker, o agente escreve `/agent-hub-<valor>` no bloco
-`@---` do body — um token único, no mesmo formato do label. O sync-up lê esse
-campo via `all_labels()` e grava a label `agent-hub-<valor>` no GitHub
-automaticamente. A resolução de agente em `resolve_agent_id()` lê diretamente
-`issue["labels"]` — sem dependência de arquivo local.
+No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
+`@---` do body. O sync-up lê esse campo via `all_labels()` e grava a label
+`agent-level-<nível>` no GitHub automaticamente. A resolução de agente em
+`resolve_agent_id()` lê diretamente `issue["labels"]` — sem dependência de
+arquivo local.
 
-Como cada agente carrega o próprio `model`, trocar o agente por hub troca
+Como cada agente carrega o próprio `model`, trocar o agente por nível troca
 também o model efetivo da execução.
 
 ```yaml
 columns:
   desenvolvimento:
     agent: engineering          # default
-    agent-hub:
-      low: generic              # agent-hub-low  -> generic
-      high: senior-engineering  # agent-hub-high -> senior-engineering
+    override-agent:
+      low: generic              # agent-level-low  -> generic
+      high: senior-engineering  # agent-level-high -> senior-engineering
 ```
 
-Validação (`config.py`): `agent-hub` deve ser um mapa `<valor>: <agente>`,
+Validação (`config.py`): `override-agent` deve ser um mapa `<nível>: <agente>`,
 a coluna precisa ter um `agent` default, e todo agente referenciado deve existir
 em `agents`.
 
 ### Log de execução
 
 Cada execução gera um arquivo em `logs/<issue_id>/<timestamp>.md` com:
-- **Parâmetros**: plataforma, agente, model, agent_hub, board, coluna, issue
+- **Parâmetros**: plataforma, agente, model, agent_level, board, coluna, issue
 - **Prompt**: prompt completo enviado ao agente
 - **Chat**: diálogo da execução (preenchido pelo adapter)
 - **Resultado**: classificação da execução, número de invocações do kiro-cli,
@@ -495,7 +494,7 @@ presente garante a relação/atributo; ausente, remove. Não há comandos de
 | `/blocked_by #N, #M` | esta issue está bloqueada por N e M |
 | `/blocks #N, #M` | esta issue bloqueia N e M |
 | `/labels a, b, c` | define (SET) as labels da issue |
-| `/agent-hub-<valor>` | roteamento de agente por hub (chave do mapa `agent-hub`); `<valor>` livre |
+| `/agent_level low\|medium\|high` | nível de agente (chave de `override-agent`) |
 | `/need_human` | marca intervenção humana (label especial) |
 | `/close [completed\|not_planned]` | fecha a issue |
 | `/reopen` | reabre a issue |
@@ -515,7 +514,7 @@ Validar credenciais e retornar JWT.
 /parent #10
 /blocked_by #42, #58
 /labels backend, security
-/agent-hub-high
+/agent_level high
 ```
 
 ### Incidente: sub-issues propagadas entre boards (#88/#98/#99/#106)
@@ -662,41 +661,31 @@ inexistente cai na primeira opção do project com warning.
 > que já haviam sido materializados localmente antes da atualização. Esses itens
 > devem ser removidos manualmente do project indevido, com a esteira parada.
 
-### Incidente resolvido: parent recursivo (#97/#104)
+### Incidente conhecido: parent recursivo (#97)
 
 Em 01/08/2026, um arquivo órfão com prefixo numérico foi associado à issue
-`#76` após o caminho salvo para seu body ficar obsoleto. O sync substituiu o
-conteúdo da issue, tentou aplicar `set_parent(76, 76)` e repetiu a rejeição 225
-vezes, deixando todos os boards sem processamento útil por 2h37.
+`#76` após o caminho salvo para seu body ficar obsoleto. O sync sobrescreveu o
+conteúdo da issue, tentou aplicar `set_parent(76, 76)` e recebeu HTTP 422. Como
+o evento inválido permaneceu na cabeça da fila global, todos os boards ficaram
+sem processamento por 2h37.
 
-O caso concreto foi reparado no mesmo dia. As cinco salvaguardas preventivas
-foram posteriormente implementadas, integradas em `main` e homologadas em
-conjunto em 20/08/2026. O incidente está **resolvido na versão 1.10.0**:
+O estado afetado foi reparado operacionalmente (conteúdo da issue restaurado e
+arquivos órfãos removidos das colunas ativas), mas as correções preventivas de
+código **ainda estão pendentes**. Elas estão divididas em C1–C5: resolução
+segura do body, validação de auto-referência, tratamento de mensagem-veneno,
+proteção de integridade do estado e lock de instância única.
 
-1. **Associação segura (C1):** `_find_issue_files` resolve o body por identidade
-   inequívoca e isola zero/múltiplos candidatos sem alterar o board.
-2. **Relações válidas (C2):** auto-referências em `parent`, `children`,
-   `blocked_by` e `blocks` são descartadas antes de qualquer chamada externa.
-3. **Falha isolada (C3):** erros definitivos e tentativas transitórias esgotadas
-   saem da fila ativa para dead-letter; um item inválido não monopoliza os
-   demais boards.
-4. **Estado protegido (C4):** `SnapshotGuard` detecta e restaura atomicamente
-   alterações indevidas no snapshot durante a execução do agente.
-5. **Instância única (C5):** `InstanceLock` é adquirido antes de `startup()` e
-   recusa uma segunda instância sobre o mesmo estado.
+Até essas correções serem entregues:
 
-As regras operacionais de criar issues como `<slug>-body.md`, não editar a
-memória interna e investigar itens isolados continuam válidas. Os limites
-residuais conhecidos são: o lock coordena apenas processos que compartilham o
-mesmo filesystem; a guarda desta entrega cobre snapshots, não constitui um
-sandbox completo; e dead-letter não possui replay automático.
+- crie issues novas somente como `<slug>-body.md`, sem prefixo numérico;
+- não execute duas instâncias da esteira sobre o mesmo estado;
+- não altere arquivos internos da `.pipe` manualmente;
+- trate repetição contínua de `Erro no ciclo (não fatal)` para o mesmo item
+  como incidente: interrompa a instância duplicada, preserve os logs e siga o
+  procedimento registrado no ticket antes de reiniciar.
 
-Documentação:
-
-- [ticket e causa raiz](doc/incidente/parent-recursivo/ticket.md)
-- [resultado da homologação](doc/incidente/parent-recursivo/homologacao.md)
-- [post-mortem de Produto](doc/product/confiabilidade-parent-recursivo/post-mortem.md)
-- [change file da versão 1.10.0](doc/changelogs/104-pre-producao-c1-c5-integradas.md)
+A análise, a mitigação e o plano completo estão em
+[`doc/incidente/parent-recursivo/ticket.md`](doc/incidente/parent-recursivo/ticket.md).
 
 ### Issues fantasmas (erro irrecuperável)
 
@@ -764,5 +753,3 @@ penalty indevidamente.
 
 - [Contexto e decisões técnicas](CONTEXT.md)
 - [Changelog](CHANGELOG.md)
-- [Runbook de operação Docker](doc/runbook/docker.md)
-- [Runbook de homologação — Branches não mergeadas (#73)](doc/runbook/homologacao-branches-nao-mergeadas.md)

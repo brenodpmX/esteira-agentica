@@ -1,60 +1,76 @@
 # Change File — Incidente #97: Parent Recursivo
 
-**Abertura:** 2026-08-01
-**Resolução:** 2026-08-20
+**Data:** 2026-08-01
 **Issue:** #97 — Erro reportado dia 01/08/26
-**Versão da correção:** 1.10.0
-**Status:** resolvido; C1–C5 integradas e homologadas
+**Branch:** `hotfix97-97-erro_reportado_dia_010826`
+**Status:** Mitigado operacionalmente; correções C1–C5 pendentes
+
+---
 
 ## Resumo
 
-O incidente interrompeu o processamento útil de todos os boards por 2h37,
-repetiu 225 vezes a mesma rejeição e substituiu temporariamente o conteúdo da
-issue #76. O reparo operacional de 01/08 restaurou os dados, mas não eliminava
-a causa sistêmica.
+Esta entrega consolida a documentação do incidente que interrompeu a esteira
+por 2h37 e corrompeu o conteúdo da issue `#76`. O estado afetado foi reparado
+operacionalmente, e cinco frentes de correção definitiva foram planejadas.
 
-A entrega final da versão 1.10.0 conclui e homologa as cinco frentes
-preventivas. Este arquivo substitui a comunicação histórica de “correções
-pendentes”; o histórico completo permanece no ticket do incidente.
+**Não há correção de código nesta branch.** As mudanças em C1–C5 continuam
+pendentes e serão entregues pelas tasks próprias do board `task`.
 
-## Correções entregues
+## Alterações entregues
 
-| Frente | Resultado | Rastreabilidade |
-|---|---|---|
-| C1 | resolução determinística do body; ambiguidade e órfãos não alteram issues | #140, #146, #147 |
-| C2 | auto-referência removida de todas as relações antes do provider | #138, #143 |
-| C3 | erro definitivo/tentativas esgotadas isolados em dead-letter, sem bloqueio global | #139, #144, #145 |
-| C4 | `SnapshotGuard` restaura conteúdo e modo do snapshot após interferência | #141, #149 |
-| C5 | `InstanceLock` recusa concorrência antes de qualquer mutação de startup | #142, #150–#152, #196 |
+### 1. Registro público do incidente
+
+`doc/incidente/parent-recursivo/ticket.md` documenta:
+
+- linha do tempo e impacto (225 ciclos com erro e bloqueio global);
+- causa raiz encadeada C1–C4 e hardening C5;
+- risco de disponibilidade e integridade;
+- workaround, mitigação operacional e estado atual; e
+- plano de correção, ordem e estimativas das cinco tasks.
+
+### 2. Orientação de homologação
+
+`doc/incidente/parent-recursivo/homologacao.md` delimita o que pode ser
+homologado nesta branch: documentação, build e ausência de regressão. O bug não
+deve ser marcado como corrigido antes da entrega e homologação de C1–C5.
+
+### 3. README operacional
+
+O `README.md` passou a registrar o incidente conhecido, o estado mitigado e os
+cuidados temporários: não usar prefixo numérico em issues novas, não executar
+duas instâncias sobre o mesmo estado, não alterar a memória interna e escalar
+repetições contínuas do mesmo erro.
+
+### 4. Mitigação do caso concreto
+
+O histórico registra a restauração do título, body e labels da issue `#76`, a
+remoção dos arquivos órfãos das colunas ativas e a retomada do processamento.
+Essas ações recuperam o caso ocorrido, mas não substituem as correções de
+produto.
+
+## Correções pendentes
+
+| Frente | Resultado esperado | Situação |
+|--------|--------------------|----------|
+| C2 | Rejeitar auto-referência em relações | Task criada, pendente |
+| C3 | Retirar mensagem-veneno da fila e aplicar dead-letter/tentativas | Task criada, pendente |
+| C1 | Resolver body com segurança e reportar arquivos órfãos | Task criada, pendente |
+| C4 | Verificar integridade do estado após execução de agente | Task criada, pendente |
+| C5 | Impedir duas instâncias sobre o mesmo estado | Task criada, pendente |
+
+Ordem planejada: **C2 → C3 → C1 → C4 → C5**.
 
 ## Impacto da entrega
 
-- **Continuidade:** um item inválido deixa de bloquear os demais itens e boards.
-- **Integridade:** associação ambígua não escolhe arquivo arbitrário e a memória
-  de snapshot é restaurada após a execução do agente.
-- **Operação:** falhas isoladas preservam motivo, tentativas e próximo passo;
-  inicialização concorrente é recusada com metadados acionáveis.
-- **Compatibilidade:** sem breaking change ou migração obrigatória de
-  `pipe.yml`; bump MINOR de 1.9.1 para 1.10.0.
+- **Código-fonte:** sem alteração.
+- **Comportamento do produto:** inalterado; risco residual documentado.
+- **Dados do incidente:** recuperados por ação operacional.
+- **Operação:** alerta e resposta temporária documentados.
+- **Rastreabilidade:** incidente, homologação e plano C1–C5 consolidados.
 
 ## Validação
 
-A segunda rodada de pré-produção registrou 1121 testes aprovados, 28 ignorados
-e 1 xpassed. As 24 falhas também ocorriam em `origin/main`, portanto não foram
-introduzidas pelo épico. A homologação humana autorizou o avanço em 20/08/2026.
-A limitação de não haver Docker no sandbox final está registrada no change file
-do épico e não foi ocultada.
-
-## Limites conhecidos
-
-- o lock exige filesystem compartilhado;
-- a guarda desta versão cobre snapshots, não toda a memória interna;
-- dead-letter não possui replay automático; e
-- auditoria parcial de chat em timeout permanece melhoria independente.
-
-## Referências
-
-- `doc/incidente/parent-recursivo/ticket.md`
-- `doc/incidente/parent-recursivo/homologacao.md`
-- `doc/product/confiabilidade-parent-recursivo/post-mortem.md`
-- `doc/changelogs/104-pre-producao-c1-c5-integradas.md`
+A etapa de pré-produção registrou build Docker concluído e importação dos
+módulos sem erros. Após os ajustes documentais finais, a suíte foi reexecutada
+com **199 testes aprovados e 3 ignorados**; `git diff --check` não encontrou
+erros e os links locais dos quatro documentos foram validados.

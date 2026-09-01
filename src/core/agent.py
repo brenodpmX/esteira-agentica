@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.commands import annotations_doc, AGENT_HUB_PREFIX
+from src.core.commands import annotations_doc, AGENT_LEVEL_PREFIX
 from src.core.snapshot import BOARDS_DIR
 
 REPO_DIR = Path("repo")
@@ -113,31 +113,30 @@ def _assert_no_protected(prompt: str) -> None:
                 )
 
 
-def agent_hub(issue: dict) -> str | None:
-    """Lê o valor de roteamento de agente (hub) da issue a partir das labels.
+def agent_level(issue: dict) -> str | None:
+    """Lê o nível de agente da issue a partir das labels do board.
 
-    O valor é armazenado como label `agent-hub-<valor>` no GitHub
-    (ex.: agent-hub-low, agent-hub-senior, agent-hub-deep). O sufixo é livre —
-    pode representar nível, função, profundidade etc.
+    O nível é armazenado como label `agent-level-<nível>` no GitHub
+    (ex.: agent-level-low, agent-level-medium, agent-level-high).
     Essa label é sincronizada nativamente pelo board, eliminando a
     dependência de estado local que causava o bug de preservação no sync-down.
     """
     for label in issue.get("labels", []) or []:
-        if label.startswith(AGENT_HUB_PREFIX):
-            return label[len(AGENT_HUB_PREFIX):]
+        if label.startswith(AGENT_LEVEL_PREFIX):
+            return label[len(AGENT_LEVEL_PREFIX):]
     return None
 
 
 def resolve_agent_id(col: dict, issue: dict) -> str:
-    """Resolve o agente efetivo de uma coluna conforme o hub da issue.
+    """Resolve o agente efetivo de uma coluna conforme o nível da issue.
 
-    Usa `agent-hub[<valor>]` quando o valor (tag /agent-hub-<valor>) existe e
+    Usa `override-agent[<nível>]` quando o nível (tag /agent_level) existe e
     está mapeado; caso contrário, cai no `agent` default da coluna.
     """
-    overrides = col.get("agent-hub") or {}
-    hub = agent_hub(issue)
-    if hub and hub in overrides:
-        return overrides[hub]
+    overrides = col.get("override-agent") or {}
+    level = agent_level(issue)
+    if level and level in overrides:
+        return overrides[level]
     return col.get("agent", "")
 
 

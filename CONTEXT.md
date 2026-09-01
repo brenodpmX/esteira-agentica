@@ -392,28 +392,31 @@ Cobertura em `tests/test_rate_limit_detection.py`.
 | `create-merge` | Git Setup (criar) + Commit & Push + PR + Cleanup |
 | `no-branch` | Nenhum bloco de git |
 
-### Roteamento de agente por hub (`agent-hub`)
+### Substituição de agente por nível (`override-agent`)
 
-A coluna tem um `agent` default. O valor de roteamento de uma issue é armazenado
-como label `agent-hub-<valor>` no GitHub (ex.: `agent-hub-low`,
-`agent-hub-senior`, `agent-hub-deep`). O sufixo é livre (nível, função,
-profundidade etc.). Essa label é sincronizada nativamente pelo board,
-eliminando a dependência de estado local.
+A coluna tem um `agent` default. O nível de execução de uma issue é armazenado
+como label `agent-level-<nível>` no GitHub (ex.: `agent-level-low`,
+`agent-level-medium`, `agent-level-high`). Essa label é sincronizada
+nativamente pelo board, eliminando a dependência de estado local.
 
-Se a issue possuir uma label `agent-hub-<valor>` e `<valor>` for chave de
-`agent-hub`, usa o agente do valor; senão, o `agent` default. Como cada
+Se a issue possuir uma label `agent-level-<nível>` e `<nível>` for chave de
+`override-agent`, usa o agente do valor; senão, o `agent` default. Como cada
 agente carrega o próprio `model`, a troca de agente também troca o model.
 
-Resolvido em `agent.py` (`agent_hub` lê `issue["labels"]` diretamente +
+Resolvido em `agent.py` (`agent_level` lê `issue["labels"]` diretamente +
 `resolve_agent_id`), validado em `config.py`.
 
-No fluxo do planning-poker, o agente escreve `/agent-hub-<valor>` no bloco
-`@---` do body — um token único, no mesmo formato do label. O sync-up chama
-`all_labels()` (em `commands.py`), que emite `agent-hub-<valor>` no conjunto de
-labels efetivas, gravando a label no board via `apply_commands`. A label
-`agent-hub-*` é tratada como campo especial (análogo a `need_human`): extraída
-em `from_issue`, reemitida em `all_labels`, nunca sobrescrita pelo comando
-`/labels` do usuário.
+No fluxo do planning-poker, o agente escreve `/agent_level <nível>` no bloco
+`@---` do body. O sync-up chama `all_labels()` (em `commands.py`), que emite
+`agent-level-<nível>` no conjunto de labels efetivas, gravando a label no board
+via `apply_commands`. A label `agent-level-*` é tratada como campo especial
+(análogo a `need_human`): extraída em `from_issue`, reemitida em `all_labels`,
+nunca sobrescrita pelo comando `/labels` do usuário.
+
+Migração de issues legadas: o `board_full_sync` chama
+`migrate_agent_level_labels` (em `sync.py`) que, para cada issue com
+`/agent_level` no body mas sem label `agent-level-*` no snapshot, enfileira um
+`change-up` para que o sync-up grave a label no board.
 
 ### Contexto do agente
 
@@ -437,7 +440,7 @@ continua de onde parou em vez de recomeçar do zero.
 - **Chave por agente**: `<board>/<issue>/<agente>`. O mesmo agente atuando em
   colunas diferentes retoma o próprio raciocínio; agentes distintos nunca
   herdam a sessão um do outro. O agente da chave é o **resolvido**
-  (`resolve_agent_id`, considera roteamento por `/agent-hub-<valor>`).
+  (`resolve_agent_id`, considera override por `/agent_level`).
 - **Retomar**: antes de executar, se há `session_id` conhecido e ele **ainda
   existe** no kiro-cli (`--list-sessions` do cwd), passa `--resume-id <id>`.
 - **Capturar**: após executar, pega o id da sessão mais recente do cwd
@@ -462,7 +465,7 @@ Detalhes técnicos verificados no kiro-cli:
 ### Log de execução
 
 Gerado em `<log.dir>/<issue_id>/<timestamp>.md` com 3 seções:
-- **Parâmetros**: plataforma, agente, model, agent_hub, board, coluna, issue, context
+- **Parâmetros**: plataforma, agente, model, agent_level, board, coluna, issue, context
 - **Prompt**: prompt completo montado por `build_prompt`
 - **Chat**: diálogo (preenchido durante execução)
 
@@ -506,7 +509,7 @@ boards:
       <id-column>:
         name: <nome>
         agent: <id-agent>
-        agent-hub: {<valor>: <id-agent>}
+        override-agent: {<nível>: <id-agent>}
         gitevents: create|use|merge|create-merge|no-branch
         prompt: <objetivo da etapa>
         archive: true|false
@@ -540,11 +543,11 @@ Módulo `src/core/commands.py`. O body de uma issue pode terminar com um bloco
 de comandos separado por uma linha `@---`.
 
 - `IssueCommands`: dataclass com parent, children[], blocked_by[], blocks[],
-  labels[], agent_hub, close, archive, need_human.
+  labels[], agent_level, close, archive, need_human.
 - `split_body(raw)` → `(body_limpo, IssueCommands)`. Múltiplos `@---`: o último
   vence, anteriores removidos.
 - `compose_body(body, cmds)` → body completo com bloco.
-- `from_issue(issue)` → IssueCommands (extrai `need_human` e `agent_hub` das labels; ambos tratados como campos especiais — não aparecem em `cmds.labels`).
+- `from_issue(issue)` → IssueCommands (extrai `need_human` e `agent_level` das labels; ambos tratados como campos especiais — não aparecem em `cmds.labels`).
 - `annotations_doc()` → documentação compartilhada por prompts e contexts.
 
 Filosofia presença/ausência: o estado escrito é o estado final (SET). Sem
@@ -682,40 +685,6 @@ Os campos de estado (`labels`, `parent`, `children`, `blocked_by`, `blocks`,
 no fluxo up e para a checagem de par recíproco. São gravados em todo evento
 up (estado desejado) e down (estado real do board). `status` é o campo de
 sincronismo (crash recovery), distinto de `state` (open/closed da issue).
-
-## Confiabilidade Parent Recursivo (#97/#104): C1–C5 entregues
-
-O incidente de 01/08/2026 (parent recursivo) está com as cinco frentes de
-correção (C1–C5) implementadas e integradas em `main`. A solução preservou a
-arquitetura hexagonal e adicionou cinco limites no core:
-
-- **C1 — Associação segura:** resolução determinística do body da issue por
-  identidade, sem heurística arbitrária em caso de ambiguidade (#146, story
-  #140).
-- **C2 — Relações válidas:** sanitização de auto-referência em
-  `parent`/`children`/`blocked_by`/`blocks` antes de qualquer chamada ao board
-  (`src/core/commands.py`, story #138/#143).
-- **C3 — Falha isolada:** erros tipados no port, tentativas limitadas e
-  dead-letter persistente por item, sem head-of-line blocking na fila global
-  (story #139/#144/#145).
-- **C4 — Estado protegido:** `SnapshotGuard`/`SnapshotIntegrityError`
-  (`src/core/snapshot.py`) captura, compara e restaura o snapshot ao redor da
-  execução do agente, preservando o modo do arquivo (story #141/#149).
-- **C5 — Instância única:** `InstanceLock`/`LockHeldError` adquirido em
-  `main()` antes do `startup()`, com recusa *fail-fast* quando outra instância
-  já detém o lock sobre o mesmo diretório de estado (story #142/#150/#151).
-  A integração havia sido mergeada apenas em `epic`; a reconciliação #196
-  promoveu-a para `main` (fast-forward, sem conflito).
-
-As decisões, contratos, fluxo de falhas, rollout e testes de regressão estão em
-`doc/architecture/confiabilidade-parent-recursivo/arquitetura.md`. A causa raiz
-e o histórico operacional estão em
-`doc/incidente/parent-recursivo/ticket.md`. Após a conclusão das stories
-#138–#142 e a aprovação de homologação do épico #104 em 20/08/2026, o
-incidente foi reclassificado como **resolvido na versão 1.10.0**. Permanecem
-como limites conhecidos — e não como bloqueadores do encerramento — o lock
-restrito ao filesystem compartilhado, a guarda limitada a snapshots e a
-ausência de replay automático de dead-letter.
 
 ## Post mortem: sub-issues propagadas entre boards (#88/#99/#106)
 
