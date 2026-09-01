@@ -1102,7 +1102,10 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     # conhecido (snapshot): só chama o setter do atributo que realmente mudou,
     # e passa o estado conhecido ao setter para evitar GETs redundantes.
     known = _known_state(issue_data)
-    deltas = board_obj.apply_commands(board_id, item.id, cmds, known=known)
+    deltas = board_obj.apply_commands(
+        board_id, item.id, cmds, known=known,
+        resolve_board_fn=lambda tid: (_find_snapshot_issue(tid) or (None, None))[0],
+    )
 
     # Verificar mudança de coluna
     current_col = _col_from_path(body_path, board_id)

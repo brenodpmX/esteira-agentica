@@ -143,7 +143,7 @@ class TestFormatoLogDescritivo:
 
             agent = KiroCliAgent()
             with patch("src.adapters.kiro_cli_agent.log") as mock_log, \
-                 patch.object(agent, "_run", return_value="output ok"), \
+                 patch.object(agent, "_run", return_value=("output ok", 0)), \
                  patch.object(agent, "_append_log"), \
                  patch.object(agent, "_create_log", return_value=Path(tmp) / "log.md"):
                 mock_log.info.side_effect = fake_log_info
@@ -272,7 +272,7 @@ class TestLogFallbackCamposVazios:
             )
             agent = KiroCliAgent()
             with patch("src.adapters.kiro_cli_agent.log") as mock_log, \
-                 patch.object(agent, "_run", return_value="ok"), \
+                 patch.object(agent, "_run", return_value=("ok", 0)), \
                  patch.object(agent, "_append_log"), \
                  patch.object(agent, "_create_log", return_value=Path(tmp) / "log.md"):
                 mock_log.info.side_effect = fake_log_info
@@ -299,7 +299,7 @@ class TestLogFallbackCamposVazios:
             )
             agent = KiroCliAgent()
             with patch("src.adapters.kiro_cli_agent.log") as mock_log, \
-                 patch.object(agent, "_run", return_value="ok"), \
+                 patch.object(agent, "_run", return_value=("ok", 0)), \
                  patch.object(agent, "_append_log"), \
                  patch.object(agent, "_create_log", return_value=Path(tmp) / "log.md"):
                 # Não deve lançar
@@ -365,7 +365,7 @@ class TestModelECwdRemovidosDoTerminal:
             )
             agent = KiroCliAgent()
             with patch("src.adapters.kiro_cli_agent.log") as mock_log, \
-                 patch.object(agent, "_run", return_value="ok"), \
+                 patch.object(agent, "_run", return_value=("ok", 0)), \
                  patch.object(agent, "_append_log"), \
                  patch.object(agent, "_create_log", return_value=Path(tmp) / "log.md"):
                 mock_log.info.side_effect = fake_log_info
@@ -600,7 +600,7 @@ class TestOmiteTituloEColunaVaziosNoResumo:
             )
             agent = KiroCliAgent()
             with patch("src.adapters.kiro_cli_agent.log") as mock_log, \
-                 patch.object(agent, "_run", return_value="ok"), \
+                 patch.object(agent, "_run", return_value=("ok", 0)), \
                  patch.object(agent, "_append_log"), \
                  patch.object(agent, "_create_log", return_value=Path(tmp) / "log.md"):
                 mock_log.info.side_effect = fake_log_info

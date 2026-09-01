@@ -213,3 +213,19 @@ produzir o mesmo estado final e nenhuma duplicação observável.
 | Haverá retry inline em #208? | Não para `dispatch failure`, `InternalServerError` ou timeout. |
 | Como ocorre nova tentativa hoje? | Pelo loop normal após reconciliação e cooldown, com retomada de sessão quando disponível. |
 | O que habilita retry seguro no futuro? | Interposição de efeitos, journal/outbox, chaves idempotentes e verificação de pós-condição. |
+
+## 9. Restauração da ADR e tratamento da duplicata #214
+
+Em 2026-08-28, confirmou-se que a issue #214 repete o título, o objetivo e o
+escopo já entregues pela issue #208. A implementação aceita é a de #208, via PR
+#224 (merge `0b3bfb8`), incluindo a política fail-closed, os testes e a
+documentação de qualidade. Portanto, #214 deve ser encerrada como duplicata
+com motivo `not_planned`; não haverá segunda implementação nem nova rodada de
+QA para o mesmo escopo.
+
+Esta ADR, originalmente entregue pelos commits `d1316e7` e `4c27204` e pelo PR
+#218, foi restaurada em `epic` após uma divergência de histórico ter removido o
+arquivo, embora referências normativas a ele permanecessem no código e nos
+artefatos de qualidade. A restauração não reabre a decisão arquitetural: o
+contrato da seção 2 continua vigente. A apuração de outras possíveis perdas de
+histórico é trabalho separado e não condiciona o encerramento da duplicata.

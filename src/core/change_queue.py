@@ -105,14 +105,28 @@ class ChangeQueue:
         """Retorna True se há pelo menos um item para o board informado."""
         return any(item.board == board_id for item in self._read())
 
-    def getNext(self) -> ChangeItem | None:
-        """Espia o item mais antigo da fila sem removê-lo (FIFO).
+    def getNext(self, now: str | None = None) -> ChangeItem | None:
+        """Espia o item mais antigo elegível da fila sem removê-lo (FIFO).
 
-        Chamadas repetidas retornam o mesmo item enquanto ele não for removido
-        via remove(uuid). Retorna None se a fila está vazia.
+        Um item com `next_attempt_at` no futuro (comparado a `now`, ISO 8601
+        UTC; usa o instante atual se `now` for None) é pulado — não bloqueia
+        os demais itens elegíveis, que continuam sendo considerados na ordem
+        FIFO normal. Chamadas repetidas retornam o mesmo item elegível
+        enquanto ele não for removido via remove(uuid) ou tiver seu
+        next_attempt_at atualizado. Retorna None se não há item elegível
+        (fila vazia ou todos pendentes no futuro).
+
+        A comparação é lexicográfica sobre o formato fixo e zero-padded
+        `%Y-%m-%dT%H:%M:%SZ` usado por ChangeItem.now() — suficiente porque
+        o formato é ordenável como string.
         """
+        if now is None:
+            now = ChangeItem.now()
         items = self._read()
-        return items[0] if items else None
+        for item in items:
+            if item.next_attempt_at is None or item.next_attempt_at <= now:
+                return item
+        return None
 
     def remove(self, uuid: str) -> bool:
         """Remove da fila o item com o uuid informado (confirma processamento).
@@ -125,6 +139,22 @@ class ChangeQueue:
             return False
         self._write(remaining)
         return True
+
+    def defer(self, item: ChangeItem, next_attempt_at: str) -> None:
+        """Atualiza next_attempt_at do item (por uuid) sem mudar posição/uuid.
+
+        Usado para pendências unresolved: o item continua no mesmo lugar da
+        fila (preserva ordem FIFO original), mas fica inelegível para
+        getNext() até next_attempt_at. Não incrementa attempts. Idempotente
+        por uuid — chamar novamente apenas atualiza o instante. Se o uuid não
+        existir, não faz nada (mesmo padrão de tolerância de remove()).
+        """
+        items = self._read()
+        for existing in items:
+            if existing.uuid == item.uuid:
+                existing.next_attempt_at = next_attempt_at
+                self._write(items)
+                return
 
     def requeue(self, item: ChangeItem) -> None:
         """Remove o item (por uuid) e o readiciona ao fim da fila, atomicamente.

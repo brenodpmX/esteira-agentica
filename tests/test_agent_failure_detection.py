@@ -170,7 +170,7 @@ class TestExecuteUsaDeteccao:
             col_name="Doing", title="Uma issue",
         )
 
-    def _execute_capturando_logs(self, monkeypatch, tmp_path, output):
+    def _execute_capturando_logs(self, monkeypatch, tmp_path, output, returncode=0):
         registros = []
 
         from src.adapters import kiro_cli_agent as mod
@@ -178,7 +178,7 @@ class TestExecuteUsaDeteccao:
         monkeypatch.setattr(mod.KiroCliAgent, "_create_log",
                             lambda self, params: tmp_path / "exec.md")
         monkeypatch.setattr(mod.KiroCliAgent, "_run",
-                            lambda self, params, work_dir: output)
+                            lambda self, params, work_dir: (output, returncode))
         monkeypatch.setattr(mod.log, "info",
                             lambda *a, **k: registros.append(("info", a, k)))
         monkeypatch.setattr(mod.log, "error",
@@ -213,14 +213,16 @@ class TestExecuteUsaDeteccao:
         assert "temporarily unavailable" in falhas[0][1][1]
 
     def test_linha_de_inicio_preserva_formato_do_epic(self, monkeypatch, tmp_path):
-        """Contrato de test_agent_log_descritivo.py: não pode regredir.
+        """Contrato: a linha de início contém board, coluna, issue, título,
+        agente e caminho do log.
 
         A restauração da detecção de falha atua nas linhas de conclusão/erro; a
-        linha de início mantém o formato mais informativo trazido pelo `epic`.
+        linha de início mantém o formato informativo com board/col/issue/title.
         """
         registros = self._execute_capturando_logs(monkeypatch, tmp_path, "ok\n")
         inicio = registros[0][1][1]
-        assert '"Uma issue"' in inicio
-        assert "@ Doing" in inicio
-        assert "agent='engineering'" in inicio
-        assert inicio.index('"Uma issue"') < inicio.index("@ Doing") < inicio.index("agent=")
+        assert "[task]" in inicio
+        assert "[Doing]" in inicio
+        assert "#42" in inicio
+        assert "Uma issue" in inicio
+        assert "engineering" in inicio

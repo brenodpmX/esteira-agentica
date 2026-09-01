@@ -6,7 +6,7 @@ import time
 import re
 from datetime import datetime, timedelta
 
-from src.core.board import BoardPort, Issue, PenaltyException
+from src.core.board import BoardPort, Issue, Participation, PenaltyException
 from src.core.log import log
 
 
@@ -1272,6 +1272,96 @@ query($owner:String!,$repo:String!,$number:Int!){
                             f"{project_id[:8]}...: {e}",
                             operation="remove_propagated_items_without_status",
                             issue_number=issue_number)
+
+    _PARTICIPATIONS_QUERY = """
+query($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    issue(number:$number){
+      projectItems(first:10){
+        nodes{
+          id
+          isArchived
+          project{ id }
+          fieldValues(first:10){
+            nodes{
+              ...on ProjectV2ItemFieldSingleSelectValue{
+                field{...on ProjectV2SingleSelectField{name}}
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}"""
+
+    def list_participations(self, issue_id: str) -> list[Participation]:
+        """Lista todas as participações (Project V2 items) da issue.
+
+        Consulta via GraphQL os `projectItems` da issue (único meio de obter
+        dados de Project V2, incluindo `Status` — não há endpoint REST
+        equivalente), seguindo o mesmo padrão de `_belongs_to_board` e
+        `_remove_propagated_items_without_status`.
+
+        Para cada item retorna um `Participation` com:
+          - `item_id`   = `id` do node;
+          - `project_id`= `project.id` do node;
+          - `board_id`  = board configurado cujo `project_id` (em
+            `self._projects`) bate com o `project.id`, ou `None`;
+          - `status`    = nome da opção do campo `Status`, ou `None` se vazio;
+          - `archived`  = `isArchived` do node, ou `False` se ausente.
+
+        Este método NÃO decide remoção nem classifica intenção — apenas retorna
+        os dados normalizados.
+
+        Diferente do padrão legado de `_remove_propagated_items_without_status`,
+        falha na consulta (exceção do `_gql`) **propaga** — não é capturada, não
+        retorna `[]` nem loga apenas warning. RN-B02: falha transitória na prova
+        de propagação deve resultar em retentativa no core, nunca em lista vazia
+        silenciosa que pareça "sem participações".
+        """
+        owner, repo = self._repo.split("/")
+
+        data = self._gql(
+            self._PARTICIPATIONS_QUERY,
+            owner=owner,
+            repo=repo,
+            number=int(issue_id),
+        )
+
+        nodes = (
+            (data.get("repository") or {})
+            .get("issue", {})
+            .get("projectItems", {})
+            .get("nodes", [])
+        )
+
+        # Mapa project_id -> board_id, mesmo mapeamento de _board_meta.
+        project_to_board = {
+            meta.get("project_id"): board_id
+            for board_id, meta in (self._projects or {}).items()
+        }
+
+        participations: list[Participation] = []
+        for node in nodes:
+            project_id = (node.get("project") or {}).get("id")
+
+            status = None
+            for fv in (node.get("fieldValues", {}) or {}).get("nodes", []):
+                if (fv.get("field") or {}).get("name") == "Status":
+                    status = fv.get("name") or None
+                    break
+
+            participations.append(Participation(
+                item_id=node.get("id"),
+                project_id=project_id,
+                board_id=project_to_board.get(project_id),
+                status=status,
+                archived=bool(node.get("isArchived", False)),
+            ))
+
+        return participations
 
     def _remove_sub_issue(self, parent_number: str, child_number: str) -> None:
         owner, repo = self._repo.split("/")

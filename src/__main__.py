@@ -11,7 +11,7 @@ from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import subprocess
 import shutil
 import os
@@ -545,6 +545,7 @@ def call_agent(config: dict, task: dict | None):
         repo_id=repo_id,
         col_name=col.get("name", col_id),
         title=title,
+        participation_intent=issue.get("participation_intent"),
     )
 
     adapter = KiroCliAgent()
@@ -573,11 +574,63 @@ _BANNER = r"""
 """
 
 
+def emit_rollout_evidence() -> None:
+    """Emite o evento rollout_evidence no startup (RF-06/RN-B08).
+
+    Coleta version (VERSION, sempre disponível - constante do módulo),
+    commit (resolve_commit()) e environment (resolve_environment()).
+    Se COMMIT ou ENVIRONMENT vier None, registra a AUSÊNCIA de forma
+    explícita (warning com rollout_evidence_complete=False e o campo
+    faltante nomeado) em vez de emitir o evento como se estivesse completo
+    - RN-B08: "Ausência ou perda da evidência bloqueia o fechamento, não é
+    aprovada por omissão." Esta função NUNCA levanta exceção nem impede o
+    startup de continuar - a ausência de evidência é um estado observável
+    nos logs, não uma falha fatal do processo (a esteira deve continuar
+    operando mesmo sem evidência completa; é a homologação/apuração
+    posterior que fica bloqueada, conforme não-objetivo da story: "Decidir
+    se a janela de validação foi bem-sucedida... é apuração operacional
+    posterior").
+    """
+    from src.core.version import resolve_commit, resolve_environment
+
+    commit = resolve_commit()
+    environment = resolve_environment()
+    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    complete = commit is not None and environment is not None
+
+    if complete:
+        log.info(
+            "Startup",
+            f"rollout_evidence: v{VERSION} commit={commit[:12]} "
+            f"env={environment} started_at={started_at}",
+            event_type="rollout_evidence",
+            version=VERSION, commit=commit, environment=environment,
+            started_at=started_at, rollout_evidence_complete=True,
+        )
+    else:
+        missing = []
+        if commit is None:
+            missing.append("commit")
+        if environment is None:
+            missing.append("environment")
+        log.warning(
+            "Startup",
+            f"rollout_evidence INCOMPLETO - campos ausentes: {', '.join(missing)} "
+            "- janela de validação NÃO inicia até evidência completa",
+            event_type="rollout_evidence",
+            version=VERSION, commit=commit, environment=environment,
+            started_at=started_at, rollout_evidence_complete=False,
+            missing_fields=missing,
+        )
+
+
 def main():
     global board
     print(_BANNER)
     log.separator()
     log.info("Pipe", f"Iniciando esteira agêntica v{VERSION}")
+
+    emit_rollout_evidence()
 
     config = check_config()
 

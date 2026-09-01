@@ -47,7 +47,7 @@ agents:
   kiro-cli:
     dev:
       name: engineering
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4.5
 
 boards:
   platform: github
@@ -367,6 +367,41 @@ Cada execução gera um arquivo em `logs/<issue_id>/<timestamp>.md` com:
 - **Parâmetros**: plataforma, agente, model, agent_hub, board, coluna, issue
 - **Prompt**: prompt completo enviado ao agente
 - **Chat**: diálogo da execução (preenchido pelo adapter)
+- **Resultado**: classificação da execução, número de invocações do kiro-cli,
+  exit-code, `request_id`, `session_id`, marcador de abort e erro extraído
+
+### Abort transitório do kiro-cli (política fail-closed)
+
+O `kiro-cli` pode abortar o turno no meio, sem rollback, com `dispatch failure`
+ou `InternalServerError` (bug upstream
+[kirodotdev/Kiro#6065](https://github.com/kirodotdev/Kiro/issues/6065), fechado
+como "not planned"). O abort pode ocorrer **depois** de o agente já ter feito
+`git commit`, `git push` ou movido os arquivos da issue de coluna, e nem o
+output parcial nem o `--resume-id` provam ausência de efeitos.
+
+Por isso a esteira **não** faz retry inline nesses casos. Cada execução é
+classificada em um dos três estados abaixo e registrada no bloco **Resultado**
+do log de execução:
+
+| Classificação | Quando | Consequência |
+|---------------|--------|--------------|
+| `SUCCEEDED` | nenhuma falha detectada | fluxo normal |
+| `DEFINITE_NOT_STARTED` | evidência positiva de que o subprocesso não rodou (ex.: `kiro-cli` ausente do PATH, diretório de trabalho inexistente) | nada foi aplicado |
+| `UNKNOWN_OUTCOME` | `dispatch failure`, `InternalServerError`, timeout ou qualquer outra falha sem prova de não-inicialização | resultado ambíguo |
+
+Em `UNKNOWN_OUTCOME` a entrega é encerrada preservando a evidência (output
+integral, `request_id`, erro e `session_id`). A nova tentativa é do **loop
+normal**: só depois de reconciliar filesystem, git e board, respeitando
+`boards.rerun_cooldown` e retomando a sessão com `--resume-id` quando ela ainda
+existir.
+
+Cada entrega invoca o `kiro-cli chat` **no máximo uma vez**
+(`_MAX_INVOCATIONS = 1`, validado por `_DeliveryBudget`): uma segunda invocação
+na mesma execução levanta `SingleInvocationViolation` em vez de duplicar
+silenciosamente um efeito já aplicado. Retry automático com backoff depende da
+fronteira idempotente (journal/outbox, chaves idempotentes, verificação de
+pós-condição) especificada na ADR
+`doc/architecture/retry-kiro-cli/idempotencia.md`.
 
 ### Continuidade de sessão
 

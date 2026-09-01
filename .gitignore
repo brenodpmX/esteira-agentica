@@ -3,6 +3,7 @@
 logs/
 contexts/
 repo/
+.kiro/agents/pipe_context.json
 
 # Python
 __pycache__/
