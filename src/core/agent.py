@@ -245,6 +245,11 @@ def build_prompt(config: dict, task: dict) -> str:
     lines.append(f"**Tarefa:** {title}")
     lines.append(f"**Etapa:** {col.get('name', col_id)}")
     lines.append(f"**Objetivo:** {col.get('target-prompt', '')}")
+    _step = col.get("step-prompt")
+    if _step and str(_step).strip():
+        lines.append("")
+        lines.append("**Passos:**")
+        lines.append(str(_step).strip())
     lines.append("")
 
     # ── Sandbox / regras de operação ──
