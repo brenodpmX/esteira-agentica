@@ -29,21 +29,57 @@ _DEFINITIVE_MESSAGE_SUBSTRINGS = (
     "não pertence a este board",
 )
 
+# Substrings que indicam erro de VALIDAÇÃO do board (HTTP 422) ao aplicar
+# relações/labels declaradas — corrigível pelo próprio agente (E4). Não entra
+# no retry cego de max_attempts: dispara uma remediação única no loop.
+_CORRIGIVEL_MESSAGE_SUBSTRINGS = (
+    "validation failed",
+    "http 422",
+    "422:",
+    "unprocessable",
+)
+
 # next_step: ação recomendada, curta e acionável, por categoria de dead-letter.
 _NEXT_STEP = {
     "definitivo": "item não será retentado; revisar manualmente e, se aplicável, recriar a entrada",
     "transitorio_esgotado": "limite de tentativas esgotado; verificar causa raiz antes de reenviar manualmente",
+    "corrigivel_pelo_agente": "remediação única falhou; revisar os erros de validação do board e as anotações/comandos do -body.md",
 }
+
+
+@dataclass
+class RemediationSignal:
+    """Sinal de que um item precisa de remediação pelo agente (E4).
+
+    A sync NÃO chama o agente: coleta estes sinais e os devolve ao loop do
+    `__main__`, que orquestra a remediação única + re-sync + fail-stop.
+    """
+    board_id: str
+    issue_id: str
+    event: str
+    reason: str
+
+
+class RemediationFailStop(Exception):
+    """Fail-stop controlado (E4): remediação única falhou → PARA a esteira."""
+    def __init__(self, board_id: str, issue_id: str, reason: str):
+        self.board_id = board_id
+        self.issue_id = issue_id
+        self.reason = reason
+        super().__init__(
+            f"[{board_id}] #{issue_id} remediação falhou (fail-stop): {reason}"
+        )
 
 
 def classify_error(exc: Exception) -> str:
     """Classifica um erro de sincronismo em categoria estável.
 
-    Retorna uma das três categorias:
-    - "rate_limit": PenaltyException (rate limit do board, tratado pelo
-      throttle/penalty — não é responsabilidade do item da fila).
-    - "definitivo": mensagens estáveis que indicam que o alvo não existe ou
-      nunca vai se resolver (issue fantasma, isolamento de board).
+    Categorias:
+    - "rate_limit": PenaltyException (throttle/penalty do board).
+    - "definitivo": mensagens estáveis de alvo inexistente (issue fantasma,
+      isolamento de board).
+    - "corrigivel_pelo_agente": validação do board (HTTP 422 / "Validation
+      Failed") ao aplicar relações/labels — o agente pode corrigir (E4).
     - "transitorio": qualquer outra exceção (default seguro).
 
     Função pura: não faz I/O nem loga.
@@ -53,6 +89,9 @@ def classify_error(exc: Exception) -> str:
     message = str(exc)
     if any(substr in message for substr in _DEFINITIVE_MESSAGE_SUBSTRINGS):
         return "definitivo"
+    low = message.lower()
+    if any(substr in low for substr in _CORRIGIVEL_MESSAGE_SUBSTRINGS):
+        return "corrigivel_pelo_agente"
     return "transitorio"
 
 
@@ -807,22 +846,28 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
     Erros não classificados como rate limit nunca interrompem o processamento
     dos demais itens (evita head-of-line blocking, ver incidente #97):
     - "definitivo": item sai da fila já na primeira falha.
+    - "corrigivel_pelo_agente" (E4): validação do board (422); item sai da fila
+      SEM retry cego e é reportado como RemediationSignal ao loop (que orquestra
+      a remediação única).
     - "transitorio": item volta ao fim da fila com attempts incrementado, até
       esgotar o limite configurado (sync.max_attempts); aí também sai da fila.
     Cada item é tentado no máximo uma vez por chamada de apply_changes.
+
+    Retorna a lista de RemediationSignal coletados (vazia se nenhum).
     """
     config = config or {}
     max_attempts = resolve_max_attempts(config)
     tried_targets = []
+    remediation_signals: list[RemediationSignal] = []
 
     while True:
         item = queue.getNext()
         if not item:
-            return
+            return remediation_signals
         if any(item.same_target(t) for t in tried_targets):
             # Já tentamos este alvo nesta chamada (requeue ao fim da fila) —
             # não reprocessar no mesmo ciclo, evita loop infinito.
-            return
+            return remediation_signals
         tried_targets.append(item)
 
         board_id = item.board
@@ -843,9 +888,25 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
             queue.remove(item.uuid)
         except PenaltyException:
             log.warning("Sync", f"[{board_id}] Penalty - abandonando apply_changes")
-            return
+            return remediation_signals
         except Exception as exc:
             category = classify_error(exc)
+            if category == "corrigivel_pelo_agente":
+                # E4: NÃO entra no retry cego nem vai para dead-letter agora.
+                # Sai da fila e sinaliza "precisa remediação" ao loop.
+                log.warning(
+                    "Sync",
+                    f"[{board_id}] #{item.id} erro corrigível pelo agente em "
+                    f"{item.event} - sinalizando remediação: {exc}",
+                    board_id=board_id, issue_id=item.id, event=item.event,
+                    reason=sanitize_reason(str(exc)), category=category,
+                )
+                remediation_signals.append(RemediationSignal(
+                    board_id=board_id, issue_id=str(item.id),
+                    event=item.event, reason=sanitize_reason(str(exc)),
+                ))
+                queue.remove(item.uuid)
+                continue
             if category == "definitivo":
                 log.warning(
                     "Sync",

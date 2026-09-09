@@ -166,11 +166,14 @@ class KiroCliAgent(AgentPort):
     def _compose_input(self, params: AgentParams, resuming: bool = False) -> str:
         """Monta o input do agente.
 
-        E10: quando retomando uma sessão CONFIRMADA (`resuming`) e há prompt de
-        continuação, envia só a continuação (a sessão já carrega persona +
-        contexto da execução anterior). Caso contrário, envia persona + prompt
-        de execução completo (fallback anti-delírio quando não há sessão).
+        Prioridade:
+        1. remediation_prompt (E4): sempre que definido, contém os erros de sync
+           e tem precedência (a sessão, se existir, é retomada em paralelo).
+        2. resuming + continuation_prompt (E10): continuação em sessão confirmada.
+        3. persona + prompt de execução completo (fallback anti-delírio).
         """
+        if params.remediation_prompt and params.remediation_prompt.strip():
+            return params.remediation_prompt.strip()
         if resuming and params.continuation_prompt and params.continuation_prompt.strip():
             return params.continuation_prompt.strip()
         if params.context and params.context.strip():

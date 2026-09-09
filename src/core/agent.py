@@ -170,6 +170,7 @@ class AgentParams:
     repo_id: str = None    # id do repositório alvo (chave em git.repo)
     context: str = None
     continuation_prompt: str = None  # prompt de continuação (E10) quando há sessão
+    remediation_prompt: str = None   # prompt de remediação (E4) com os erros de sync
     col_name: str = ""     # nome humanizado da coluna/etapa (log de terminal)
     title: str = ""        # título da issue (log de terminal)
 
@@ -410,6 +411,36 @@ def build_continuation_prompt(config: dict, task: dict) -> str:
         lines.append(f"- **{condition}** → `mv {issue_dir}/{slug}-*.md {target_dir}/`")
     lines.append("")
 
+    prompt = "\n".join(lines)
+    _assert_no_protected(prompt)
+    return prompt
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# build_remediation_prompt (E4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_remediation_prompt(config: dict, task: dict, errors: str) -> str:
+    """Monta o PROMPT DE REMEDIAÇÃO (E4) com os erros da sincronização.
+
+    Enviado uma única vez quando o sync falha com erro corrigível pelo agente
+    (validação do board / 422). Distinto do prompt de execução e do de
+    continuação (E10, situação 3): não pede refazer a tarefa, só corrigir o que
+    causou a falha de sincronização.
+    """
+    lines = [
+        "Sua última execução nesta issue foi concluída, mas a esteira não "
+        "conseguiu sincronizar as alterações com o board. Não refaça a tarefa — "
+        "corrija apenas o que causou a falha.",
+        "",
+        "Erros da sincronização:",
+        (errors or "").strip() or "(sem detalhes)",
+        "",
+        "Ajuste os comandos e anotações do `-body.md` (bloco `@---` e anotações) "
+        "para resolver esses erros, seguindo as regras do sistema (relações, "
+        "anti-ciclo, declarar de um lado só). Altere só o necessário para "
+        "sincronizar.",
+    ]
     prompt = "\n".join(lines)
     _assert_no_protected(prompt)
     return prompt
