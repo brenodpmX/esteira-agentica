@@ -96,15 +96,20 @@ class KiroCliAgent(AgentPort):
         # KIRO_HOME — não passamos `--agent`.
 
         # Retoma a sessão anterior se ainda existir.
+        # Chave por (issue, coluna) — E10 (não depende do agente).
         index = SessionIndex()
-        known_id = index.get(params.board_id, params.issue_id, params.agent_id)
-        if known_id and self._session_exists(known_id, work_dir, env):
+        known_id = index.get(params.issue_id, params.col_id)
+        resuming = bool(known_id and self._session_exists(known_id, work_dir, env))
+        if resuming:
             cmd += ["--resume-id", known_id]
             log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "
-                     f"retomando sessão {known_id}",
-                     session_id=known_id, agent=params.agent_id)
+                     f"retomando sessão {known_id} (continuação)",
+                     session_id=known_id, col_id=params.col_id)
 
-        cmd.append(self._compose_input(params))
+        # GUARDA anti-delírio (E10): só usa o prompt de continuação quando a
+        # sessão foi CONFIRMADA (known_id + _session_exists). Sem sessão →
+        # prompt de execução completo.
+        cmd.append(self._compose_input(params, resuming=resuming))
 
         try:
             result = subprocess.run(
@@ -125,7 +130,7 @@ class KiroCliAgent(AgentPort):
         # execução (mesma quando retomada por id, nova quando criada agora).
         current_id = self._latest_session_id(work_dir, env)
         if current_id:
-            index.set(params.board_id, params.issue_id, params.agent_id, current_id)
+            index.set(params.issue_id, params.col_id, current_id)
 
         output = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0:
@@ -158,8 +163,16 @@ class KiroCliAgent(AgentPort):
         ids = self._list_session_ids(work_dir, env)
         return ids[0] if ids else None
 
-    def _compose_input(self, params: AgentParams) -> str:
-        """Monta o input do agente: contexto do papel + prompt da tarefa."""
+    def _compose_input(self, params: AgentParams, resuming: bool = False) -> str:
+        """Monta o input do agente.
+
+        E10: quando retomando uma sessão CONFIRMADA (`resuming`) e há prompt de
+        continuação, envia só a continuação (a sessão já carrega persona +
+        contexto da execução anterior). Caso contrário, envia persona + prompt
+        de execução completo (fallback anti-delírio quando não há sessão).
+        """
+        if resuming and params.continuation_prompt and params.continuation_prompt.strip():
+            return params.continuation_prompt.strip()
         if params.context and params.context.strip():
             return f"{params.context.strip()}\n\n---\n\n{params.prompt}"
         return params.prompt

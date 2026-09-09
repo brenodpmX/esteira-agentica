@@ -241,33 +241,33 @@ def test_pair_trigger_removed_only_when_still_reciprocated():
 def test_session_index_set_get_roundtrip():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    assert idx.get("b", "1", "eng") is None
-    idx.set("b", "1", "eng", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-    assert idx.get("b", "1", "eng") == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert idx.get("1", "doing") is None
+    idx.set("1", "doing", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert idx.get("1", "doing") == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
-def test_session_index_isolated_by_agent_and_issue():
+def test_session_index_isolated_by_issue_and_column():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    idx.set("b", "1", "eng", "id-eng")
-    idx.set("b", "1", "qa", "id-qa")
-    idx.set("b", "2", "eng", "id-eng-2")
-    assert idx.get("b", "1", "eng") == "id-eng"
-    assert idx.get("b", "1", "qa") == "id-qa"
-    assert idx.get("b", "2", "eng") == "id-eng-2"
+    idx.set("1", "doing", "id-doing")
+    idx.set("1", "review", "id-review")
+    idx.set("2", "doing", "id-doing-2")
+    assert idx.get("1", "doing") == "id-doing"
+    assert idx.get("1", "review") == "id-review"
+    assert idx.get("2", "doing") == "id-doing-2"
 
 
 def test_session_index_overwrite_updates_id():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    idx.set("b", "1", "eng", "old-id")
-    idx.set("b", "1", "eng", "new-id")
-    assert idx.get("b", "1", "eng") == "new-id"
+    idx.set("1", "doing", "old-id")
+    idx.set("1", "doing", "new-id")
+    assert idx.get("1", "doing") == "new-id"
 
 
 def test_session_index_set_empty_is_noop():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    idx.set("b", "1", "eng", "")
-    assert idx.get("b", "1", "eng") is None
+    idx.set("1", "doing", "")
+    assert idx.get("1", "doing") is None
 

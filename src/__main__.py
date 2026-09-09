@@ -524,6 +524,9 @@ def call_agent(config: dict, task: dict | None):
     work_dir = resolve_work_dir(config, board_cfg)
 
     prompt = build_prompt(config, task)
+    # E10: prompt de continuação (usado pelo adapter quando há sessão confirmada).
+    from src.core.agent import build_continuation_prompt
+    continuation_prompt = build_continuation_prompt(config, task)
 
     # Persona do agente (P1.4): injetada por código via AgentParams.context.
     # A persona vive em contexts/<platform>/<agent_id>.md (NÃO vai para steering).
@@ -552,6 +555,7 @@ def call_agent(config: dict, task: dict | None):
         work_dir=str(work_dir),
         repo_id=repo_id,
         context=persona or None,
+        continuation_prompt=continuation_prompt,
         col_name=col.get("name", col_id),
         title=title,
     )

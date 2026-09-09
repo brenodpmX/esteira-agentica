@@ -169,6 +169,7 @@ class AgentParams:
     work_dir: str          # diretório de trabalho do agente (clone em repo/<repo_id>)
     repo_id: str = None    # id do repositório alvo (chave em git.repo)
     context: str = None
+    continuation_prompt: str = None  # prompt de continuação (E10) quando há sessão
     col_name: str = ""     # nome humanizado da coluna/etapa (log de terminal)
     title: str = ""        # título da issue (log de terminal)
 
@@ -362,4 +363,53 @@ def build_prompt(config: dict, task: dict) -> str:
     # esteira vaze no prompt enviado ao agente.
     _assert_no_protected(prompt)
 
+    return prompt
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# build_continuation_prompt (E10)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_continuation_prompt(config: dict, task: dict) -> str:
+    """Monta o PROMPT DE CONTINUAÇÃO (E10) para uma sessão preservada.
+
+    Usado quando existe sessão CONFIRMADA para (issue, coluna): o agente já
+    trabalhou nesta etapa e retoma via `--resume-id`. Em vez de reexecutar o
+    prompt completo, envia um nudge genérico + ponteiros aos arquivos + a
+    transição de coluna, para o agente continuar de onde parou.
+    """
+    board_id = task["board_id"]
+    col = task["column"]
+    col_id = task["col_id"]
+    issue = task["issue"]
+    change = col.get("change", {})
+
+    body_path = Path(issue.get("body_path", "")).resolve()
+    slug = body_path.stem.removesuffix("-body")
+    issue_dir = body_path.parent
+    history_file = issue_dir / f"{slug}-history.md"
+    addcomment_file = issue_dir / f"{slug}-addcomment.md"
+
+    lines = [
+        "Você já trabalhou nesta etapa desta issue. Releia o history/addcomment "
+        "em busca de apontamentos novos e continue de onde parou até concluir a "
+        "etapa — não recomece do zero.",
+        "",
+        f"- Histórico: `{history_file}`",
+        f"- Anotações/comentário: `{addcomment_file}`",
+        f"- Body da issue: `{body_path}`",
+        "",
+        "## Transição de coluna",
+        "",
+        "Ao finalizar, mova os 3 arquivos da issue (`-body.md`, `-history.md`, "
+        "`-addcomment.md`) para a coluna de destino.",
+        "",
+    ]
+    for condition, target_col in change.items():
+        target_dir = (BOARDS_DIR / board_id / target_col).resolve()
+        lines.append(f"- **{condition}** → `mv {issue_dir}/{slug}-*.md {target_dir}/`")
+    lines.append("")
+
+    prompt = "\n".join(lines)
+    _assert_no_protected(prompt)
     return prompt
