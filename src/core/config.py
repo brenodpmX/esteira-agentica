@@ -50,6 +50,17 @@ def _validate_git(git: dict):
             continue
         if "name" not in flow_cfg and "prefix" not in flow_cfg:
             raise ConfigError(f"git.flow.{flow_id}: requer 'name' ou 'prefix'")
+        # E1 (F0.5): branch_pattern por flow — template legível do nome da branch.
+        # Validação NÃO-obrigatória por ora (o campo chega no pipe.yml em F1.1);
+        # mas SE presente, deve ser string não-vazia. A obrigatoriedade e o uso
+        # descritivo em build_prompt (E3) entram junto com F1.1.
+        if "branch_pattern" in flow_cfg:
+            bp = flow_cfg["branch_pattern"]
+            if not isinstance(bp, str) or not bp.strip():
+                raise ConfigError(
+                    f"git.flow.{flow_id}.branch_pattern: deve ser uma string não-vazia "
+                    f"(template do nome da branch, ex.: 'story/#{{id}}-{{nome}}')"
+                )
 
 
 CONTEXTS_DIR = Path("contexts")
