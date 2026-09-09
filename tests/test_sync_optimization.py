@@ -154,16 +154,22 @@ def test_apply_commands_no_known_reconciles_all():
     assert "unarchive" in ops
 
 
-def test_apply_commands_close_skipped_when_already_closed():
+def test_apply_commands_nao_fecha_via_comando_e9():
+    """E9: apply_commands NÃO fecha issues; fechamento é label do adapter.
+
+    A coluna terminal adiciona a label `completed`/`not_planned` (via labels);
+    o core só faz set_labels — nunca chama close_issue diretamente.
+    """
     port = FakePort()
     board = Board(port)
-    cmds = IssueCommands(close="completed")
+    cmds = IssueCommands(labels=["completed"])
     known = {
         "labels": [], "parent": None, "children": [],
-        "blocked_by": [], "blocks": [], "archived": False, "state": "closed",
+        "blocked_by": [], "blocks": [], "archived": False, "state": "open",
     }
     board.apply_commands("b", "1", cmds, known=known)
     assert "close" not in _ops(port)
+    assert ("set_labels", "1", ["completed"]) in port.calls
 
 
 # ── Pair-trigger: terminação ──────────────────────────────────────────────────

@@ -1068,21 +1068,20 @@ query($owner:String!,$repo:String!,$number:Int!){
             for c in data.get("comments", [])
         ]
 
-    def close_issue(self, board_id: str, issue_id: str) -> None:
+    def close_issue(self, board_id: str, issue_id: str, reason: str | None = None) -> None:
         self._penalty_check()
         # Valida pertinência antes de fechar — impede fechamento de issues de
         # outro board que coincidam numericamente (Correção 5 — Incidente Issue Fantasma).
         if not self._assert_belongs_to_board(board_id, issue_id):
             return
-        log.trace("GitHub", f"{self._tp}#{issue_id} - Fechando issue",
+        log.trace("GitHub", f"{self._tp}#{issue_id} - Fechando issue"
+                  + (f" ({reason})" if reason else ""),
                  operation="close_issue", board_id=board_id, issue_id=issue_id)
-        self._gh("issue", "close", issue_id, "--repo", self._repo)
-
-    def reopen_issue(self, board_id: str, issue_id: str) -> None:
-        self._penalty_check()
-        log.trace("GitHub", f"{self._tp}#{issue_id} - Reabrindo issue",
-                 operation="reopen_issue", board_id=board_id, issue_id=issue_id)
-        self._gh("issue", "reopen", issue_id, "--repo", self._repo)
+        args = ["issue", "close", issue_id, "--repo", self._repo]
+        # E9: motivo do fechamento (completed | not_planned) quando informado.
+        if reason in ("completed", "not_planned"):
+            args += ["--reason", reason]
+        self._gh(*args)
 
     # ── Resolução de databaseId ───────────────────────────────────────────────
 
@@ -1431,6 +1430,23 @@ query($owner:String!,$repo:String!,$number:Int!){
                 "--input", "-",
                 f"/repos/{owner}/{repo}/issues/{issue_id}/labels"]
         self._gh(*args, stdin=payload)
+        # E9: o adapter interpreta a label de fechamento e fecha com o motivo.
+        self._interpret_closing_labels(board_id, issue_id, labels or [])
+
+    # Labels que, quando presentes, disparam o fechamento da issue (E9).
+    # O core é agnóstico: só adiciona a label; o efeito de fechar vive aqui.
+    _CLOSING_LABELS = ("completed", "not_planned")
+
+    def _interpret_closing_labels(self, board_id: str, issue_id: str,
+                                  labels: list[str]) -> None:
+        """Fecha a issue se uma label de fechamento (completed/not_planned) está
+        presente. `not_planned` tem precedência sobre `completed` se ambas
+        aparecerem (cancelamento é mais específico)."""
+        present = [l for l in self._CLOSING_LABELS if l in (labels or [])]
+        if not present:
+            return
+        reason = "not_planned" if "not_planned" in present else "completed"
+        self.close_issue(board_id, issue_id, reason=reason)
 
     def add_label(self, board_id: str, issue_id: str, label: str) -> None:
         """Adiciona uma única label (mantém as demais) via POST REST."""
@@ -1440,6 +1456,8 @@ query($owner:String!,$repo:String!,$number:Int!){
                  operation="add_label", board_id=board_id, issue_id=issue_id)
         self._api("POST", f"/repos/{owner}/{repo}/issues/{issue_id}/labels",
                   **{"labels[]": label})
+        # E9: fechar quando a label adicionada é de fechamento.
+        self._interpret_closing_labels(board_id, issue_id, [label])
 
     def remove_label(self, board_id: str, issue_id: str, label: str) -> None:
         """Remove uma única label (mantém as demais) via DELETE REST."""

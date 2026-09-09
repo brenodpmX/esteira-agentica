@@ -395,17 +395,18 @@ def _known_state(issue_data: dict) -> dict:
 
 
 def _write_state_from_cmds(issue_data: dict, cmds) -> None:
-    """Grava no snapshot o estado desejado declarado nos comandos (fluxo up)."""
+    """Grava no snapshot o estado desejado declarado nos comandos (fluxo up).
+
+    Fechamento (E9): o core não deriva `state` de comandos. O `state` real vem
+    do board no fluxo down (`_write_state_from_issue`); o fechamento é efeito da
+    label `completed`/`not_planned` interpretada pelo adapter.
+    """
     issue_data["labels"] = cmds.all_labels()
     issue_data["parent"] = str(cmds.parent) if cmds.parent else None
     issue_data["children"] = [str(c) for c in (cmds.children or [])]
     issue_data["blocked_by"] = [str(b) for b in (cmds.blocked_by or [])]
     issue_data["blocks"] = [str(b) for b in (cmds.blocks or [])]
     issue_data["archived"] = bool(cmds.archive)
-    if cmds.close:
-        issue_data["state"] = "closed"
-    elif cmds.reopen:
-        issue_data["state"] = "open"
 
 
 def _write_state_from_issue(issue_data: dict, issue, fullsync: bool) -> None:

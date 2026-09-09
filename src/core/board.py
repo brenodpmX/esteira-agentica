@@ -171,10 +171,6 @@ class BoardPort(ABC):
 
     # ── Operações opcionais (defaults no-op; adapters sobrescrevem) ───────────
 
-    def reopen_issue(self, board_id: str, issue_id: str) -> None:
-        """Reabre uma issue fechada."""
-        log.warning("Board", "reopen_issue não implementado neste adapter")
-
     def set_labels(self, board_id: str, issue_id: str, labels: list[str]) -> None:
         """Define (SET) as labels da issue, substituindo as existentes."""
         log.warning("Board", "set_labels não implementado neste adapter")
@@ -292,9 +288,6 @@ class Board:
 
     def close_issue(self, board_id: str, issue_id: str):
         self._port.close_issue(board_id, issue_id)
-
-    def reopen_issue(self, board_id: str, issue_id: str):
-        self._port.reopen_issue(board_id, issue_id)
 
     def set_labels(self, board_id: str, issue_id: str, labels: list[str]):
         self._port.set_labels(board_id, issue_id, labels)
@@ -419,15 +412,10 @@ class Board:
             else:
                 self.unarchive_issue(board_id, issue_id)
 
-        # ── Fechamento / reabertura ──────────────────────────────────────────────
-        # close presente fecha; reopen presente reabre; ausência não altera.
-        known_state = (known.get("state") or "").lower() if has_known else None
-        if cmds.close:
-            if not has_known or known_state != "closed":
-                self.close_issue(board_id, issue_id)
-        elif cmds.reopen:
-            if not has_known or known_state != "open":
-                self.reopen_issue(board_id, issue_id)
+        # Fechamento (E9): o core NÃO fecha a partir de comandos. A coluna
+        # terminal adiciona a label `completed`/`not_planned` (via all_labels →
+        # set_labels acima) e o adapter do board interpreta a label e fecha a
+        # issue com o motivo. Reabrir não existe (ação humana).
 
         return deltas
 
@@ -435,14 +423,16 @@ class Board:
         """Aplica eventos de coluna (on_in/on_out).
 
         Cada token do array é interpretado:
-          'close'          -> fecha a issue
-          'open'           -> reabre (se fechada) e desarquiva (se arquivada)
           'archive'        -> arquiva o item no project
           '-archive'       -> desarquiva o item no project
           'need_human'     -> adiciona a label especial need_human
           '-need_human'    -> remove a label need_human
-          '<label>'        -> adiciona a label
+          '<label>'        -> adiciona a label (ex.: 'completed', 'not_planned')
           '-<label>'       -> remove a label
+
+        Fechamento (E9): não há token 'close'/'open'. A coluna terminal adiciona
+        a label `completed`/`not_planned`; o adapter do board interpreta essa
+        label e fecha a issue. Reabrir não existe.
         """
         from src.core.commands import NEED_HUMAN_LABEL
 
@@ -451,12 +441,7 @@ class Board:
             if not token:
                 continue
 
-            if token == "close":
-                self.close_issue(board_id, issue_id)
-            elif token == "open":
-                self.reopen_issue(board_id, issue_id)
-                self.unarchive_issue(board_id, issue_id)
-            elif token == "archive":
+            if token == "archive":
                 self.archive_issue(board_id, issue_id)
             elif token == "-archive":
                 self.unarchive_issue(board_id, issue_id)

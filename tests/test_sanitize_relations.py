@@ -208,13 +208,11 @@ def test_sanitize_returns_new_instance():
 def test_sanitize_preserves_other_fields_unchanged():
     cmds = IssueCommands(
         parent="76", labels=["backend", "security"], agent_hub="high",
-        close="completed", reopen=False, archive=True, need_human=True,
+        archive=True, need_human=True,
     )
     result = sanitize_relations("76", cmds)
     assert result.labels == ["backend", "security"]
     assert result.agent_hub == "high"
-    assert result.close == "completed"
-    assert result.reopen is False
     assert result.archive is True
     assert result.need_human is True
 

@@ -33,9 +33,13 @@ Comandos suportados:
 - /blocks #N, #M        esta issue bloqueia N e M
 - /labels a, b, c       labels da issue (SET completo)
 - /agent-hub-<valor>    roteamento de agente (hub); <valor> é livre (ex.: low, senior, deep)
-- /close [completed|not_planned]
 - /archive
 - /need_human           label especial (não entra em /labels)
+
+Fechamento (E9): o agente NÃO fecha issues. A coluna terminal adiciona uma
+label (`completed`/`not_planned`) via `on_in`; o adapter do board interpreta
+essa label e fecha a issue com o motivo. O core é agnóstico (só adiciona/remove
+a label). Reabrir não existe na esteira (ação humana).
 """
 
 import re
@@ -65,8 +69,6 @@ class IssueCommands:
     blocks: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
     agent_hub: str | None = None
-    close: str | None = None        # 'completed' | 'not_planned'
-    reopen: bool = False
     archive: bool = False
     need_human: bool = False
 
@@ -74,8 +76,7 @@ class IssueCommands:
         """True se nenhum comando foi declarado."""
         return not (
             self.parent or self.children or self.blocked_by or self.blocks
-            or self.labels or self.agent_hub or self.close or self.reopen
-            or self.archive or self.need_human
+            or self.labels or self.agent_hub or self.archive or self.need_human
         )
 
     def all_labels(self) -> list[str]:
@@ -239,10 +240,6 @@ def parse_commands(text: str) -> IssueCommands:
             # O sufixo (após "agent-hub-") é o valor do hub, livre.
             value = name[len(AGENT_HUB_PREFIX):]
             cmds.agent_hub = value or None
-        elif name == "close":
-            cmds.close = arg.split()[0] if arg else "completed"
-        elif name == "reopen":
-            cmds.reopen = True
         elif name == "archive":
             cmds.archive = True
         elif name == "need_human":
@@ -398,10 +395,6 @@ def serialize_commands(cmds: IssueCommands) -> str:
         lines.append(f"/{AGENT_HUB_PREFIX}{cmds.agent_hub}")
     if cmds.need_human:
         lines.append("/need_human")
-    if cmds.close:
-        lines.append(f"/close {cmds.close}")
-    if cmds.reopen:
-        lines.append("/reopen")
     if cmds.archive:
         lines.append("/archive")
     return "\n".join(lines)
@@ -445,7 +438,6 @@ Comandos disponíveis:
 - `/labels a, b, c`       define as labels da issue (substitui todas)
 - `/agent-hub-<valor>`    roteamento de agente (hub); escreva como um label, ex.: `/agent-hub-low`
 - `/need_human`           marca que precisa de intervenção humana
-- `/close [completed|not_planned]`  fecha a issue
 - `/archive`              arquiva a issue no board
 
 Ao criar uma sub-issue, sempre anote o vínculo: no body da nova issue use \
@@ -481,14 +473,16 @@ def apply_events_to_commands(cmds: IssueCommands, events: list[str]) -> IssueCom
     """Aplica tokens de evento de coluna sobre um IssueCommands (in-place).
 
     Reescreve o estado declarativo dos comandos conforme os tokens:
-      'close'        -> close = 'completed'
-      'open'         -> reopen = True, archive = False, close = None
       'archive'      -> archive = True
       '-archive'     -> archive = False
       'need_human'   -> need_human = True
       '-need_human'  -> need_human = False
-      '<label>'      -> adiciona label
+      '<label>'      -> adiciona label (ex.: 'completed', 'not_planned')
       '-<label>'     -> remove label
+
+    Fechamento (E9): não há token 'close'/'open'. A coluna terminal adiciona a
+    label `completed`/`not_planned` (tokens de label comuns); o adapter do board
+    interpreta essa label e fecha a issue. Reabrir não existe.
 
     Retorna o próprio cmds (mutado) para encadeamento.
     """
@@ -497,14 +491,7 @@ def apply_events_to_commands(cmds: IssueCommands, events: list[str]) -> IssueCom
         if not token:
             continue
 
-        if token == "close":
-            cmds.close = "completed"
-            cmds.reopen = False
-        elif token == "open":
-            cmds.reopen = True
-            cmds.close = None
-            cmds.archive = False
-        elif token == "archive":
+        if token == "archive":
             cmds.archive = True
         elif token == "-archive":
             cmds.archive = False
