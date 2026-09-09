@@ -67,22 +67,28 @@ CONTEXTS_DIR = Path("contexts")
 
 
 def _validate_agents(agents: dict):
+    missing = []
     empty = []
     for platform_id, platform in agents.items():
         for agent_id, agent_cfg in platform.items():
             _require(agent_cfg, "name", f"agents.{platform_id}.{agent_id}")
-            # Garantir que o arquivo de contexto existe
+            # P1.5 (F0.9): a esteira NÃO cria mais o arquivo de contexto (persona).
+            # Ele é insumo do operador (versionado no repo PIPE, montado readonly).
+            # Aqui apenas validamos e orientamos — nunca escrevemos.
             ctx_file = CONTEXTS_DIR / platform_id / f"{agent_id}.md"
-            ctx_file.parent.mkdir(parents=True, exist_ok=True)
             if not ctx_file.exists():
-                ctx_file.write_text("", encoding="utf-8")
-            if not ctx_file.read_text(encoding="utf-8").strip():
+                missing.append(str(ctx_file))
+            elif not ctx_file.read_text(encoding="utf-8").strip():
                 empty.append(str(ctx_file))
-    if empty:
-        raise ConfigError(
-            "Arquivos de contexto vazios (preencha antes de executar):\n  - "
-            + "\n  - ".join(empty)
-        )
+    if missing or empty:
+        parts = []
+        if missing:
+            parts.append("Arquivos de contexto ausentes (crie e preencha):\n  - "
+                         + "\n  - ".join(missing))
+        if empty:
+            parts.append("Arquivos de contexto vazios (preencha antes de executar):\n  - "
+                         + "\n  - ".join(empty))
+        raise ConfigError("\n".join(parts))
 
 
 def _validate_boards(boards: dict, known_agents: set[str] | None = None):

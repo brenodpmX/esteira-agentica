@@ -250,3 +250,26 @@ def generate_context(config: dict) -> Path:
     content = _build_content(config)
     STEERING_FILE.write_text(content, encoding="utf-8")
     return STEERING_FILE
+
+
+def ensure_steering_integrity(config: dict) -> bool:
+    """Guarda de integridade do steering (P1.5 / F0.9).
+
+    Compara o conteúdo atual de `.kiro/steering/esteira.md` com o que o gerador
+    produziria a partir do config. Se o arquivo não existe ou divergiu (ex.: um
+    agente o alterou), REESCREVE com o conteúdo autoritativo e retorna True
+    (divergiu). Retorna False se já estava íntegro.
+
+    Chamada antes de despachar cada agente para garantir que o steering nunca é
+    corrompido silenciosamente entre execuções.
+    """
+    expected = _build_content(config)
+    try:
+        current = STEERING_FILE.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        current = None
+    if current == expected:
+        return False
+    STEERING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STEERING_FILE.write_text(expected, encoding="utf-8")
+    return True

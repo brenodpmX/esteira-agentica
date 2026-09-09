@@ -645,6 +645,13 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
 
     adapter = KiroCliAgent()
 
+    # P1.5 (F0.9): guarda de integridade do steering ANTES de despachar o agente.
+    # Se o steering foi corrompido/divergiu, reescreve com o conteúdo autoritativo.
+    from src.core.context_generator import ensure_steering_integrity
+    if ensure_steering_integrity(config):
+        log.warning("Steering", "steering divergente detectado - reescrito antes "
+                    "de despachar o agente", event="steering_integrity_rewrite")
+
     from src.core.agent_guard import AgentGuard
     with AgentGuard(board_id, col_id):
         with SnapshotGuard(board_id):
