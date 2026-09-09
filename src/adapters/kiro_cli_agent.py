@@ -271,6 +271,16 @@ class KiroCliAgent(AgentPort):
             lines.append(f"- **work_dir**: {params.work_dir}")
         lines.append("")
 
+        # Persona (P1.4): quando injetada via AgentParams.context, registra no
+        # log para rastrear qual papel o agente assumiu nesta execução.
+        if params.context and params.context.strip():
+            lines.append("---")
+            lines.append("")
+            lines.append("## Persona")
+            lines.append("")
+            lines.append(params.context.strip())
+            lines.append("")
+
         # Prompt
         lines.append("---")
         lines.append("")

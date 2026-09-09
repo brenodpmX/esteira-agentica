@@ -525,6 +525,14 @@ def call_agent(config: dict, task: dict | None):
 
     prompt = build_prompt(config, task)
 
+    # Persona do agente (P1.4): injetada por código via AgentParams.context.
+    # A persona vive em contexts/<platform>/<agent_id>.md (NÃO vai para steering).
+    # O adapter (_compose_input) concatena context + prompt no input do agente.
+    persona = ""
+    persona_file = CONTEXTS_DIR / platform / f"{agent_id}.md"
+    if persona_file.exists():
+        persona = persona_file.read_text(encoding="utf-8").strip()
+
     # Extrair título da issue (primeira linha não-vazia do body, sem prefixo '# ')
     title = ""
     body_path = Path(issue.get("body_path", ""))
@@ -543,6 +551,7 @@ def call_agent(config: dict, task: dict | None):
         prompt=prompt,
         work_dir=str(work_dir),
         repo_id=repo_id,
+        context=persona or None,
         col_name=col.get("name", col_id),
         title=title,
     )
