@@ -273,6 +273,111 @@ def split_body(raw: str) -> tuple[str, IssueCommands]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Anotações (E2 / F0.4) — região entre `📝` e `@---`
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Estrutura do -body.md (5 partes):
+#   1. Corpo — conteúdo que rege a execução
+#   2. `📝`   — separador das anotações
+#   3. Anotações — memória da issue (pai, branch pai, branch, boards)
+#   4. `@---` — separador dos comandos
+#   5. Comandos — um por linha (parseados por split_body/parse_commands)
+#
+# Tudo ACIMA de `@---` (corpo + 📝 + anotações) é o corpo da issue no board;
+# tudo ABAIXO são atributos (comandos). A esteira NUNCA escreve no -body.md:
+# apenas INTERPRETA as anotações (o agente é quem as mantém).
+
+# Separador das anotações (emoji "memo").
+ANNOT_SEP = "📝"
+
+# Placeholder de branch ainda inexistente (não vira branch real ao parsear).
+_BRANCH_PLACEHOLDER_PREFIX = "("
+
+
+@dataclass
+class IssueAnnotations:
+    """Anotações declaradas pelo agente no body (acima de `@---`, abaixo de `📝`)."""
+    parent: str | None = None         # id do pai (sem '#'), se houver mãe
+    parent_name: str | None = None    # nome do pai (opcional, informativo)
+    parent_branch: str | None = None  # branch pai (origem)
+    branch: str | None = None         # branch de trabalho (None se "(ainda não criada)")
+    boards: list[str] = field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        return not (self.parent or self.parent_branch or self.branch or self.boards)
+
+
+def parse_annotations(text: str) -> IssueAnnotations:
+    """Faz o parse do bloco de anotações (já separado do corpo e dos comandos).
+
+    Chaves reconhecidas (uma por linha, `chave: valor`):
+      - `pai: #<id> - <nome>`   → parent (+ parent_name se houver ' - <nome>')
+      - `branch pai: <branch>`  → parent_branch
+      - `branch: <branch>`      → branch ("(ainda não criada)" ⇒ None)
+      - `boards: b1, b2`        → boards (lista)
+    Linhas sem `:` ou com chave desconhecida são ignoradas.
+    """
+    annot = IssueAnnotations()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+
+        if key == "pai":
+            if " - " in value:
+                id_part, name_part = value.split(" - ", 1)
+            else:
+                id_part, name_part = value, ""
+            refs = _parse_refs(id_part)
+            annot.parent = refs[0] if refs else None
+            annot.parent_name = name_part.strip() or None
+        elif key == "branch pai":
+            annot.parent_branch = value or None
+        elif key == "branch":
+            # "(ainda não criada)" ou vazio ⇒ branch ainda não existe.
+            annot.branch = None if (not value or value.startswith(_BRANCH_PLACEHOLDER_PREFIX)) else value
+        elif key == "boards":
+            annot.boards = [b.strip() for b in value.split(",") if b.strip()]
+
+    return annot
+
+
+def split_annotations(body: str) -> tuple[str, IssueAnnotations]:
+    """Separa o corpo real das anotações dentro do body (acima de `@---`).
+
+    Recebe o texto ACIMA de `@---` (corpo + 📝 + anotações) e o divide no
+    ÚLTIMO separador `📝`: acima ⇒ corpo; abaixo ⇒ anotações. Sem `📝`,
+    retorna o body inteiro como corpo e anotações vazias.
+    """
+    body = body or ""
+    lines = body.splitlines()
+    sep_idx = [i for i, l in enumerate(lines) if l.strip() == ANNOT_SEP]
+    if not sep_idx:
+        return body.rstrip("\n"), IssueAnnotations()
+
+    last = sep_idx[-1]
+    corpo_lines = [l for l in lines[:last] if l.strip() != ANNOT_SEP]
+    annot_text = "\n".join(lines[last + 1:])
+    corpo = "\n".join(corpo_lines).rstrip("\n")
+    return corpo, parse_annotations(annot_text)
+
+
+def parse_body(raw: str) -> tuple[str, IssueAnnotations, IssueCommands]:
+    """Parser completo das 5 partes do -body.md.
+
+    Retorna (corpo, anotações, comandos). O corpo é apenas a parte 1 (sem 📝,
+    anotações ou @---). As anotações e comandos são interpretados; a esteira
+    não reescreve o arquivo.
+    """
+    body_above, cmds = split_body(raw)
+    corpo, annot = split_annotations(body_above)
+    return corpo, annot, cmds
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Serialization
 # ══════════════════════════════════════════════════════════════════════════════
 
