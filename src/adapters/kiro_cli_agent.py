@@ -9,7 +9,7 @@ from pathlib import Path
 from src.core.agent import AgentPort, AgentParams
 from src.core.log import log
 from src.core.session import SessionIndex
-from src.core.context_generator import CONTEXT_FILE, AGENT_FILE
+from src.core.context_generator import STEERING_FILE
 
 _tz = timezone(timedelta(hours=-3))
 
@@ -72,18 +72,16 @@ class KiroCliAgent(AgentPort):
         o ciclo de vida das sessões — o kiro-cli cuida disso.
         """
         # Sem cor nos logs do kiro-cli (facilita parsing/limpeza).
-        # KIRO_HOME: aponta o kiro-cli para o diretório .kiro da esteira.
-        # O kiro-cli é executado com cwd=repo/<repo_id>, onde buscaria agentes
-        # locais em repo/<repo_id>/.kiro/agents/ — diretório diferente do gerado
-        # no startup. Com KIRO_HOME=<esteira>/.kiro, o kiro-cli encontra
-        # <KIRO_HOME>/agents/pipe_context.json como agente global.
+        # KIRO_HOME: aponta o kiro-cli para o diretório .kiro da esteira, onde
+        # vive o steering (.kiro/steering/esteira.md). O default agent do
+        # kiro-cli auto-carrega o steering resolvido por KIRO_HOME — não usamos
+        # mais `--agent` (Caminho B / P1.1(b)).
         #
-        # AGENT_FILE é relativo no módulo (Path(".kiro/agents/pipe_context.json")),
-        # por isso usamos .resolve() para obter o path absoluto antes de subir
-        # ao diretório pai (.kiro). Sem .resolve(), .parent.parent em path relativo
-        # resultaria em "." — que o subprocess resolveria contra seu próprio cwd
-        # (o repo), apontando para o lugar errado.
-        kiro_home = str(AGENT_FILE.resolve().parent.parent)  # <esteira>/.kiro
+        # STEERING_FILE é relativo no módulo (.kiro/steering/esteira.md), por
+        # isso usamos .resolve() para obter o path absoluto antes de subir aos
+        # diretórios pais até .kiro. Sem .resolve(), .parent em path relativo
+        # apontaria para o cwd do subprocess (o repo), lugar errado.
+        kiro_home = str(STEERING_FILE.resolve().parent.parent)  # <esteira>/.kiro
         env = {**os.environ, "KIRO_LOG_NO_COLOR": "1", "KIRO_HOME": kiro_home}
 
         cmd = [
@@ -94,11 +92,8 @@ class KiroCliAgent(AgentPort):
         if params.model:
             cmd += ["--model", params.model]
 
-        # Injeta o contexto do sistema via --agent (quando CONTEXT.md existe).
-        # O arquivo .kiro/agents/pipe_context.json foi gerado pelo startup a
-        # partir do pipe.yml e contém as instruções explícitas para o agente.
-        if CONTEXT_FILE.exists():
-            cmd += ["--agent", "pipe_context"]
+        # O contexto de sistema é carregado como steering (default agent) via
+        # KIRO_HOME — não passamos `--agent`.
 
         # Retoma a sessão anterior se ainda existir.
         index = SessionIndex()

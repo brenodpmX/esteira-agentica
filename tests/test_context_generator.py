@@ -1,26 +1,28 @@
 """
-Casos de Teste — Correção 2: CONTEXT.md gerado no startup a partir do pipe.yml
+Casos de Teste — Steering de sistema gerado no startup a partir do pipe.yml
 
-Contexto: Durante o incidente "Issue Fantasma", um agente criou arquivos com
-prefixo numérico e sobrescreveu snapshot.json com IDs inventados, porque não
-tinha instruções explícitas derivadas da configuração real do sistema.
+Contexto: o contexto de SISTEMA (antes `.pipe/CONTEXT.md` injetado via
+`--agent pipe_context`) foi migrado para `.kiro/steering/esteira.md`, carregado
+automaticamente pelo default agent do kiro-cli via `KIRO_HOME` (Caminho B —
+P1.1(b)). NÃO geramos mais `.kiro/agents/pipe_context.json` nem passamos
+`--agent`.
 
 Esta suíte valida que:
-  - generate_context() cria .pipe/CONTEXT.md a partir do config
-  - Regenera quando pipe.yml é mais novo que CONTEXT.md
-  - Não sobrescreve se CONTEXT.md já está atualizado
-  - O CONTEXT.md lista arquivos protegidos
-  - O CONTEXT.md instrui nomeação de issues SEM prefixo numérico
-  - A instrução de nomeação menciona APENAS -body.md (não history/addcomment)
-  - O CONTEXT.md documenta boards, colunas e branches do pipe.yml
-  - O conteúdo é injetado via --agent (argumento CLI), NÃO inline no prompt
-  - O adapter passa --agent ao kiro-cli quando há context_agent definido
+  - generate_context() cria .kiro/steering/esteira.md a partir do config
+  - Regenera quando pipe.yml é mais novo que o steering
+  - Não sobrescreve se o steering já está atualizado
+  - O steering tem frontmatter `inclusion: always`
+  - O steering lista arquivos protegidos (incl. .kiro/steering/**/*.md)
+  - O steering descreve a estrutura do -body.md (5 partes) e os comandos @---
+  - O steering instrui nomeação de issues SEM prefixo numérico
+  - O steering documenta boards, colunas e branches do pipe.yml
+  - O adapter NÃO passa `--agent` e define KIRO_HOME apontando para .kiro
+  - O conteúdo NÃO é embutido inline no prompt
 
 Estratégia: testes unitários com diretório temporário simulando o cwd da
 esteira. Nenhuma chamada real ao GitHub ou ao kiro-cli.
 """
 
-import json
 import time
 import unittest
 from pathlib import Path
@@ -68,6 +70,10 @@ def _make_config(boards=None, flows=None):
     }
 
 
+def _steering_path(cwd: Path) -> Path:
+    return cwd / ".kiro" / "steering" / "esteira.md"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Grupo 1 — Ciclo de vida do arquivo
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,194 +92,52 @@ class TestCicloDeVida(unittest.TestCase):
     def _run(self, config=None):
         from src.core.context_generator import generate_context
         with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", self.cwd / ".pipe" / "CONTEXT.md"):
-            generate_context(config or _make_config())
+             patch("src.core.context_generator.STEERING_FILE", _steering_path(self.cwd)):
+            return generate_context(config or _make_config())
 
-    def test_cria_context_se_nao_existir(self):
-        """Deve criar .pipe/CONTEXT.md quando ele não existe."""
-        ctx = self.cwd / ".pipe" / "CONTEXT.md"
-        self.assertFalse(ctx.exists())
+    def test_cria_steering_se_nao_existir(self):
+        """Deve criar .kiro/steering/esteira.md quando ele não existe."""
+        steering = _steering_path(self.cwd)
+        self.assertFalse(steering.exists())
         self._run()
-        self.assertTrue(ctx.exists())
-        self.assertGreater(len(ctx.read_text()), 0)
+        self.assertTrue(steering.exists())
+        self.assertGreater(len(steering.read_text()), 0)
 
     def test_regenera_quando_pipeyml_modificado(self):
-        """Deve regenerar quando pipe.yml é mais novo que CONTEXT.md."""
-        ctx = self.cwd / ".pipe" / "CONTEXT.md"
+        """Deve regenerar quando pipe.yml é mais novo que o steering."""
+        steering = _steering_path(self.cwd)
         self._run()
-        old_content = ctx.read_text()
-        # Torna o pipe.yml mais novo que o CONTEXT.md
         time.sleep(0.02)
         (self.cwd / "pipe.yml").write_text("# atualizado\n")
         self._run()
-        # Arquivo deve ser regravado (mtime do CONTEXT.md mudou)
-        self.assertTrue(ctx.exists())
+        self.assertTrue(steering.exists())
 
     def test_nao_sobrescreve_se_atualizado(self):
-        """Não deve sobrescrever CONTEXT.md se já está atualizado (pipe.yml mais antigo)."""
-        ctx = self.cwd / ".pipe" / "CONTEXT.md"
+        """Não deve sobrescrever se o steering já está atualizado."""
+        steering = _steering_path(self.cwd)
         self._run()
-        mtime_antes = ctx.stat().st_mtime
-        # pipe.yml não foi modificado → CONTEXT.md já está atualizado
+        mtime_antes = steering.stat().st_mtime
         time.sleep(0.01)
         self._run()
-        mtime_depois = ctx.stat().st_mtime
+        mtime_depois = steering.stat().st_mtime
         self.assertEqual(mtime_antes, mtime_depois)
 
+    def test_retorna_path_do_steering(self):
+        """generate_context deve retornar o Path do steering gerado."""
+        result = self._run()
+        self.assertIsInstance(result, Path)
+        self.assertEqual(result.name, "esteira.md")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Grupo 2 — Arquivos protegidos
+# Grupo 2 — Frontmatter e localização (steering)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestArquivosProtegidos(unittest.TestCase):
+class TestSteeringFrontmatter(unittest.TestCase):
 
     def setUp(self):
         self.tmp = TemporaryDirectory()
         self.cwd = Path(self.tmp.name)
-        (self.cwd / ".pipe").mkdir()
-        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def _get_content(self):
-        from src.core.context_generator import generate_context
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
-            generate_context(_make_config())
-        return ctx_file.read_text()
-
-    def test_lista_snapshot_json(self):
-        content = self._get_content()
-        self.assertIn("snapshot.json", content)
-
-    def test_lista_changequeue_json(self):
-        content = self._get_content()
-        self.assertIn("changeQueue.json", content)
-
-    def test_lista_throttle(self):
-        content = self._get_content()
-        self.assertIn("throttle", content)
-
-    def test_lista_sessions_json(self):
-        content = self._get_content()
-        self.assertIn("sessions.json", content)
-
-    def test_lista_deadletter_json(self):
-        content = self._get_content()
-        self.assertIn("deadLetter.json", content)
-
-    def test_lista_orphanfiles_json(self):
-        """Issue #147: .pipe/orphanFiles.json (registro de isolamento de
-        arquivos órfãos via record_orphan) deve constar entre os arquivos
-        protegidos listados no CONTEXT.md gerado."""
-        content = self._get_content()
-        self.assertIn("orphanFiles.json", content)
-
-    def test_lista_pipe_lock(self):
-        """Issue #150 (LockGuard): .pipe/pipe.lock (lock de instância via
-        flock) deve constar entre os arquivos protegidos listados no
-        CONTEXT.md gerado."""
-        content = self._get_content()
-        self.assertIn("pipe.lock", content)
-
-    def test_secao_restricoes_presente(self):
-        """Deve haver uma seção de restrições ou arquivos protegidos."""
-        content = self._get_content()
-        keywords = ["restrição", "Restrição", "protegido", "NUNCA", "proibido", "NÃO"]
-        self.assertTrue(
-            any(k in content for k in keywords),
-            f"Nenhuma palavra-chave de restrição encontrada. Início do conteúdo:\n{content[:300]}"
-        )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Grupo 3 — Nomeação de issues (sem prefixo numérico)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestNomeacaoIssues(unittest.TestCase):
-
-    def setUp(self):
-        self.tmp = TemporaryDirectory()
-        self.cwd = Path(self.tmp.name)
-        (self.cwd / ".pipe").mkdir()
-        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def _get_content(self):
-        from src.core.context_generator import generate_context
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
-            generate_context(_make_config())
-        return ctx_file.read_text()
-
-    def test_instrui_contra_prefixo_numerico(self):
-        """Deve instruir explicitamente contra prefixo numérico no nome do arquivo."""
-        content = self._get_content()
-        keywords = ["prefixo", "numérico", "número", "prefixo numérico", "sem prefixo"]
-        self.assertTrue(
-            any(k in content for k in keywords),
-            "Instrução contra prefixo numérico não encontrada"
-        )
-
-    def test_menciona_body_md(self):
-        """Deve mencionar o padrão correto -body.md."""
-        content = self._get_content()
-        self.assertIn("-body.md", content)
-
-    def test_nao_solicita_criacao_history(self):
-        """Instrução de criação NÃO deve sugerir criar -history.md."""
-        content = self._get_content()
-        # Verifica que não há instrução de criação do history
-        # (pode mencionar o arquivo em outros contextos, mas não como item a criar)
-        lines_with_history = [
-            l for l in content.splitlines()
-            if "-history.md" in l and ("crie" in l.lower() or "criar" in l.lower()
-                                        or "opcional" in l.lower() or "- `" in l)
-        ]
-        self.assertEqual(
-            len(lines_with_history), 0,
-            f"Instrução de criação de -history.md encontrada (não deve existir):\n"
-            + "\n".join(lines_with_history)
-        )
-
-    def test_nao_solicita_criacao_addcomment(self):
-        """Instrução de criação NÃO deve sugerir criar -addcomment.md."""
-        content = self._get_content()
-        lines_with_add = [
-            l for l in content.splitlines()
-            if "-addcomment.md" in l and ("crie" in l.lower() or "criar" in l.lower()
-                                           or "opcional" in l.lower() or "- `" in l)
-        ]
-        self.assertEqual(
-            len(lines_with_add), 0,
-            f"Instrução de criação de -addcomment.md encontrada (não deve existir):\n"
-            + "\n".join(lines_with_add)
-        )
-
-    def test_exemplo_padrao_errado(self):
-        """Deve mostrar exemplo do padrão errado (com prefixo numérico) para deixar claro."""
-        content = self._get_content()
-        # Ex: "4-login-body.md" ou menção a "4-slug-body.md"
-        import re
-        has_example = bool(re.search(r"\d+-\w.*-body\.md", content))
-        self.assertTrue(has_example, "Exemplo do padrão errado (com prefixo numérico) não encontrado")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Grupo 4 — Boards e colunas
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestBoardsEColunas(unittest.TestCase):
-
-    def setUp(self):
-        self.tmp = TemporaryDirectory()
-        self.cwd = Path(self.tmp.name)
-        (self.cwd / ".pipe").mkdir()
         (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
 
     def tearDown(self):
@@ -281,19 +145,207 @@ class TestBoardsEColunas(unittest.TestCase):
 
     def _get_content(self, config=None):
         from src.core.context_generator import generate_context
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
+        steering = _steering_path(self.cwd)
         with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
+             patch("src.core.context_generator.STEERING_FILE", steering):
             generate_context(config or _make_config())
-        return ctx_file.read_text()
+        return steering.read_text()
+
+    def test_tem_frontmatter_inclusion_always(self):
+        """O steering deve começar com frontmatter `inclusion: always`."""
+        content = self._get_content()
+        self.assertTrue(content.startswith("---\n"),
+                        f"Steering não começa com frontmatter:\n{content[:80]}")
+        self.assertIn("inclusion: always", content.splitlines()[1])
+
+    def test_gerado_em_kiro_steering(self):
+        """O arquivo gerado deve ficar em .kiro/steering/esteira.md."""
+        self._get_content()
+        self.assertTrue(_steering_path(self.cwd).exists())
+
+    def test_nao_gera_pipe_context_json(self):
+        """Caminho B: NÃO deve mais existir .kiro/agents/pipe_context.json."""
+        self._get_content()
+        legado = self.cwd / ".kiro" / "agents" / "pipe_context.json"
+        self.assertFalse(legado.exists(),
+                         "pipe_context.json não deve mais ser gerado (Caminho B)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Grupo 3 — Arquivos protegidos
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestArquivosProtegidos(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.cwd = Path(self.tmp.name)
+        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _get_content(self):
+        from src.core.context_generator import generate_context
+        steering = _steering_path(self.cwd)
+        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
+             patch("src.core.context_generator.STEERING_FILE", steering):
+            generate_context(_make_config())
+        return steering.read_text()
+
+    def test_lista_snapshot_json(self):
+        self.assertIn("snapshot.json", self._get_content())
+
+    def test_lista_changequeue_json(self):
+        self.assertIn("changeQueue.json", self._get_content())
+
+    def test_lista_throttle(self):
+        self.assertIn("throttle", self._get_content())
+
+    def test_lista_sessions_json(self):
+        self.assertIn("sessions.json", self._get_content())
+
+    def test_lista_deadletter_json(self):
+        self.assertIn("deadLetter.json", self._get_content())
+
+    def test_lista_orphanfiles_json(self):
+        self.assertIn("orphanFiles.json", self._get_content())
+
+    def test_lista_pipe_lock(self):
+        self.assertIn("pipe.lock", self._get_content())
+
+    def test_lista_steering_protegido(self):
+        """P1.3: o próprio steering (.kiro/steering/**/*.md) é protegido."""
+        self.assertIn(".kiro/steering/**/*.md", self._get_content())
+
+    def test_secao_restricoes_presente(self):
+        content = self._get_content()
+        keywords = ["protegido", "NUNCA", "Nunca", "NÃO acessar", "corrompe"]
+        self.assertTrue(
+            any(k in content for k in keywords),
+            f"Nenhuma palavra-chave de restrição encontrada:\n{content[:300]}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Grupo 4 — Estrutura do -body.md (5 partes) + comandos @---
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEstruturaBody(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.cwd = Path(self.tmp.name)
+        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _get_content(self):
+        from src.core.context_generator import generate_context
+        steering = _steering_path(self.cwd)
+        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
+             patch("src.core.context_generator.STEERING_FILE", steering):
+            generate_context(_make_config())
+        return steering.read_text()
+
+    def test_menciona_separador_comandos(self):
+        self.assertIn("@---", self._get_content())
+
+    def test_menciona_separador_anotacoes(self):
+        self.assertIn("📝", self._get_content())
+
+    def test_documenta_anotacoes(self):
+        content = self._get_content()
+        for campo in ["branch pai", "branch:", "boards:"]:
+            self.assertIn(campo, content, f"anotação '{campo}' ausente")
+
+    def test_documenta_comandos_relacao(self):
+        content = self._get_content()
+        for cmd in ["/parent", "/children", "/blocks", "/blocked_by", "/labels",
+                    "/need_human", "/archive"]:
+            self.assertIn(cmd, content, f"comando '{cmd}' ausente")
+
+    def test_nao_menciona_close_reopen(self):
+        """E9: /close e /reopen saem do steering."""
+        content = self._get_content()
+        self.assertNotIn("/close", content)
+        self.assertNotIn("/reopen", content)
+
+    def test_regra_anti_ciclo(self):
+        content = self._get_content()
+        self.assertIn("ciclos", content.lower())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Grupo 5 — Nomeação de issues (sem prefixo numérico)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestNomeacaoIssues(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.cwd = Path(self.tmp.name)
+        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _get_content(self):
+        from src.core.context_generator import generate_context
+        steering = _steering_path(self.cwd)
+        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
+             patch("src.core.context_generator.STEERING_FILE", steering):
+            generate_context(_make_config())
+        return steering.read_text()
+
+    def test_instrui_contra_prefixo_numerico(self):
+        content = self._get_content()
+        keywords = ["prefixo", "numérico", "número", "sem prefixo"]
+        self.assertTrue(any(k in content for k in keywords))
+
+    def test_menciona_body_md(self):
+        self.assertIn("-body.md", self._get_content())
+
+    def test_nao_solicita_criacao_history(self):
+        content = self._get_content()
+        lines = [
+            l for l in content.splitlines()
+            if "-history.md" in l and ("crie" in l.lower() or "criar" in l.lower()
+                                       or "opcional" in l.lower() or "- `" in l)
+        ]
+        self.assertEqual(len(lines), 0)
+
+    def test_exemplo_padrao_errado(self):
+        import re
+        content = self._get_content()
+        self.assertTrue(bool(re.search(r"\d+-\w.*-body\.md", content)))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Grupo 6 — Boards e colunas
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBoardsEColunas(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.cwd = Path(self.tmp.name)
+        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _get_content(self, config=None):
+        from src.core.context_generator import generate_context
+        steering = _steering_path(self.cwd)
+        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
+             patch("src.core.context_generator.STEERING_FILE", steering):
+            generate_context(config or _make_config())
+        return steering.read_text()
 
     def test_nome_do_board(self):
-        content = self._get_content()
-        self.assertIn("Task Board", content)
-
-    def test_id_do_board(self):
-        content = self._get_content()
-        self.assertIn("task", content)
+        self.assertIn("Task Board", self._get_content())
 
     def test_nomes_das_colunas(self):
         content = self._get_content()
@@ -302,17 +354,14 @@ class TestBoardsEColunas(unittest.TestCase):
         self.assertIn("Done", content)
 
     def test_multiplos_boards(self):
-        """Com dois boards, ambos devem aparecer no CONTEXT.md."""
         config = _make_config(boards={
             "platform": "github",
             "task": {
-                "name": "Task Board",
-                "flow": "feature",
+                "name": "Task Board", "flow": "feature",
                 "columns": {"todo": {"name": "To Do"}, "doing": {"name": "Doing"}},
             },
             "bug": {
-                "name": "Bug Board",
-                "flow": "hotfix",
+                "name": "Bug Board", "flow": "hotfix",
                 "columns": {"open": {"name": "Open"}, "closed": {"name": "Closed"}},
             },
         })
@@ -321,11 +370,9 @@ class TestBoardsEColunas(unittest.TestCase):
         self.assertIn("Bug Board", content)
 
     def test_flow_associado_ao_board(self):
-        content = self._get_content()
-        self.assertIn("feature", content)
+        self.assertIn("feature", self._get_content())
 
     def test_config_sem_boards_nao_levanta_excecao(self):
-        """Config com boards vazio (apenas platform) não deve levantar exceção."""
         config = _make_config(boards={"platform": "github"})
         try:
             self._get_content(config)
@@ -334,7 +381,7 @@ class TestBoardsEColunas(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Grupo 5 — Branches e prefixos
+# Grupo 7 — Branches e prefixos
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestBranchesEPrefixos(unittest.TestCase):
@@ -342,7 +389,6 @@ class TestBranchesEPrefixos(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()
         self.cwd = Path(self.tmp.name)
-        (self.cwd / ".pipe").mkdir()
         (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
 
     def tearDown(self):
@@ -350,80 +396,54 @@ class TestBranchesEPrefixos(unittest.TestCase):
 
     def _get_content(self, config=None):
         from src.core.context_generator import generate_context
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
+        steering = _steering_path(self.cwd)
         with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
+             patch("src.core.context_generator.STEERING_FILE", steering):
             generate_context(config or _make_config())
-        return ctx_file.read_text()
+        return steering.read_text()
 
     def test_prefixo_feature(self):
-        content = self._get_content()
-        self.assertIn("feature/", content)
+        self.assertIn("feature/", self._get_content())
 
     def test_branch_base(self):
-        content = self._get_content()
-        self.assertIn("main", content)
+        self.assertIn("main", self._get_content())
 
     def test_multiplos_flows(self):
-        content = self._get_content()
-        self.assertIn("hotfix/", content)
-
-    def test_secao_branches_presente(self):
-        content = self._get_content()
-        keywords = ["branch", "Branch", "git", "flow", "prefixo"]
-        self.assertTrue(
-            any(k in content for k in keywords),
-            "Seção de branches não encontrada"
-        )
+        self.assertIn("hotfix/", self._get_content())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Grupo 6 — Integração via --agent (NÃO inline no prompt)
+# Grupo 8 — Integração: steering via default agent (sem --agent, inline)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIntegracaoViaAgent(unittest.TestCase):
-    """Valida que o CONTEXT.md é injetado via --agent, não inline no prompt."""
+class TestIntegracaoSteering(unittest.TestCase):
+    """Valida que o steering é carregado via KIRO_HOME (default agent),
+    não via --agent nem inline no prompt."""
 
     def setUp(self):
         self.tmp = TemporaryDirectory()
-        self.cwd = Path(self.tmp.name)
-        (self.cwd / ".pipe").mkdir()
-        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
+        self.esteira_dir = Path(self.tmp.name) / "esteira"
+        self.repo_dir = self.esteira_dir / "repo" / "main"
+        self.esteira_dir.mkdir(parents=True)
+        self.repo_dir.mkdir(parents=True)
+        (self.esteira_dir / ".pipe").mkdir()
+        (self.esteira_dir / "pipe.yml").write_text("# pipe.yml\n")
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _generate(self, config=None):
-        from src.core.context_generator import generate_context
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
-            generate_context(config or _make_config())
-        return ctx_file
-
-    def test_generate_context_retorna_path_do_arquivo(self):
-        """generate_context deve retornar o Path do arquivo gerado."""
-        from src.core.context_generator import generate_context
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
-            result = generate_context(_make_config())
-        self.assertIsNotNone(result)
-        self.assertIsInstance(result, Path)
-
-    def test_build_prompt_nao_contem_conteudo_do_context_md(self):
-        """build_prompt NÃO deve embutir o conteúdo do CONTEXT.md no texto do prompt."""
+    def test_build_prompt_nao_contem_conteudo_do_steering(self):
+        """build_prompt NÃO deve embutir o conteúdo do steering no prompt."""
         from src.core.agent import build_prompt
 
-        sentinel = "SENTINEL_CONTEXT_CONTENT_XYZ"
-
-        # Cria CONTEXT.md com conteúdo sentinela
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        ctx_file.write_text(f"# Context\n{sentinel}\n")
+        sentinel = "SENTINEL_STEERING_CONTENT_XYZ"
+        steering = _steering_path(self.esteira_dir)
+        steering.parent.mkdir(parents=True, exist_ok=True)
+        steering.write_text(f"---\ninclusion: always\n---\n{sentinel}\n")
 
         config = _make_config()
-        # Monta task mínima
-        body_path = self.cwd / ".pipe" / "boards" / "task" / "doing" / "slug-body.md"
+        body_path = (self.esteira_dir / ".pipe" / "boards" / "task" / "doing"
+                     / "slug-body.md")
         body_path.parent.mkdir(parents=True, exist_ok=True)
         body_path.write_text("# Título da issue\n\nConteúdo.\n")
 
@@ -435,39 +455,34 @@ class TestIntegracaoViaAgent(unittest.TestCase):
             "issue": {"id": "1", "body_path": str(body_path)},
         }
 
-        with patch("src.core.context_generator.CONTEXT_FILE", ctx_file), \
-             patch("src.core.agent.CONTEXT_FILE", ctx_file, create=True):
+        with patch("src.core.context_generator.STEERING_FILE", steering):
             prompt = build_prompt(config, task)
 
-        self.assertNotIn(
-            sentinel, prompt,
-            "Conteúdo do CONTEXT.md encontrado inline no prompt — deve ser via --agent"
-        )
+        self.assertNotIn(sentinel, prompt,
+                         "Conteúdo do steering embutido inline no prompt — deve "
+                         "ser carregado via KIRO_HOME (default agent)")
 
-    def test_kiro_cli_passa_agent_flag_quando_context_file_existe(self):
-        """KiroCliAgent deve passar --agent ao comando quando CONTEXT.md existe."""
+    def _run_adapter_capture(self):
+        """Executa o adapter com subprocess mockado e retorna (cmd, env)."""
         from src.adapters.kiro_cli_agent import KiroCliAgent
         from src.core.agent import AgentParams
 
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        ctx_file.write_text("# Context\nRESTRIÇÕES\n")
+        steering = _steering_path(self.esteira_dir)
+        steering.parent.mkdir(parents=True, exist_ok=True)
+        steering.write_text("---\ninclusion: always\n---\n# Contexto\n")
 
         params = AgentParams(
-            platform="kiro-cli",
-            agent_id="dev",
-            agent_name="engineering",
-            model="claude-sonnet-4",
-            issue_id="1",
-            board_id="task",
-            col_id="doing",
-            prompt="Execute a tarefa.",
-            work_dir=str(self.cwd),
+            platform="kiro-cli", agent_id="dev", agent_name="engineering",
+            model="claude-sonnet-4", issue_id="1", board_id="task",
+            col_id="doing", prompt="Execute a tarefa.",
+            work_dir=str(self.repo_dir),
         )
 
-        captured_cmd = []
+        captured = {"cmd": [], "env": {}}
 
         def fake_run(cmd, **kwargs):
-            captured_cmd.extend(cmd)
+            captured["cmd"] = list(cmd)
+            captured["env"] = kwargs.get("env", {})
             r = MagicMock()
             r.returncode = 0
             r.stdout = ""
@@ -475,355 +490,31 @@ class TestIntegracaoViaAgent(unittest.TestCase):
             return r
 
         agent = KiroCliAgent()
-
         with patch("subprocess.run", side_effect=fake_run), \
              patch("src.adapters.kiro_cli_agent.SessionIndex") as mock_idx, \
-             patch("src.adapters.kiro_cli_agent.CONTEXT_FILE", ctx_file, create=True):
-            mock_idx.return_value.get.return_value = None
-            mock_idx.return_value.set.return_value = None
-            agent._run(params, self.cwd)
-
-        self.assertIn("--agent", captured_cmd,
-                      f"--agent não encontrado no comando: {captured_cmd}")
-
-    def test_kiro_cli_nao_passa_agent_flag_sem_context_file(self):
-        """KiroCliAgent não deve passar --agent quando não há CONTEXT.md."""
-        from src.adapters.kiro_cli_agent import KiroCliAgent
-        from src.core.agent import AgentParams
-
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        # Garantir que NÃO existe
-        if ctx_file.exists():
-            ctx_file.unlink()
-
-        params = AgentParams(
-            platform="kiro-cli",
-            agent_id="dev",
-            agent_name="engineering",
-            model="claude-sonnet-4",
-            issue_id="1",
-            board_id="task",
-            col_id="doing",
-            prompt="Execute a tarefa.",
-            work_dir=str(self.cwd),
-        )
-
-        captured_cmd = []
-
-        def fake_run(cmd, **kwargs):
-            captured_cmd.extend(cmd)
-            r = MagicMock()
-            r.returncode = 0
-            r.stdout = ""
-            r.stderr = ""
-            return r
-
-        agent = KiroCliAgent()
-
-        with patch("subprocess.run", side_effect=fake_run), \
-             patch("src.adapters.kiro_cli_agent.SessionIndex") as mock_idx, \
-             patch("src.adapters.kiro_cli_agent.CONTEXT_FILE", ctx_file, create=True):
-            mock_idx.return_value.get.return_value = None
-            mock_idx.return_value.set.return_value = None
-            agent._run(params, self.cwd)
-
-        self.assertNotIn("--agent", captured_cmd,
-                         "--agent não deveria aparecer quando CONTEXT.md não existe")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Grupo 7 — Arquivo de agente gerado para o kiro-cli
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestArquivoDeAgente(unittest.TestCase):
-    """Valida que generate_context (ou startup) gera o arquivo de agente JSON."""
-
-    def setUp(self):
-        self.tmp = TemporaryDirectory()
-        self.cwd = Path(self.tmp.name)
-        (self.cwd / ".pipe").mkdir()
-        (self.cwd / "pipe.yml").write_text("# pipe.yml\n")
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def _run(self, config=None):
-        from src.core.context_generator import generate_context
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
-        agent_file = self.cwd / ".kiro" / "agents" / "pipe_context.json"
-        with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file), \
-             patch("src.core.context_generator.AGENT_FILE", agent_file, create=True):
-            generate_context(config or _make_config())
-        return ctx_file, agent_file
-
-    def test_gera_arquivo_de_agente_json(self):
-        """Deve gerar .kiro/agents/pipe_context.json com o conteúdo do CONTEXT.md."""
-        _, agent_file = self._run()
-        self.assertTrue(agent_file.exists(), ".kiro/agents/pipe_context.json não foi criado")
-
-    def test_arquivo_de_agente_json_valido(self):
-        """O arquivo .kiro/agents/pipe_context.json deve ser JSON válido."""
-        _, agent_file = self._run()
-        try:
-            data = json.loads(agent_file.read_text())
-        except json.JSONDecodeError as e:
-            self.fail(f"pipe_context.json não é JSON válido: {e}")
-        self.assertIsInstance(data, dict)
-
-    def test_arquivo_de_agente_tem_prompt(self):
-        """O arquivo JSON deve ter campo 'prompt' com o conteúdo do CONTEXT.md."""
-        ctx_file, agent_file = self._run()
-        data = json.loads(agent_file.read_text())
-        self.assertIn("prompt", data)
-        ctx_content = ctx_file.read_text()
-        self.assertEqual(data["prompt"].strip(), ctx_content.strip())
-
-    def test_arquivo_de_agente_tem_nome(self):
-        """O arquivo JSON deve ter campo 'name'."""
-        _, agent_file = self._run()
-        data = json.loads(agent_file.read_text())
-        self.assertIn("name", data)
-        self.assertTrue(data["name"])
-
-    def test_arquivo_de_agente_tem_tools(self):
-        """O arquivo JSON deve ter campo 'tools' para garantir acesso a write/shell/git.
-
-        Por padrão, custom agents do kiro-cli só têm ferramentas read-only.
-        O campo 'tools' com '*' (ou lista explícita) é necessário para que o
-        agente pipe_context tenha acesso às mesmas capacidades que o agente
-        padrão (escrita, shell, git etc.).
-        """
-        _, agent_file = self._run()
-        data = json.loads(agent_file.read_text())
-        self.assertIn("tools", data,
-                      "Campo 'tools' ausente — custom agents são read-only por padrão; "
-                      "sem esse campo o agente não poderá escrever arquivos nem executar comandos.")
-        tools = data["tools"]
-        self.assertIsInstance(tools, list)
-        self.assertGreater(len(tools), 0,
-                           "Lista 'tools' vazia — o agente ficaria sem nenhuma ferramenta.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Grupo 8 — Localização do arquivo de agente (validado contra doc kiro-cli)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestLocalizacaoArquivoDeAgente(unittest.TestCase):
-    """Valida que o arquivo de agente é gerado num local acessível ao kiro-cli.
-
-    Segundo a documentação oficial do kiro-cli (kiro.dev/docs/cli/custom-agents/
-    configuration-reference/), o kiro-cli busca agentes em:
-      1. <cwd>/.kiro/agents/  (local, workspace-specific)
-      2. ~/.kiro/agents/      (global, user-wide)
-      3. KIRO_HOME sobrescreve ~/. kiro como diretório base de agentes globais
-
-    O kiro-cli é executado com cwd=work_dir (= repo/<repo_id>), enquanto o
-    arquivo de agente é gerado no .kiro/ da esteira (raiz do pipe).
-    Esses dois diretórios são DIFERENTES — o agente não será encontrado via
-    busca local, e só funcionará se o diretório global (~/.kiro/agents/) for
-    usado, via KIRO_HOME configurado para o diretório da esteira, ou se o
-    arquivo for gerado dentro do repositório clonado.
-
-    Estes testes documentam o contrato esperado: o arquivo de agente deve
-    estar acessível ao kiro-cli independentemente do cwd de execução.
-    """
-
-    def setUp(self):
-        self.tmp = TemporaryDirectory()
-        self.esteira_dir = Path(self.tmp.name) / "esteira"
-        self.repo_dir = Path(self.tmp.name) / "esteira" / "repo" / "main"
-        self.esteira_dir.mkdir(parents=True)
-        self.repo_dir.mkdir(parents=True)
-        (self.esteira_dir / ".pipe").mkdir()
-        (self.esteira_dir / "pipe.yml").write_text("# pipe.yml\n")
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def test_arquivo_de_agente_nao_esta_no_cwd_do_repo(self):
-        """O arquivo de agente gerado pela esteira NÃO fica no cwd do repo.
-
-        Isso documenta o problema: o kiro-cli executado com cwd=repo/main
-        busca .kiro/agents/ dentro de repo/main — que NÃO é onde o arquivo
-        foi gerado (está em <esteira>/.kiro/agents/).
-
-        Esse teste PASSA documentando a lacuna de localização que precisa ser
-        resolvida via KIRO_HOME ou gerando o arquivo no repo.
-        """
-        ctx_file = self.esteira_dir / ".pipe" / "CONTEXT.md"
-        agent_file_esteira = self.esteira_dir / ".kiro" / "agents" / "pipe_context.json"
-        agent_file_repo = self.repo_dir / ".kiro" / "agents" / "pipe_context.json"
-
-        from src.core.context_generator import generate_context
-        with patch("src.core.context_generator.PIPE_FILE", self.esteira_dir / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file), \
-             patch("src.core.context_generator.AGENT_FILE", agent_file_esteira, create=True):
-            generate_context(_make_config())
-
-        # O arquivo existe no diretório da esteira
-        self.assertTrue(
-            agent_file_esteira.exists(),
-            "Arquivo de agente não foi gerado no diretório da esteira"
-        )
-        # Mas NÃO existe no cwd do repo (onde kiro-cli vai buscar como agente local)
-        self.assertFalse(
-            agent_file_repo.exists(),
-            "Arquivo de agente está no cwd do repo — isso seria válido, mas não é o comportamento atual"
-        )
-
-    def test_kiro_cli_precisa_de_kiro_home_ou_agente_no_repo_para_encontrar_agente(self):
-        """Verifica que o adapter configura KIRO_HOME corretamente no env do subprocess.
-
-        A documentação do kiro-cli informa:
-        - Local: <cwd>/.kiro/agents/<nome>.json   (precedência)
-        - Global: ~/.kiro/agents/<nome>.json        (fallback)
-        - KIRO_HOME sobrescreve ~/.kiro como diretório de agentes globais
-
-        O adapter deve:
-        (a) Configurar KIRO_HOME no env do subprocess, E
-        (b) KIRO_HOME deve ser um path absoluto, E
-        (c) O arquivo pipe_context.json deve existir em <KIRO_HOME>/agents/
-
-        Sem isso, o kiro-cli executado com cwd=repo/main não encontrará o agente.
-        """
-        from src.adapters.kiro_cli_agent import KiroCliAgent
-        from src.core.agent import AgentParams
-
-        # Simula CONTEXT.md na esteira (não no repo)
-        ctx_file = self.esteira_dir / ".pipe" / "CONTEXT.md"
-        ctx_file.write_text("# Contexto\nRESTRIÇÕES\n")
-
-        # Arquivo de agente gerado no diretório .kiro da esteira
-        agent_file = self.esteira_dir / ".kiro" / "agents" / "pipe_context.json"
-        agent_file.parent.mkdir(parents=True, exist_ok=True)
-        agent_file.write_text('{"name": "pipe_context", "prompt": "context", "tools": ["*"]}')
-
-        params = AgentParams(
-            platform="kiro-cli",
-            agent_id="dev",
-            agent_name="engineering",
-            model="claude-sonnet-4",
-            issue_id="1",
-            board_id="task",
-            col_id="doing",
-            prompt="Execute a tarefa.",
-            work_dir=str(self.repo_dir),  # cwd do kiro-cli é o repo
-        )
-
-        captured_envs = []
-        captured_cmds = []
-
-        def fake_run(cmd, **kwargs):
-            captured_envs.append(kwargs.get("env", {}))
-            captured_cmds.extend(cmd)
-            r = MagicMock()
-            r.returncode = 0
-            r.stdout = ""
-            r.stderr = ""
-            return r
-
-        agent = KiroCliAgent()
-
-        # Patcha AGENT_FILE com o path absoluto do arquivo de agente da esteira.
-        # Isso simula a produção: AGENT_FILE.resolve() deve retornar o path
-        # absoluto correto, e .parent.parent deve ser <esteira>/.kiro.
-        with patch("subprocess.run", side_effect=fake_run), \
-             patch("src.adapters.kiro_cli_agent.SessionIndex") as mock_idx, \
-             patch("src.adapters.kiro_cli_agent.CONTEXT_FILE", ctx_file), \
-             patch("src.adapters.kiro_cli_agent.AGENT_FILE", agent_file):
+             patch("src.adapters.kiro_cli_agent.STEERING_FILE", steering):
             mock_idx.return_value.get.return_value = None
             mock_idx.return_value.set.return_value = None
             agent._run(params, self.repo_dir)
+        return captured["cmd"], captured["env"]
 
-        # O adapter deve ter passado --agent (pré-requisito do teste)
-        self.assertIn("--agent", captured_cmds,
-                      "O adapter não passou --agent ao kiro-cli.")
+    def test_adapter_nao_passa_agent_flag(self):
+        """Caminho B: o adapter NÃO deve passar --agent."""
+        cmd, _ = self._run_adapter_capture()
+        self.assertNotIn("--agent", cmd,
+                         f"--agent não deveria mais ser passado: {cmd}")
 
-        # Verifica que KIRO_HOME foi definido no env do subprocess
-        env_passed = captured_envs[0] if captured_envs else {}
-        kiro_home = env_passed.get("KIRO_HOME", "")
-
-        self.assertTrue(
-            kiro_home,
-            "BUG: O adapter passa --agent mas KIRO_HOME não está definido no env do subprocess. "
-            "O kiro-cli buscará agentes em ~/.kiro/agents/ (diretório do usuário), não na esteira."
-        )
-
-        # KIRO_HOME precisa ser um path absoluto para ser válido independente do cwd
-        self.assertTrue(
-            Path(kiro_home).is_absolute(),
-            f"BUG: KIRO_HOME='{kiro_home}' não é um path absoluto. "
-            "Um path relativo é resolvido contra o cwd do subprocess (repo/main), "
-            "não contra o cwd da esteira — apontando para o lugar errado."
-        )
-
-        # O arquivo de agente deve existir em <KIRO_HOME>/agents/pipe_context.json
-        expected_agent_path = Path(kiro_home) / "agents" / "pipe_context.json"
-        self.assertTrue(
-            expected_agent_path.exists(),
-            f"BUG: O arquivo de agente não existe em KIRO_HOME/agents/. "
-            f"KIRO_HOME='{kiro_home}', caminho esperado: '{expected_agent_path}'. "
-            "O kiro-cli não encontrará o agente em produção. "
-            "Corrija: KIRO_HOME deve ser AGENT_FILE.resolve().parent.parent (o diretório .kiro)."
-        )
-
-    def test_nome_do_arquivo_de_agente_corresponde_ao_argumento_agent(self):
-        """O nome do arquivo JSON deve corresponder ao valor passado em --agent.
-
-        Segundo documentação: 'The filename (without .json) becomes the agent's name'
-        e o kiro-cli busca o agente por nome no diretório de agentes.
-        Se o arquivo se chama pipe_context.json, o argumento deve ser --agent pipe_context.
-        """
-        ctx_file = self.esteira_dir / ".pipe" / "CONTEXT.md"
-        agent_file = self.esteira_dir / ".kiro" / "agents" / "pipe_context.json"
-
-        from src.core.context_generator import generate_context, _AGENT_NAME
-        with patch("src.core.context_generator.PIPE_FILE", self.esteira_dir / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file), \
-             patch("src.core.context_generator.AGENT_FILE", agent_file, create=True):
-            generate_context(_make_config())
-
-        self.assertTrue(agent_file.exists(), "Arquivo de agente não foi gerado")
-
-        # Nome do arquivo sem extensão deve ser o mesmo passado ao --agent
-        agent_filename_stem = agent_file.stem  # "pipe_context"
-        self.assertEqual(
-            agent_filename_stem, _AGENT_NAME,
-            f"Nome do arquivo ({agent_filename_stem}) difere do argumento --agent ({_AGENT_NAME}). "
-            "O kiro-cli usa o nome do arquivo (sem .json) para identificar o agente."
-        )
-
-    def test_campo_name_no_json_coerente_com_nome_do_arquivo(self):
-        """O campo 'name' no JSON deve ser coerente com o nome do arquivo.
-
-        Segundo documentação: 'The name field specifies the name of the agent.
-        This is optional, derived from filename if not specified.'
-        Se explicitado, deve ser igual ao nome do arquivo para evitar confusão.
-        """
-        ctx_file = self.esteira_dir / ".pipe" / "CONTEXT.md"
-        agent_file = self.esteira_dir / ".kiro" / "agents" / "pipe_context.json"
-        # Garante que o CONTEXT.md não existe para forçar geração
-        if ctx_file.exists():
-            ctx_file.unlink()
-
-        from src.core.context_generator import generate_context
-        with patch("src.core.context_generator.PIPE_FILE", self.esteira_dir / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file), \
-             patch("src.core.context_generator.AGENT_FILE", agent_file, create=True):
-            generate_context(_make_config())
-
-        self.assertTrue(agent_file.exists(), "Arquivo de agente não foi gerado")
-
-        data = json.loads(agent_file.read_text())
-        name_in_json = data.get("name", "")
-        agent_filename_stem = agent_file.stem
-
-        self.assertEqual(
-            name_in_json, agent_filename_stem,
-            f"Campo 'name' no JSON ('{name_in_json}') difere do nome do arquivo "
-            f"('{agent_filename_stem}'). Ambos devem ser iguais para evitar ambiguidade."
-        )
+    def test_adapter_define_kiro_home_absoluto_no_kiro(self):
+        """KIRO_HOME deve apontar (absoluto) para o .kiro que contém o steering."""
+        _, env = self._run_adapter_capture()
+        kiro_home = env.get("KIRO_HOME", "")
+        self.assertTrue(kiro_home, "KIRO_HOME não definido no env do subprocess")
+        self.assertTrue(Path(kiro_home).is_absolute(),
+                        f"KIRO_HOME='{kiro_home}' não é absoluto")
+        steering_esperado = Path(kiro_home) / "steering" / "esteira.md"
+        self.assertTrue(steering_esperado.exists(),
+                        f"steering não encontrado em KIRO_HOME/steering: "
+                        f"{steering_esperado}")
 
 
 if __name__ == "__main__":
