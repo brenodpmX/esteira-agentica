@@ -342,12 +342,19 @@ class Board:
            children:{...}, blocked_by:{...}, blocks:{...}}
         Onde 'added'/'removed' são numbers de issues (str).
         """
-        cmds, discards = _sanitize_relations_with_discards(issue_id, cmds)
+        cmds, discards, contradictions = _sanitize_relations_with_discards(issue_id, cmds)
         self_id = str(issue_id)
         for attr_name in discards:
             log.warning(
                 "Board",
                 f"[{board_id}] auto-referência descartada em {attr_name}: #{self_id}",
+                board_id=board_id, issue_id=self_id,
+            )
+        for cid in contradictions:
+            log.warning(
+                "Board",
+                f"[{board_id}] contradição blocks/blocked_by descartada: #{cid} "
+                f"(backstop #242)",
                 board_id=board_id, issue_id=self_id,
             )
 

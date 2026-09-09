@@ -466,3 +466,40 @@ def test_apply_create_up_self_reference_not_sent_to_adapter(tmp_path, monkeypatc
 # `python -m pytest tests/ -v` e confirmando que os testes já existentes em
 # test_sync_optimization.py e demais arquivos de board.py/commands.py/sync.py
 # continuam passando após a implementação desta issue.
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# F0.10 — anti-contradição: ID em blocks E blocked_by (backstop #242)
+# ══════════════════════════════════════════════════════════════════════════
+
+def test_contradicao_descarta_id_de_ambos_os_lados():
+    cmds = IssueCommands(blocked_by=["10", "20"], blocks=["20", "30"])
+    result = sanitize_relations("1", cmds)
+    # 20 estava nos dois lados → descartado de ambos.
+    assert "20" not in result.blocked_by
+    assert "20" not in result.blocks
+    # Os demais permanecem.
+    assert "10" in result.blocked_by
+    assert "30" in result.blocks
+
+
+def test_contradicao_sem_interseccao_preserva_tudo():
+    cmds = IssueCommands(blocked_by=["10"], blocks=["30"])
+    result = sanitize_relations("1", cmds)
+    assert result.blocked_by == ["10"]
+    assert result.blocks == ["30"]
+
+
+def test_contradicao_loga_backstop_242(monkeypatch):
+    calls = []
+
+    def fake_warning(module, msg, *args, **extra):
+        calls.append(msg)
+
+    from src.core import commands as commands_mod
+    monkeypatch.setattr(commands_mod.log, "warning", fake_warning)
+
+    cmds = IssueCommands(blocked_by=["20"], blocks=["20"])
+    sanitize_relations("1", cmds)
+
+    assert any("#242" in m and "20" in m for m in calls), calls

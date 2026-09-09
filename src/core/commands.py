@@ -144,19 +144,25 @@ def sanitize_relations(issue_id, cmds: IssueCommands) -> IssueCommands:
     Função pura: não muta `cmds` (retorna uma nova instância), não recebe
     `board_id` e não faz nenhuma chamada de rede nem importa `Board`/adapters.
     """
-    result, discards = _sanitize_relations_with_discards(issue_id, cmds)
+    result, discards, contradictions = _sanitize_relations_with_discards(issue_id, cmds)
     self_id = str(issue_id)
     for attr_name in discards:
         log.warning("Commands", f"auto-referência descartada em {attr_name}: #{self_id}",
+                    issue_id=self_id)
+    for cid in contradictions:
+        log.warning("Commands",
+                    f"contradição blocks/blocked_by descartada: #{cid} (backstop #242)",
                     issue_id=self_id)
     return result
 
 
 def _sanitize_relations_with_discards(issue_id, cmds: IssueCommands):
-    """Implementação pura (sem log): retorna (novo IssueCommands, discards).
+    """Implementação pura (sem log): retorna (novo IssueCommands, discards, contradictions).
 
-    `discards` é a lista de nomes de atributos ('parent'/'children'/
-    'blocked_by'/'blocks') onde uma auto-referência foi removida.
+    - `discards`: nomes de atributos ('parent'/'children'/'blocked_by'/'blocks')
+      onde uma auto-referência foi removida.
+    - `contradictions`: IDs presentes SIMULTANEAMENTE em `blocks` e `blocked_by`
+      (contradição/ciclo — backstop #242), descartados de AMBOS os lados.
     """
     self_id = str(issue_id)
     result = replace(cmds)
@@ -176,7 +182,18 @@ def _sanitize_relations_with_discards(issue_id, cmds: IssueCommands):
         elif normalized != values:
             setattr(result, attr_name, normalized)
 
-    return result, discards
+    # Backstop #242: um mesmo ID em `blocks` E `blocked_by` é contradição
+    # (esta issue trava N e é travada por N → ciclo). Descarta o ID dos DOIS
+    # lados para não propagar um bloqueio recíproco impossível ao board.
+    bb = [str(v) for v in result.blocked_by]
+    bk = [str(v) for v in result.blocks]
+    contradictions = sorted(set(bb) & set(bk))
+    if contradictions:
+        contra = set(contradictions)
+        result.blocked_by = [v for v in bb if v not in contra]
+        result.blocks = [v for v in bk if v not in contra]
+
+    return result, discards, contradictions
 
 
 # ══════════════════════════════════════════════════════════════════════════════
