@@ -52,6 +52,35 @@ def _needs_regeneration() -> bool:
     return PIPE_FILE.stat().st_mtime > STEERING_FILE.stat().st_mtime
 
 
+def _section_project(config: dict) -> list[str]:
+    """Seções 'Projeto' e 'Papéis humanos' derivadas de config['project'].
+
+    Template aprovado (item "Visão geral"):
+        ## Projeto
+        - nome: {project.name}
+        - resumo: {project.summary}
+
+        ## Papéis humanos
+        - {human.name}: {human.role}   # omitir a seção inteira se vazia
+    """
+    project = config.get("project", {}) or {}
+    name = project.get("name", "")
+    summary = project.get("summary", "")
+    lines = [
+        "## Projeto",
+        f"- nome: {name}",
+        f"- resumo: {summary}",
+        "",
+    ]
+    humans = project.get("humans") or []
+    if humans:
+        lines.append("## Papéis humanos")
+        for human in humans:
+            lines.append(f"- {human.get('name', '')}: {human.get('role', '')}")
+        lines.append("")
+    return lines
+
+
 def _section_restrictions() -> list[str]:
     """Seção de arquivos protegidos (texto aprovado — P1.3 item 1)."""
     lines = [
@@ -227,6 +256,7 @@ def _build_content(config: dict) -> str:
         "**Não edite manualmente** — será sobrescrito ao reiniciar.",
         "",
     ]
+    sections += _section_project(config)
     sections += _section_restrictions()
     sections += _section_issue_naming()
     sections += _section_body_structure()

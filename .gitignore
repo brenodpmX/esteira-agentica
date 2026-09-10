@@ -27,3 +27,6 @@ oldversion/
 
 # Binário kiro-cli copiado pelo prepare-docker.sh (contexto de build, não deve ser versionado)
 kiro-cli
+
+# Steering gerado em runtime pela esteira (não versionar)
+.kiro/steering/

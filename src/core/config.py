@@ -50,17 +50,22 @@ def _validate_git(git: dict):
             continue
         if "name" not in flow_cfg and "prefix" not in flow_cfg:
             raise ConfigError(f"git.flow.{flow_id}: requer 'name' ou 'prefix'")
-        # E1 (F0.5): branch_pattern por flow — template legível do nome da branch.
-        # Validação NÃO-obrigatória por ora (o campo chega no pipe.yml em F1.1);
-        # mas SE presente, deve ser string não-vazia. A obrigatoriedade e o uso
-        # descritivo em build_prompt (E3) entram junto com F1.1.
-        if "branch_pattern" in flow_cfg:
-            bp = flow_cfg["branch_pattern"]
-            if not isinstance(bp, str) or not bp.strip():
-                raise ConfigError(
-                    f"git.flow.{flow_id}.branch_pattern: deve ser uma string não-vazia "
-                    f"(template do nome da branch, ex.: 'story/#{{id}}-{{nome}}')"
-                )
+        # E1 (F1.1): branch_pattern por flow — template legível do nome da branch,
+        # no formato `<prefix>/<id>-<slug>`. OBRIGATÓRIO em todo flow (exceto
+        # 'base'): o agent.py não monta mais o nome; passa o padrão como
+        # instrução e o agente cria a branch conforme (E3). Deve ser string
+        # não-vazia.
+        if "branch_pattern" not in flow_cfg:
+            raise ConfigError(
+                f"git.flow.{flow_id}: campo 'branch_pattern' é obrigatório "
+                f"(template legível do nome da branch, ex.: 'story/{{id}}-{{slug}}')"
+            )
+        bp = flow_cfg["branch_pattern"]
+        if not isinstance(bp, str) or not bp.strip():
+            raise ConfigError(
+                f"git.flow.{flow_id}.branch_pattern: deve ser uma string não-vazia "
+                f"(template do nome da branch, ex.: 'story/{{id}}-{{slug}}')"
+            )
 
 
 CONTEXTS_DIR = Path("contexts")
@@ -144,6 +149,39 @@ def _validate_boards(boards: dict, known_agents: set[str] | None = None):
                         )
 
 
+def _validate_project(project: dict):
+    """Valida a seção `project` do pipe.yml (E — 'Visão geral').
+
+    `name` e `summary` são OBRIGATÓRIOS (strings não-vazias). `humans` é
+    OPCIONAL: se presente, deve ser lista de mapas com `name`/`role` não-vazios.
+    O gerador de contexto (context_generator) injeta esses valores nas seções
+    'Projeto' e 'Papéis humanos' do steering.
+    """
+    if not isinstance(project, dict):
+        raise ConfigError("project: deve ser um mapa com 'name' e 'summary'")
+    for key in ("name", "summary"):
+        value = project.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(
+                f"project.{key}: campo obrigatório (string não-vazia)"
+            )
+    humans = project.get("humans")
+    if humans is not None:
+        if not isinstance(humans, list):
+            raise ConfigError("project.humans: deve ser uma lista de {name, role}")
+        for i, human in enumerate(humans):
+            if not isinstance(human, dict):
+                raise ConfigError(
+                    f"project.humans[{i}]: deve ser um mapa com 'name' e 'role'"
+                )
+            for key in ("name", "role"):
+                value = human.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    raise ConfigError(
+                        f"project.humans[{i}].{key}: campo obrigatório (string não-vazia)"
+                    )
+
+
 def _validate_log(log_cfg: dict):
     ttl = log_cfg.get("ttl")
     if ttl is not None and (not isinstance(ttl, int) or ttl < 1):
@@ -205,6 +243,9 @@ def check_config() -> dict:
     _validate_sleep(config["sleep"])
 
     validate_max_attempts(config)
+
+    project = _require(config, "project", "pipe.yml")
+    _validate_project(project)
 
     git = _require(config, "git", "pipe.yml")
     _validate_git(git)

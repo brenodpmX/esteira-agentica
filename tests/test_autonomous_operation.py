@@ -25,6 +25,9 @@ from unittest.mock import patch
 
 _MINIMAL_PIPE_YML = """\
 sleep: 60
+project:
+  name: Esteira Agêntica
+  summary: Esteira orientada a issues com agentes de IA.
 git:
   repo:
     main: git@github.com:x/y.git
@@ -37,6 +40,9 @@ boards:
 
 _PIPE_YML_WITH_AGENT = """\
 sleep: 60
+project:
+  name: Esteira Agêntica
+  summary: Esteira orientada a issues com agentes de IA.
 git:
   repo:
     main: git@github.com:x/y.git

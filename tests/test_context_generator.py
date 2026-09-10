@@ -57,6 +57,13 @@ def _make_config(boards=None, flows=None):
         }
     return {
         "sleep": 60,
+        "project": {
+            "name": "Esteira Agêntica",
+            "summary": "Esteira orientada a issues com agentes de IA.",
+            "humans": [
+                {"name": "Breno", "role": "dono do produto; aprova negócio"},
+            ],
+        },
         "git": {
             "repo": {"main": "git@github.com:user/repo.git"},
             "flow": flows,
@@ -515,6 +522,38 @@ class TestIntegracaoSteering(unittest.TestCase):
         self.assertTrue(steering_esperado.exists(),
                         f"steering não encontrado em KIRO_HOME/steering: "
                         f"{steering_esperado}")
+
+
+class TestSecaoProjeto(unittest.TestCase):
+    """Item 6 do steering (F1.1): seções 'Projeto' e 'Papéis humanos' derivadas
+    de config['project'] (name, summary, humans[])."""
+
+    def _content(self, config):
+        from src.core.context_generator import _build_content
+        return _build_content(config)
+
+    def test_secao_projeto_com_nome_e_resumo(self):
+        content = self._content(_make_config())
+        self.assertIn("## Projeto", content)
+        self.assertIn("- nome: Esteira Agêntica", content)
+        self.assertIn("- resumo: Esteira orientada a issues com agentes de IA.", content)
+
+    def test_secao_papeis_humanos_lista_humans(self):
+        content = self._content(_make_config())
+        self.assertIn("## Papéis humanos", content)
+        self.assertIn("- Breno: dono do produto; aprova negócio", content)
+
+    def test_omite_papeis_humanos_quando_vazio(self):
+        cfg = _make_config()
+        cfg["project"]["humans"] = []
+        content = self._content(cfg)
+        self.assertIn("## Projeto", content)
+        self.assertNotIn("## Papéis humanos", content)
+
+    def test_projeto_aparece_no_topo_antes_dos_protegidos(self):
+        content = self._content(_make_config())
+        self.assertLess(content.index("## Projeto"),
+                        content.index("## Arquivos protegidos"))
 
 
 if __name__ == "__main__":
