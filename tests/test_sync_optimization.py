@@ -154,16 +154,22 @@ def test_apply_commands_no_known_reconciles_all():
     assert "unarchive" in ops
 
 
-def test_apply_commands_close_skipped_when_already_closed():
+def test_apply_commands_nao_fecha_via_comando_e9():
+    """E9: apply_commands NÃO fecha issues; fechamento é label do adapter.
+
+    A coluna terminal adiciona a label `completed`/`not_planned` (via labels);
+    o core só faz set_labels — nunca chama close_issue diretamente.
+    """
     port = FakePort()
     board = Board(port)
-    cmds = IssueCommands(close="completed")
+    cmds = IssueCommands(labels=["completed"])
     known = {
         "labels": [], "parent": None, "children": [],
-        "blocked_by": [], "blocks": [], "archived": False, "state": "closed",
+        "blocked_by": [], "blocks": [], "archived": False, "state": "open",
     }
     board.apply_commands("b", "1", cmds, known=known)
     assert "close" not in _ops(port)
+    assert ("set_labels", "1", ["completed"]) in port.calls
 
 
 # ── Pair-trigger: terminação ──────────────────────────────────────────────────
@@ -235,33 +241,33 @@ def test_pair_trigger_removed_only_when_still_reciprocated():
 def test_session_index_set_get_roundtrip():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    assert idx.get("b", "1", "eng") is None
-    idx.set("b", "1", "eng", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-    assert idx.get("b", "1", "eng") == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert idx.get("1", "doing") is None
+    idx.set("1", "doing", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert idx.get("1", "doing") == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
-def test_session_index_isolated_by_agent_and_issue():
+def test_session_index_isolated_by_issue_and_column():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    idx.set("b", "1", "eng", "id-eng")
-    idx.set("b", "1", "qa", "id-qa")
-    idx.set("b", "2", "eng", "id-eng-2")
-    assert idx.get("b", "1", "eng") == "id-eng"
-    assert idx.get("b", "1", "qa") == "id-qa"
-    assert idx.get("b", "2", "eng") == "id-eng-2"
+    idx.set("1", "doing", "id-doing")
+    idx.set("1", "review", "id-review")
+    idx.set("2", "doing", "id-doing-2")
+    assert idx.get("1", "doing") == "id-doing"
+    assert idx.get("1", "review") == "id-review"
+    assert idx.get("2", "doing") == "id-doing-2"
 
 
 def test_session_index_overwrite_updates_id():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    idx.set("b", "1", "eng", "old-id")
-    idx.set("b", "1", "eng", "new-id")
-    assert idx.get("b", "1", "eng") == "new-id"
+    idx.set("1", "doing", "old-id")
+    idx.set("1", "doing", "new-id")
+    assert idx.get("1", "doing") == "new-id"
 
 
 def test_session_index_set_empty_is_noop():
     from src.core.session import SessionIndex
     idx = SessionIndex()
-    idx.set("b", "1", "eng", "")
-    assert idx.get("b", "1", "eng") is None
+    idx.set("1", "doing", "")
+    assert idx.get("1", "doing") is None
 

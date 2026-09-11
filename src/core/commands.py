@@ -33,9 +33,13 @@ Comandos suportados:
 - /blocks #N, #M        esta issue bloqueia N e M
 - /labels a, b, c       labels da issue (SET completo)
 - /agent-hub-<valor>    roteamento de agente (hub); <valor> é livre (ex.: low, senior, deep)
-- /close [completed|not_planned]
 - /archive
 - /need_human           label especial (não entra em /labels)
+
+Fechamento (E9): o agente NÃO fecha issues. A coluna terminal adiciona uma
+label (`completed`/`not_planned`) via `on_in`; o adapter do board interpreta
+essa label e fecha a issue com o motivo. O core é agnóstico (só adiciona/remove
+a label). Reabrir não existe na esteira (ação humana).
 """
 
 import re
@@ -65,8 +69,6 @@ class IssueCommands:
     blocks: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
     agent_hub: str | None = None
-    close: str | None = None        # 'completed' | 'not_planned'
-    reopen: bool = False
     archive: bool = False
     need_human: bool = False
 
@@ -74,8 +76,7 @@ class IssueCommands:
         """True se nenhum comando foi declarado."""
         return not (
             self.parent or self.children or self.blocked_by or self.blocks
-            or self.labels or self.agent_hub or self.close or self.reopen
-            or self.archive or self.need_human
+            or self.labels or self.agent_hub or self.archive or self.need_human
         )
 
     def all_labels(self) -> list[str]:
@@ -143,19 +144,25 @@ def sanitize_relations(issue_id, cmds: IssueCommands) -> IssueCommands:
     Função pura: não muta `cmds` (retorna uma nova instância), não recebe
     `board_id` e não faz nenhuma chamada de rede nem importa `Board`/adapters.
     """
-    result, discards = _sanitize_relations_with_discards(issue_id, cmds)
+    result, discards, contradictions = _sanitize_relations_with_discards(issue_id, cmds)
     self_id = str(issue_id)
     for attr_name in discards:
         log.warning("Commands", f"auto-referência descartada em {attr_name}: #{self_id}",
+                    issue_id=self_id)
+    for cid in contradictions:
+        log.warning("Commands",
+                    f"contradição blocks/blocked_by descartada: #{cid} (backstop #242)",
                     issue_id=self_id)
     return result
 
 
 def _sanitize_relations_with_discards(issue_id, cmds: IssueCommands):
-    """Implementação pura (sem log): retorna (novo IssueCommands, discards).
+    """Implementação pura (sem log): retorna (novo IssueCommands, discards, contradictions).
 
-    `discards` é a lista de nomes de atributos ('parent'/'children'/
-    'blocked_by'/'blocks') onde uma auto-referência foi removida.
+    - `discards`: nomes de atributos ('parent'/'children'/'blocked_by'/'blocks')
+      onde uma auto-referência foi removida.
+    - `contradictions`: IDs presentes SIMULTANEAMENTE em `blocks` e `blocked_by`
+      (contradição/ciclo — backstop #242), descartados de AMBOS os lados.
     """
     self_id = str(issue_id)
     result = replace(cmds)
@@ -175,7 +182,18 @@ def _sanitize_relations_with_discards(issue_id, cmds: IssueCommands):
         elif normalized != values:
             setattr(result, attr_name, normalized)
 
-    return result, discards
+    # Backstop #242: um mesmo ID em `blocks` E `blocked_by` é contradição
+    # (esta issue trava N e é travada por N → ciclo). Descarta o ID dos DOIS
+    # lados para não propagar um bloqueio recíproco impossível ao board.
+    bb = [str(v) for v in result.blocked_by]
+    bk = [str(v) for v in result.blocks]
+    contradictions = sorted(set(bb) & set(bk))
+    if contradictions:
+        contra = set(contradictions)
+        result.blocked_by = [v for v in bb if v not in contra]
+        result.blocks = [v for v in bk if v not in contra]
+
+    return result, discards, contradictions
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -239,10 +257,6 @@ def parse_commands(text: str) -> IssueCommands:
             # O sufixo (após "agent-hub-") é o valor do hub, livre.
             value = name[len(AGENT_HUB_PREFIX):]
             cmds.agent_hub = value or None
-        elif name == "close":
-            cmds.close = arg.split()[0] if arg else "completed"
-        elif name == "reopen":
-            cmds.reopen = True
         elif name == "archive":
             cmds.archive = True
         elif name == "need_human":
@@ -273,6 +287,111 @@ def split_body(raw: str) -> tuple[str, IssueCommands]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Anotações (E2 / F0.4) — região entre `📝` e `@---`
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Estrutura do -body.md (5 partes):
+#   1. Corpo — conteúdo que rege a execução
+#   2. `📝`   — separador das anotações
+#   3. Anotações — memória da issue (pai, branch pai, branch, boards)
+#   4. `@---` — separador dos comandos
+#   5. Comandos — um por linha (parseados por split_body/parse_commands)
+#
+# Tudo ACIMA de `@---` (corpo + 📝 + anotações) é o corpo da issue no board;
+# tudo ABAIXO são atributos (comandos). A esteira NUNCA escreve no -body.md:
+# apenas INTERPRETA as anotações (o agente é quem as mantém).
+
+# Separador das anotações (emoji "memo").
+ANNOT_SEP = "📝"
+
+# Placeholder de branch ainda inexistente (não vira branch real ao parsear).
+_BRANCH_PLACEHOLDER_PREFIX = "("
+
+
+@dataclass
+class IssueAnnotations:
+    """Anotações declaradas pelo agente no body (acima de `@---`, abaixo de `📝`)."""
+    parent: str | None = None         # id do pai (sem '#'), se houver mãe
+    parent_name: str | None = None    # nome do pai (opcional, informativo)
+    parent_branch: str | None = None  # branch pai (origem)
+    branch: str | None = None         # branch de trabalho (None se "(ainda não criada)")
+    boards: list[str] = field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        return not (self.parent or self.parent_branch or self.branch or self.boards)
+
+
+def parse_annotations(text: str) -> IssueAnnotations:
+    """Faz o parse do bloco de anotações (já separado do corpo e dos comandos).
+
+    Chaves reconhecidas (uma por linha, `chave: valor`):
+      - `pai: #<id> - <nome>`   → parent (+ parent_name se houver ' - <nome>')
+      - `branch pai: <branch>`  → parent_branch
+      - `branch: <branch>`      → branch ("(ainda não criada)" ⇒ None)
+      - `boards: b1, b2`        → boards (lista)
+    Linhas sem `:` ou com chave desconhecida são ignoradas.
+    """
+    annot = IssueAnnotations()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+
+        if key == "pai":
+            if " - " in value:
+                id_part, name_part = value.split(" - ", 1)
+            else:
+                id_part, name_part = value, ""
+            refs = _parse_refs(id_part)
+            annot.parent = refs[0] if refs else None
+            annot.parent_name = name_part.strip() or None
+        elif key == "branch pai":
+            annot.parent_branch = value or None
+        elif key == "branch":
+            # "(ainda não criada)" ou vazio ⇒ branch ainda não existe.
+            annot.branch = None if (not value or value.startswith(_BRANCH_PLACEHOLDER_PREFIX)) else value
+        elif key == "boards":
+            annot.boards = [b.strip() for b in value.split(",") if b.strip()]
+
+    return annot
+
+
+def split_annotations(body: str) -> tuple[str, IssueAnnotations]:
+    """Separa o corpo real das anotações dentro do body (acima de `@---`).
+
+    Recebe o texto ACIMA de `@---` (corpo + 📝 + anotações) e o divide no
+    ÚLTIMO separador `📝`: acima ⇒ corpo; abaixo ⇒ anotações. Sem `📝`,
+    retorna o body inteiro como corpo e anotações vazias.
+    """
+    body = body or ""
+    lines = body.splitlines()
+    sep_idx = [i for i, l in enumerate(lines) if l.strip() == ANNOT_SEP]
+    if not sep_idx:
+        return body.rstrip("\n"), IssueAnnotations()
+
+    last = sep_idx[-1]
+    corpo_lines = [l for l in lines[:last] if l.strip() != ANNOT_SEP]
+    annot_text = "\n".join(lines[last + 1:])
+    corpo = "\n".join(corpo_lines).rstrip("\n")
+    return corpo, parse_annotations(annot_text)
+
+
+def parse_body(raw: str) -> tuple[str, IssueAnnotations, IssueCommands]:
+    """Parser completo das 5 partes do -body.md.
+
+    Retorna (corpo, anotações, comandos). O corpo é apenas a parte 1 (sem 📝,
+    anotações ou @---). As anotações e comandos são interpretados; a esteira
+    não reescreve o arquivo.
+    """
+    body_above, cmds = split_body(raw)
+    corpo, annot = split_annotations(body_above)
+    return corpo, annot, cmds
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Serialization
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -293,10 +412,6 @@ def serialize_commands(cmds: IssueCommands) -> str:
         lines.append(f"/{AGENT_HUB_PREFIX}{cmds.agent_hub}")
     if cmds.need_human:
         lines.append("/need_human")
-    if cmds.close:
-        lines.append(f"/close {cmds.close}")
-    if cmds.reopen:
-        lines.append("/reopen")
     if cmds.archive:
         lines.append("/archive")
     return "\n".join(lines)
@@ -340,7 +455,6 @@ Comandos disponíveis:
 - `/labels a, b, c`       define as labels da issue (substitui todas)
 - `/agent-hub-<valor>`    roteamento de agente (hub); escreva como um label, ex.: `/agent-hub-low`
 - `/need_human`           marca que precisa de intervenção humana
-- `/close [completed|not_planned]`  fecha a issue
 - `/archive`              arquiva a issue no board
 
 Ao criar uma sub-issue, sempre anote o vínculo: no body da nova issue use \
@@ -376,14 +490,16 @@ def apply_events_to_commands(cmds: IssueCommands, events: list[str]) -> IssueCom
     """Aplica tokens de evento de coluna sobre um IssueCommands (in-place).
 
     Reescreve o estado declarativo dos comandos conforme os tokens:
-      'close'        -> close = 'completed'
-      'open'         -> reopen = True, archive = False, close = None
       'archive'      -> archive = True
       '-archive'     -> archive = False
       'need_human'   -> need_human = True
       '-need_human'  -> need_human = False
-      '<label>'      -> adiciona label
+      '<label>'      -> adiciona label (ex.: 'completed', 'not_planned')
       '-<label>'     -> remove label
+
+    Fechamento (E9): não há token 'close'/'open'. A coluna terminal adiciona a
+    label `completed`/`not_planned` (tokens de label comuns); o adapter do board
+    interpreta essa label e fecha a issue. Reabrir não existe.
 
     Retorna o próprio cmds (mutado) para encadeamento.
     """
@@ -392,14 +508,7 @@ def apply_events_to_commands(cmds: IssueCommands, events: list[str]) -> IssueCom
         if not token:
             continue
 
-        if token == "close":
-            cmds.close = "completed"
-            cmds.reopen = False
-        elif token == "open":
-            cmds.reopen = True
-            cmds.close = None
-            cmds.archive = False
-        elif token == "archive":
+        if token == "archive":
             cmds.archive = True
         elif token == "-archive":
             cmds.archive = False

@@ -50,28 +50,50 @@ def _validate_git(git: dict):
             continue
         if "name" not in flow_cfg and "prefix" not in flow_cfg:
             raise ConfigError(f"git.flow.{flow_id}: requer 'name' ou 'prefix'")
+        # E1 (F1.1): branch_pattern por flow — template legível do nome da branch,
+        # no formato `<prefix>/<id>-<slug>`. OBRIGATÓRIO em todo flow (exceto
+        # 'base'): o agent.py não monta mais o nome; passa o padrão como
+        # instrução e o agente cria a branch conforme (E3). Deve ser string
+        # não-vazia.
+        if "branch_pattern" not in flow_cfg:
+            raise ConfigError(
+                f"git.flow.{flow_id}: campo 'branch_pattern' é obrigatório "
+                f"(template legível do nome da branch, ex.: 'story/{{id}}-{{slug}}')"
+            )
+        bp = flow_cfg["branch_pattern"]
+        if not isinstance(bp, str) or not bp.strip():
+            raise ConfigError(
+                f"git.flow.{flow_id}.branch_pattern: deve ser uma string não-vazia "
+                f"(template do nome da branch, ex.: 'story/{{id}}-{{slug}}')"
+            )
 
 
 CONTEXTS_DIR = Path("contexts")
 
 
 def _validate_agents(agents: dict):
+    missing = []
     empty = []
     for platform_id, platform in agents.items():
         for agent_id, agent_cfg in platform.items():
             _require(agent_cfg, "name", f"agents.{platform_id}.{agent_id}")
-            # Garantir que o arquivo de contexto existe
+            # P1.5 (F0.9): a esteira NÃO cria mais o arquivo de contexto (persona).
+            # Ele é insumo do operador (versionado no repo PIPE, montado readonly).
+            # Aqui apenas validamos e orientamos — nunca escrevemos.
             ctx_file = CONTEXTS_DIR / platform_id / f"{agent_id}.md"
-            ctx_file.parent.mkdir(parents=True, exist_ok=True)
             if not ctx_file.exists():
-                ctx_file.write_text("", encoding="utf-8")
-            if not ctx_file.read_text(encoding="utf-8").strip():
+                missing.append(str(ctx_file))
+            elif not ctx_file.read_text(encoding="utf-8").strip():
                 empty.append(str(ctx_file))
-    if empty:
-        raise ConfigError(
-            "Arquivos de contexto vazios (preencha antes de executar):\n  - "
-            + "\n  - ".join(empty)
-        )
+    if missing or empty:
+        parts = []
+        if missing:
+            parts.append("Arquivos de contexto ausentes (crie e preencha):\n  - "
+                         + "\n  - ".join(missing))
+        if empty:
+            parts.append("Arquivos de contexto vazios (preencha antes de executar):\n  - "
+                         + "\n  - ".join(empty))
+        raise ConfigError("\n".join(parts))
 
 
 def _validate_boards(boards: dict, known_agents: set[str] | None = None):
@@ -125,6 +147,39 @@ def _validate_boards(boards: dict, known_agents: set[str] | None = None):
                         raise ConfigError(
                             f"{ctx}.agent-hub.{value}: agente '{ov_agent}' não definido em 'agents'"
                         )
+
+
+def _validate_project(project: dict):
+    """Valida a seção `project` do pipe.yml (E — 'Visão geral').
+
+    `name` e `summary` são OBRIGATÓRIOS (strings não-vazias). `humans` é
+    OPCIONAL: se presente, deve ser lista de mapas com `name`/`role` não-vazios.
+    O gerador de contexto (context_generator) injeta esses valores nas seções
+    'Projeto' e 'Papéis humanos' do steering.
+    """
+    if not isinstance(project, dict):
+        raise ConfigError("project: deve ser um mapa com 'name' e 'summary'")
+    for key in ("name", "summary"):
+        value = project.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(
+                f"project.{key}: campo obrigatório (string não-vazia)"
+            )
+    humans = project.get("humans")
+    if humans is not None:
+        if not isinstance(humans, list):
+            raise ConfigError("project.humans: deve ser uma lista de {name, role}")
+        for i, human in enumerate(humans):
+            if not isinstance(human, dict):
+                raise ConfigError(
+                    f"project.humans[{i}]: deve ser um mapa com 'name' e 'role'"
+                )
+            for key in ("name", "role"):
+                value = human.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    raise ConfigError(
+                        f"project.humans[{i}].{key}: campo obrigatório (string não-vazia)"
+                    )
 
 
 def _validate_log(log_cfg: dict):
@@ -188,6 +243,9 @@ def check_config() -> dict:
     _validate_sleep(config["sleep"])
 
     validate_max_attempts(config)
+
+    project = _require(config, "project", "pipe.yml")
+    _validate_project(project)
 
     git = _require(config, "git", "pipe.yml")
     _validate_git(git)

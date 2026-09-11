@@ -404,7 +404,6 @@ def test_serialize_com_todos_os_campos():
         blocks=["20"],
         labels=["backend", "security"],
         agent_hub="medium",
-        close="completed",
         need_human=True,
     )
     serialized = serialize_commands(cmds)
@@ -415,7 +414,7 @@ def test_serialize_com_todos_os_campos():
     assert "/labels backend, security" in serialized
     assert "/agent-hub-medium" in serialized
     assert "/need_human" in serialized
-    assert "/close completed" in serialized
+    assert "/close" not in serialized  # E9: fechamento é label do adapter
     # agent-hub-* não deve aparecer em /labels
     for line in serialized.splitlines():
         if line.startswith("/labels"):
@@ -462,12 +461,12 @@ def test_eventos_coluna_need_human_nao_zera_agent_hub():
 
 
 def test_eventos_coluna_close_nao_zera_agent_hub():
-    """Evento 'close' de on_in/on_out não deve alterar agent_hub."""
+    """E9: label de fechamento (completed) via on_in é label comum; não altera agent_hub."""
     from src.core.commands import apply_events_to_commands
     cmds = IssueCommands(labels=["backend"], agent_hub="medium")
-    apply_events_to_commands(cmds, ["close"])
+    apply_events_to_commands(cmds, ["completed"])
     assert cmds.agent_hub == "medium"
-    assert cmds.close == "completed"
+    assert "completed" in cmds.labels
 
 
 def test_eventos_coluna_label_normal_nao_toca_agent_hub():

@@ -1,71 +1,159 @@
-"""Gerador de CONTEXT.md — instrui agentes sobre regras e estrutura do sistema.
+"""Gerador do steering de SISTEMA — instrui agentes sobre regras e estrutura.
 
-Gerado automaticamente no startup a partir do pipe.yml. O conteúdo resultante
-é injetado como agente kiro-cli via --agent (nunca embutido inline no prompt),
-prevenindo comportamentos implícitos (ex: incidente Issue Fantasma).
+Gerado automaticamente no startup a partir do pipe.yml. O conteúdo é escrito em
+`.kiro/steering/esteira.md` e auto-carregado pelo kiro-cli (default agent) via
+`KIRO_HOME`. Não é mais injetado por `--agent` nem embutido inline no prompt.
 
-Arquivos gerados:
-  .pipe/CONTEXT.md               — instruções em Markdown
-  .kiro/agents/pipe_context.json — arquivo de agente do kiro-cli com o conteúdo
+Arquivo gerado:
+  .kiro/steering/esteira.md — steering em Markdown (frontmatter `inclusion: always`)
+
+Caminho B (P1.1(b)): NÃO geramos mais `.kiro/agents/pipe_context.json` nem
+usamos o gate `--agent pipe_context`. O default agent do kiro-cli carrega o
+steering automaticamente quando `KIRO_HOME` aponta para o `.kiro` da esteira.
 
 Regra de regeneração: recria se não existir OU se pipe.yml for mais novo.
 """
 
-import json
 from pathlib import Path
 
 # Caminhos usados como variáveis de módulo para facilitar o mock em testes.
 PIPE_FILE: Path = Path("pipe.yml")
-CONTEXT_FILE: Path = Path(".pipe") / "CONTEXT.md"
-AGENT_FILE: Path = Path(".kiro") / "agents" / "pipe_context.json"
+STEERING_FILE: Path = Path(".kiro") / "steering" / "esteira.md"
 
-# Nome do agente kiro-cli registrado no arquivo JSON.
-_AGENT_NAME = "pipe_context"
+# Frontmatter do steering. `inclusion: always` é portável (IDE/Web); no CLI todos
+# os arquivos de steering entram sempre (no-op), mas mantemos por portabilidade.
+_FRONTMATTER = "---\ninclusion: always\n---"
 
 # Arquivos internos da esteira que o agente NUNCA deve tocar.
+# Inclui o próprio steering (`.kiro/steering/**/*.md`) conforme P1.3.
 _PROTECTED_FILES = [
     ".pipe/boards/*/snapshot.json",
     ".pipe/changeQueue.json",
-    ".pipe/throttle.json",
-    ".pipe/throttle",
-    ".pipe/sessions.json",
     ".pipe/deadLetter.json",
     ".pipe/orphanFiles.json",
+    ".pipe/sessions.json",
+    ".pipe/throttle",
+    ".pipe/throttle.json",
     ".pipe/pipe.lock",
+    ".kiro/steering/**/*.md",
 ]
 
 
 def _needs_regeneration() -> bool:
-    """Retorna True se o CONTEXT.md precisa ser (re)criado."""
-    if not CONTEXT_FILE.exists():
+    """Retorna True se o steering precisa ser (re)criado."""
+    if not STEERING_FILE.exists():
         return True
     if not PIPE_FILE.exists():
         return False
-    return PIPE_FILE.stat().st_mtime > CONTEXT_FILE.stat().st_mtime
+    return PIPE_FILE.stat().st_mtime > STEERING_FILE.stat().st_mtime
 
 
-def _section_restrictions() -> list[str]:
-    """Seção de arquivos protegidos."""
+def _section_project(config: dict) -> list[str]:
+    """Seções 'Projeto' e 'Papéis humanos' derivadas de config['project'].
+
+    Template aprovado (item "Visão geral"):
+        ## Projeto
+        - nome: {project.name}
+        - resumo: {project.summary}
+
+        ## Papéis humanos
+        - {human.name}: {human.role}   # omitir a seção inteira se vazia
+    """
+    project = config.get("project", {}) or {}
+    name = project.get("name", "")
+    summary = project.get("summary", "")
     lines = [
-        "## Restrições de sistema (NÃO VIOLAR)",
-        "",
-        "Os arquivos abaixo são memória interna da esteira. "
-        "NUNCA leia, escreva, crie ou modifique esses arquivos protegidos:",
-        "",
-    ]
-    for path in _PROTECTED_FILES:
-        lines.append(f"- `{path}`")
-    lines += [
-        "",
-        "Qualquer escrita nesses arquivos corrompe o estado da esteira e causa "
-        "comportamentos imprevisíveis em toda a pipeline.",
+        "## Projeto",
+        f"- nome: {name}",
+        f"- resumo: {summary}",
         "",
     ]
+    humans = project.get("humans") or []
+    if humans:
+        lines.append("## Papéis humanos")
+        for human in humans:
+            lines.append(f"- {human.get('name', '')}: {human.get('role', '')}")
+        lines.append("")
     return lines
 
 
+def _section_restrictions() -> list[str]:
+    """Seção de arquivos protegidos (texto aprovado — P1.3 item 1)."""
+    lines = [
+        "## Arquivos protegidos (NÃO acessar)",
+        "Nunca leia, escreva, crie, mova ou versione estes caminhos — são "
+        "estado interno da esteira; alterá-los corrompe a pipeline:",
+    ]
+    for path in _PROTECTED_FILES:
+        lines.append(f"- `{path}`")
+    lines.append("")
+    return lines
+
+
+def _section_body_structure() -> list[str]:
+    """Seção 'Estrutura do -body.md' + comandos @--- (texto aprovado — P1.3 item 2)."""
+    return [
+        "## Estrutura do `-body.md`",
+        "O `-body.md` é seu (do agente): toda edição do arquivo é feita por "
+        "você; a esteira apenas o interpreta. Tudo ACIMA de `@---` vira o corpo "
+        "da issue no board; tudo ABAIXO vira atributos da issue.",
+        "",
+        "Ordem obrigatória (5 partes):",
+        "1. Corpo — conteúdo que rege a execução.",
+        "2. `📝` — linha separadora das anotações.",
+        "3. Anotações — memória da issue (persistem no corpo da issue, abaixo do `📝`).",
+        "4. `@---` — linha separadora dos comandos.",
+        "5. Comandos — um por linha, iniciados por `/`.",
+        "",
+        "### Anotações (você mantém)",
+        "- `pai: #<id> - <nome>` — só se houver issue mãe.",
+        "- `branch pai: <branch>` — só se houver issue mãe.",
+        "- `branch: <branch de trabalho>` — ou `(ainda não criada)` se ainda não existe.",
+        "- `boards: <board1>, <board2>` — board(s) a que esta issue pertence.",
+        "",
+        "### Comandos",
+        "",
+        "Estado declarativo: o que está escrito É o estado final. Presente = "
+        "garantido; ausente = removido. Não há comando de \"remover\". Todo "
+        "comando age sobre ESTA issue (a que você está editando).",
+        "",
+        "Comandos (efeito sobre esta issue):",
+        "- `/parent #N` — N é a mãe desta issue.",
+        "- `/children #N, #M` — N e M são filhas desta issue.",
+        "- `/blocks #N, #M` — esta issue trava N e M (N e M só avançam quando esta fechar).",
+        "- `/blocked_by #N, #M` — esta issue fica travada até N e M fecharem.",
+        "- `/labels a, b, c` — informa as labels desta issue; se houver labels "
+        "anteriores, são substituídas por estas.",
+        "- `/agent-hub-<valor>` — label de roteamento de agente; `<valor>` livre "
+        "(ex.: low, middle, high). Use apenas quando o prompt pedir "
+        "explicitamente e não altere se não for seu papel.",
+        "- `/need_human` — adicione esta label sempre que precisar de intervenção "
+        "humana (pedir intervenção sem ela gera erro).",
+        "- `/archive` — arquiva esta issue.",
+        "",
+        "Bloqueio — regras (invioláveis):",
+        "- Relações de bloqueio aceitam só o ID (`#N`); nunca use o nome da issue.",
+        "- Declare o bloqueio em UMA issue só; a esteira completa o par. Nunca "
+        "declare nos dois lados.",
+        "- Declare sempre no body da issue que você está editando, escolhendo o "
+        "comando certo: `/blocked_by #N` se ESTA issue deve esperar N; "
+        "`/blocks #N` se ESTA issue deve travar N.",
+        "- Nunca aponte `/blocks #N` e `/blocked_by #N` para o mesmo N: ciclos "
+        "são proibidos.",
+        "",
+        "Ao criar issue nova (nasce sem ID):",
+        "- Declare TODAS as relações dela no body DELA mesma — nunca declare a "
+        "relação no body da issue-par.",
+        "- Quando a esteira atribuir o ID à nova issue, ela mesma vai aos bodies "
+        "das issues referenciadas e completa cada par.",
+        "- Só use `/parent #N` se for realmente relação mãe→filha (confira o "
+        "esquema de issues e o prompt do agente).",
+        "",
+    ]
+
+
 def _section_issue_naming() -> list[str]:
-    """Seção de convenções de nomeação de issues."""
+    """Seção de convenções de nomeação de issues (P1.3 item 3)."""
     return [
         "## Criação de issues",
         "",
@@ -89,7 +177,7 @@ def _section_issue_naming() -> list[str]:
 
 
 def _section_boards(config: dict) -> list[str]:
-    """Seção de boards e colunas derivada do pipe.yml."""
+    """Seção de boards e colunas derivada do pipe.yml (P1.3 item 4)."""
     lines = [
         "## Boards e colunas",
         "",
@@ -123,7 +211,7 @@ def _section_boards(config: dict) -> list[str]:
 
 
 def _section_branches(config: dict) -> list[str]:
-    """Seção de git flow e prefixos de branch."""
+    """Seção de git flow e prefixos de branch (P1.3 item 5)."""
     lines = [
         "## Git flow e branches",
         "",
@@ -153,49 +241,61 @@ def _section_branches(config: dict) -> list[str]:
 
 
 def _build_content(config: dict) -> str:
-    """Monta o conteúdo completo do CONTEXT.md."""
+    """Monta o conteúdo completo do steering `esteira.md`."""
     sections: list[str] = [
+        _FRONTMATTER,
+        "",
         "# Contexto do sistema — gerado automaticamente",
         "",
         "Este arquivo é gerado pelo startup da esteira a partir do `pipe.yml` "
-        "e injetado como agente kiro-cli em cada execução.",
+        "e carregado como steering do kiro-cli em cada execução.",
         "**Não edite manualmente** — será sobrescrito ao reiniciar.",
         "",
     ]
+    sections += _section_project(config)
     sections += _section_restrictions()
     sections += _section_issue_naming()
+    sections += _section_body_structure()
     sections += _section_boards(config)
     sections += _section_branches(config)
     return "\n".join(sections)
 
 
 def generate_context(config: dict) -> Path:
-    """Gera .pipe/CONTEXT.md e .kiro/agents/pipe_context.json a partir do config.
+    """Gera `.kiro/steering/esteira.md` a partir do config.
 
-    Cria os arquivos se não existirem. Regenera se pipe.yml foi modificado
-    após o CONTEXT.md. Não sobrescreve se o CONTEXT.md já estiver atualizado.
+    Cria o arquivo se não existir. Regenera se pipe.yml foi modificado após o
+    steering. Não sobrescreve se o steering já estiver atualizado.
 
-    Retorna o Path do CONTEXT.md gerado.
+    Retorna o Path do steering gerado.
     """
     if not _needs_regeneration():
-        return CONTEXT_FILE
+        return STEERING_FILE
 
-    # Gerar CONTEXT.md
-    CONTEXT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STEERING_FILE.parent.mkdir(parents=True, exist_ok=True)
     content = _build_content(config)
-    CONTEXT_FILE.write_text(content, encoding="utf-8")
+    STEERING_FILE.write_text(content, encoding="utf-8")
+    return STEERING_FILE
 
-    # Gerar arquivo de agente JSON para o kiro-cli.
-    # "tools" e "allowedTools" com "*" garantem que o agente pipe_context
-    # mantenha acesso a todas as ferramentas (write, shell, git etc.), já que
-    # por padrão custom agents só têm acesso read-only.
-    AGENT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    agent_data = {
-        "name": _AGENT_NAME,
-        "prompt": content,
-        "tools": ["*"],
-        "allowedTools": ["@builtin"],
-    }
-    AGENT_FILE.write_text(json.dumps(agent_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return CONTEXT_FILE
+def ensure_steering_integrity(config: dict) -> bool:
+    """Guarda de integridade do steering (P1.5 / F0.9).
+
+    Compara o conteúdo atual de `.kiro/steering/esteira.md` com o que o gerador
+    produziria a partir do config. Se o arquivo não existe ou divergiu (ex.: um
+    agente o alterou), REESCREVE com o conteúdo autoritativo e retorna True
+    (divergiu). Retorna False se já estava íntegro.
+
+    Chamada antes de despachar cada agente para garantir que o steering nunca é
+    corrompido silenciosamente entre execuções.
+    """
+    expected = _build_content(config)
+    try:
+        current = STEERING_FILE.read_text(encoding="utf-8")
+    except OSError:
+        current = None
+    if current == expected:
+        return False
+    STEERING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STEERING_FILE.write_text(expected, encoding="utf-8")
+    return True

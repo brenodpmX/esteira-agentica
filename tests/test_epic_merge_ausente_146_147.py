@@ -246,21 +246,22 @@ class TestTC03MergeParaMainQuandoConfigurado:
     def test_guard_usa_main_como_alvo(self, tmp_path):
         config = _config_com_flow_epic_para_main()
         prompt = _prompt(tmp_path, config, flow="epic", gitevents="merge")
-        assert "git merge-base --is-ancestor origin/main HEAD" in prompt
-        assert "git merge origin/main" in prompt
+        # Forma DESCRITIVA (E3): o guard do bug #108 vira prosa apontando o alvo.
+        assert "origin/main" in prompt
+        assert "CONTÉM A PONTA" in prompt or "contém a ponta" in prompt.lower()
 
     def test_pr_e_aberto_com_base_main(self, tmp_path):
         config = _config_com_flow_epic_para_main()
         prompt = _prompt(tmp_path, config, flow="epic", gitevents="merge")
-        assert "gh pr create --base main" in prompt
+        assert "para `main`" in prompt
 
     def test_flow_feature_continua_indo_para_epic(self, tmp_path):
         """Confirma que a mudança é só no flow de integração final; o flow
         `feature` (dia a dia) não é afetado — evita regressão de escopo."""
         config = _config_com_flow_epic_para_main()
         prompt = _prompt(tmp_path, config, flow="feature", gitevents="merge")
-        assert "gh pr create --base epic" in prompt
-        assert "gh pr create --base main" not in prompt
+        assert "para `epic`" in prompt
+        assert "para `main`" not in prompt
 
 
 # ══════════════════════════════════════════════════════════════════════════════

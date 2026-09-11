@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.commands import annotations_doc, AGENT_HUB_PREFIX
+from src.core.commands import annotations_doc, parse_body, AGENT_HUB_PREFIX
 from src.core.snapshot import BOARDS_DIR
 
 REPO_DIR = Path("repo")
@@ -169,6 +169,8 @@ class AgentParams:
     work_dir: str          # diretório de trabalho do agente (clone em repo/<repo_id>)
     repo_id: str = None    # id do repositório alvo (chave em git.repo)
     context: str = None
+    continuation_prompt: str = None  # prompt de continuação (E10) quando há sessão
+    remediation_prompt: str = None   # prompt de remediação (E4) com os erros de sync
     col_name: str = ""     # nome humanizado da coluna/etapa (log de terminal)
     title: str = ""        # título da issue (log de terminal)
 
@@ -225,14 +227,28 @@ def build_prompt(config: dict, task: dict) -> str:
         title = first_line.lstrip("# ").strip()
     title = title or slug
 
-    # Resolver branch
+    # ── Resolver git (E3): dados para INSTRUÇÕES descritivas ──
+    # A esteira NÃO monta mais o nome da branch nem emite script bash: passa o
+    # padrão do flow como instrução e o agente cria/reutiliza a branch guiado
+    # pelas anotações do `-body.md` (`branch pai` = origem; `branch` = trabalho).
     flow_type = board_cfg.get("flow", "feature")
     flow = config["git"]["flow"]
     flow_cfg = flow.get(flow_type, {})
-    branch_name = f"{flow_cfg.get('prefix', '')}{issue['id']}-{slug}"
-    origin_branch = flow_cfg.get("create", flow.get("base", "main"))
-    merge_branch = flow_cfg.get("merge", flow.get("base", "main"))
     base_branch = flow.get("base", "main")
+
+    # Anotações do body (E2/F0.4): a esteira apenas INTERPRETA (não escreve no
+    # -body.md). `branch pai` = origem de onde a branch nasce/mescla; `branch` =
+    # branch de trabalho (None quando "(ainda não criada)").
+    raw_body = body_path.read_text(encoding="utf-8") if body_path.exists() else ""
+    _corpo, annot, _cmds = parse_body(raw_body)
+
+    # Origem da branch: a anotação `branch pai` tem precedência; caso não haja
+    # pai, a origem declarada no flow (`create`) ou a base.
+    origin_branch = annot.parent_branch or flow_cfg.get("create", base_branch)
+    # Alvo do merge/PR: `merge` do flow (ou a base).
+    merge_branch = flow_cfg.get("merge", base_branch)
+    # Template legível do nome da branch (E1 — obrigatório por flow no pipe.yml).
+    branch_pattern = flow_cfg.get("branch_pattern", "")
 
     # Transições
     change = col.get("change", {})
@@ -245,6 +261,11 @@ def build_prompt(config: dict, task: dict) -> str:
     lines.append(f"**Tarefa:** {title}")
     lines.append(f"**Etapa:** {col.get('name', col_id)}")
     lines.append(f"**Objetivo:** {col.get('target-prompt', '')}")
+    _step = col.get("step-prompt")
+    if _step and str(_step).strip():
+        lines.append("")
+        lines.append("**Passos:**")
+        lines.append(str(_step).strip())
     lines.append("")
 
     # ── Sandbox / regras de operação ──
@@ -259,31 +280,45 @@ def build_prompt(config: dict, task: dict) -> str:
     lines.append("- Os arquivos da issue (`-body.md`, `-history.md`, `-addcomment.md`) ficam em `.pipe/`, FORA do repositório, e são gerenciados pela esteira. Leia/escreva-os pelos caminhos absolutos indicados, mas NÃO os versione no git.")
     lines.append("")
 
-    # ── Git Setup (create / create-merge) ──
-    if gitevents in ("create", "create-merge"):
-        lines.append("## Git Setup")
-        lines.append("```bash")
-        lines.append(f"cd {work_dir}")
-        lines.append("git fetch origin")
-        # Criação ATÔMICA: a branch nasce explicitamente de origin/<origem>.
-        # Não use a forma em duas etapas (`git checkout <origem> && git pull` +
-        # `git checkout -b <branch>`): se o checkout/pull da origem falhar, o
-        # `checkout -b` ainda cria a branch a partir do HEAD corrente — base
-        # errada e silenciosa (bug #108). Aqui, se origin/<origem> não existir,
-        # o comando falha em vez de inventar uma base.
-        lines.append(f"git checkout -b {branch_name} origin/{origin_branch}")
-        lines.append("```")
-        lines.append("")
+    # ── Git — preparação da branch (E3: instruções DESCRITIVAS) ──
+    # Sem script bash pronto: o COMO fica no steering ("Git — como operar"); aqui
+    # damos o objetivo e as proteções do bug #108 em prosa, guiados pelas
+    # anotações do body.
+    if gitevents in ("create", "use", "merge", "create-merge"):
+        can_create = gitevents in ("create", "create-merge")
 
-    # ── Git Setup (use / merge) ──
-    if gitevents in ("use", "merge"):
-        lines.append("## Git Setup")
-        lines.append("```bash")
-        lines.append(f"cd {work_dir}")
-        lines.append("git fetch origin")
-        lines.append(f"git checkout {branch_name} 2>/dev/null || git checkout -b {branch_name} origin/{branch_name}")
-        lines.append(f"git pull origin {branch_name} 2>/dev/null || true")
-        lines.append("```")
+        lines.append("## Git — preparação da branch")
+        lines.append("")
+        lines.append(
+            f"Comece atualizando as referências remotas (`git fetch origin`) dentro de `{work_dir}`."
+        )
+        lines.append("")
+        lines.append("Descubra a branch de trabalho pela anotação `branch:` do `-body.md`:")
+        lines.append("")
+        lines.append(
+            "- **Se `branch:` já tem um nome** (a branch já foi criada): reutilize-a — "
+            "faça checkout dessa branch, trazendo-a do remoto se ainda não existir localmente. "
+            "NÃO crie outra branch nem a recrie/sobrescreva; esta etapa é idempotente."
+        )
+        if can_create:
+            lines.append(
+                "- **Se `branch:` está como `(ainda não criada)`**: crie a branch de trabalho de "
+                f"forma ATÔMICA a partir de `origin/{origin_branch}` — num único passo que já parte "
+                "da origem correta, NUNCA a partir do HEAD corrente e NUNCA em duas etapas onde a "
+                "criação rode mesmo se a atualização da origem falhar (base errada e silenciosa — "
+                f"bug #108). Se `origin/{origin_branch}` não existir, PARE em vez de inventar uma base."
+            )
+            lines.append(
+                f"- Dê à branch um nome seguindo o `branch_pattern` do flow `{flow_type}`: "
+                f"`{branch_pattern}` (substitua os campos pelo id e slug reais desta issue). "
+                "Depois de criá-la, grave o nome REAL na anotação `branch:` do `-body.md`."
+            )
+        else:
+            lines.append(
+                "- Esta etapa opera sobre a branch de trabalho JÁ existente desta issue e não cria "
+                "uma branch nova. Se `branch:` ainda estiver `(ainda não criada)`, isso é um erro de "
+                "fluxo: registre o bloqueio em vez de criar uma branch a partir da origem."
+            )
         lines.append("")
 
     # ── Executar tarefa ──
@@ -296,45 +331,29 @@ def build_prompt(config: dict, task: dict) -> str:
     lines.append(f"- Anote observações, dúvidas ou resumo em `{addcomment_file}` (assine com `— {agent_display_name}` no final)")
     lines.append("")
 
-    # ── Commit & Push (create / use / merge / create-merge) ──
+    # ── Versionar (commit e push) — DESCRITIVO ──
     if gitevents in ("create", "use", "merge", "create-merge"):
-        lines.append("## Commit e Push")
-        lines.append("```bash")
-        lines.append(f"cd {work_dir}")
-        lines.append("git add -A")
-        lines.append(f'git commit -m "{col.get("name", col_id)}: {title}"')
-        lines.append(f"git push -u origin {branch_name}")
-        lines.append("```")
+        lines.append("## Versionar (commit e push)")
+        lines.append("")
+        lines.append(
+            "Faça commit e push do trabalho SEMPRE na branch de trabalho — nunca em "
+            f"`{base_branch}` nem na branch de origem (`{origin_branch}`). Use uma mensagem de "
+            "commit que descreva esta etapa."
+        )
         lines.append("")
 
-    # ── Merge Request (merge / create-merge) ──
+    # ── Abrir merge/PR (merge / create-merge) — DESCRITIVO ──
     if gitevents in ("merge", "create-merge"):
-        lines.append("## Pull Request")
+        lines.append("## Abrir merge/PR")
         lines.append("")
-        lines.append(f"Antes de abrir o PR, garanta que a branch contém a ponta de "
-                     f"`origin/{merge_branch}`. Um PR aberto a partir de base defasada "
-                     f"nasce com conflitos e diff poluído (bug #108). Se o merge abaixo "
-                     f"gerar conflito, resolva-o antes de prosseguir.")
-        lines.append("```bash")
-        lines.append(f"cd {work_dir}")
-        lines.append("git fetch origin")
-        lines.append(f"git merge-base --is-ancestor origin/{merge_branch} HEAD "
-                     f"|| git merge origin/{merge_branch}")
-        lines.append(f"git push origin {branch_name}")
-        lines.append(f"gh pr create --base {merge_branch} --head {branch_name} "
-                     f"--title \"merge: {branch_name} -> {merge_branch}\" "
-                     f"--body \"Automated PR from agent\"")
-        lines.append("```")
-        lines.append("")
-
-    # ── Cleanup ──
-    if gitevents in ("create", "use", "merge", "create-merge"):
-        lines.append("## Cleanup")
-        lines.append("```bash")
-        lines.append(f"cd {work_dir}")
-        lines.append(f"git checkout {base_branch}")
-        lines.append(f"git branch -D {branch_name} 2>/dev/null || true")
-        lines.append("```")
+        lines.append(
+            f"Abra o PR da branch de trabalho para `{merge_branch}` (alvo de merge do flow "
+            f"`{flow_type}`). ANTES de abrir, garanta que a branch já CONTÉM A PONTA de "
+            f"`origin/{merge_branch}`: atualize com `git fetch origin` e, se a base estiver "
+            f"defasada, integre `origin/{merge_branch}` na branch (resolvendo conflitos) antes de "
+            "abrir o PR. Um PR aberto de base defasada nasce com conflitos e diff poluído "
+            "(bug #108). Se já houver um PR aberto para esta branch, confirme-o em vez de criar outro."
+        )
         lines.append("")
 
     # ── Anotações no body (comandos @---) ──
@@ -357,4 +376,83 @@ def build_prompt(config: dict, task: dict) -> str:
     # esteira vaze no prompt enviado ao agente.
     _assert_no_protected(prompt)
 
+    return prompt
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# build_continuation_prompt (E10)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_continuation_prompt(config: dict, task: dict) -> str:
+    """Monta o PROMPT DE CONTINUAÇÃO (E10) para uma sessão preservada.
+
+    Usado quando existe sessão CONFIRMADA para (issue, coluna): o agente já
+    trabalhou nesta etapa e retoma via `--resume-id`. Em vez de reexecutar o
+    prompt completo, envia um nudge genérico + ponteiros aos arquivos + a
+    transição de coluna, para o agente continuar de onde parou.
+    """
+    board_id = task["board_id"]
+    col = task["column"]
+    col_id = task["col_id"]
+    issue = task["issue"]
+    change = col.get("change", {})
+
+    body_path = Path(issue.get("body_path", "")).resolve()
+    slug = body_path.stem.removesuffix("-body")
+    issue_dir = body_path.parent
+    history_file = issue_dir / f"{slug}-history.md"
+    addcomment_file = issue_dir / f"{slug}-addcomment.md"
+
+    lines = [
+        "Você já trabalhou nesta etapa desta issue. Releia o history/addcomment "
+        "em busca de apontamentos novos e continue de onde parou até concluir a "
+        "etapa — não recomece do zero.",
+        "",
+        f"- Histórico: `{history_file}`",
+        f"- Anotações/comentário: `{addcomment_file}`",
+        f"- Body da issue: `{body_path}`",
+        "",
+        "## Transição de coluna",
+        "",
+        "Ao finalizar, mova os 3 arquivos da issue (`-body.md`, `-history.md`, "
+        "`-addcomment.md`) para a coluna de destino.",
+        "",
+    ]
+    for condition, target_col in change.items():
+        target_dir = (BOARDS_DIR / board_id / target_col).resolve()
+        lines.append(f"- **{condition}** → `mv {issue_dir}/{slug}-*.md {target_dir}/`")
+    lines.append("")
+
+    prompt = "\n".join(lines)
+    _assert_no_protected(prompt)
+    return prompt
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# build_remediation_prompt (E4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_remediation_prompt(config: dict, task: dict, errors: str) -> str:
+    """Monta o PROMPT DE REMEDIAÇÃO (E4) com os erros da sincronização.
+
+    Enviado uma única vez quando o sync falha com erro corrigível pelo agente
+    (validação do board / 422). Distinto do prompt de execução e do de
+    continuação (E10, situação 3): não pede refazer a tarefa, só corrigir o que
+    causou a falha de sincronização.
+    """
+    lines = [
+        "Sua última execução nesta issue foi concluída, mas a esteira não "
+        "conseguiu sincronizar as alterações com o board. Não refaça a tarefa — "
+        "corrija apenas o que causou a falha.",
+        "",
+        "Erros da sincronização:",
+        (errors or "").strip() or "(sem detalhes)",
+        "",
+        "Ajuste os comandos e anotações do `-body.md` (bloco `@---` e anotações) "
+        "para resolver esses erros, seguindo as regras do sistema (relações, "
+        "anti-ciclo, declarar de um lado só). Altere só o necessário para "
+        "sincronizar.",
+    ]
+    prompt = "\n".join(lines)
+    _assert_no_protected(prompt)
     return prompt

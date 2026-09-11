@@ -9,7 +9,7 @@ from pathlib import Path
 from src.core.agent import AgentPort, AgentParams
 from src.core.log import log
 from src.core.session import SessionIndex
-from src.core.context_generator import CONTEXT_FILE, AGENT_FILE
+from src.core.context_generator import STEERING_FILE
 
 _tz = timezone(timedelta(hours=-3))
 
@@ -72,18 +72,16 @@ class KiroCliAgent(AgentPort):
         o ciclo de vida das sessões — o kiro-cli cuida disso.
         """
         # Sem cor nos logs do kiro-cli (facilita parsing/limpeza).
-        # KIRO_HOME: aponta o kiro-cli para o diretório .kiro da esteira.
-        # O kiro-cli é executado com cwd=repo/<repo_id>, onde buscaria agentes
-        # locais em repo/<repo_id>/.kiro/agents/ — diretório diferente do gerado
-        # no startup. Com KIRO_HOME=<esteira>/.kiro, o kiro-cli encontra
-        # <KIRO_HOME>/agents/pipe_context.json como agente global.
+        # KIRO_HOME: aponta o kiro-cli para o diretório .kiro da esteira, onde
+        # vive o steering (.kiro/steering/esteira.md). O default agent do
+        # kiro-cli auto-carrega o steering resolvido por KIRO_HOME — não usamos
+        # mais `--agent` (Caminho B / P1.1(b)).
         #
-        # AGENT_FILE é relativo no módulo (Path(".kiro/agents/pipe_context.json")),
-        # por isso usamos .resolve() para obter o path absoluto antes de subir
-        # ao diretório pai (.kiro). Sem .resolve(), .parent.parent em path relativo
-        # resultaria em "." — que o subprocess resolveria contra seu próprio cwd
-        # (o repo), apontando para o lugar errado.
-        kiro_home = str(AGENT_FILE.resolve().parent.parent)  # <esteira>/.kiro
+        # STEERING_FILE é relativo no módulo (.kiro/steering/esteira.md), por
+        # isso usamos .resolve() para obter o path absoluto antes de subir aos
+        # diretórios pais até .kiro. Sem .resolve(), .parent em path relativo
+        # apontaria para o cwd do subprocess (o repo), lugar errado.
+        kiro_home = str(STEERING_FILE.resolve().parent.parent)  # <esteira>/.kiro
         env = {**os.environ, "KIRO_LOG_NO_COLOR": "1", "KIRO_HOME": kiro_home}
 
         cmd = [
@@ -94,22 +92,24 @@ class KiroCliAgent(AgentPort):
         if params.model:
             cmd += ["--model", params.model]
 
-        # Injeta o contexto do sistema via --agent (quando CONTEXT.md existe).
-        # O arquivo .kiro/agents/pipe_context.json foi gerado pelo startup a
-        # partir do pipe.yml e contém as instruções explícitas para o agente.
-        if CONTEXT_FILE.exists():
-            cmd += ["--agent", "pipe_context"]
+        # O contexto de sistema é carregado como steering (default agent) via
+        # KIRO_HOME — não passamos `--agent`.
 
         # Retoma a sessão anterior se ainda existir.
+        # Chave por (issue, coluna) — E10 (não depende do agente).
         index = SessionIndex()
-        known_id = index.get(params.board_id, params.issue_id, params.agent_id)
-        if known_id and self._session_exists(known_id, work_dir, env):
+        known_id = index.get(params.issue_id, params.col_id)
+        resuming = bool(known_id and self._session_exists(known_id, work_dir, env))
+        if resuming:
             cmd += ["--resume-id", known_id]
             log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "
-                     f"retomando sessão {known_id}",
-                     session_id=known_id, agent=params.agent_id)
+                     f"retomando sessão {known_id} (continuação)",
+                     session_id=known_id, col_id=params.col_id)
 
-        cmd.append(self._compose_input(params))
+        # GUARDA anti-delírio (E10): só usa o prompt de continuação quando a
+        # sessão foi CONFIRMADA (known_id + _session_exists). Sem sessão →
+        # prompt de execução completo.
+        cmd.append(self._compose_input(params, resuming=resuming))
 
         try:
             result = subprocess.run(
@@ -130,7 +130,7 @@ class KiroCliAgent(AgentPort):
         # execução (mesma quando retomada por id, nova quando criada agora).
         current_id = self._latest_session_id(work_dir, env)
         if current_id:
-            index.set(params.board_id, params.issue_id, params.agent_id, current_id)
+            index.set(params.issue_id, params.col_id, current_id)
 
         output = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0:
@@ -163,8 +163,32 @@ class KiroCliAgent(AgentPort):
         ids = self._list_session_ids(work_dir, env)
         return ids[0] if ids else None
 
-    def _compose_input(self, params: AgentParams) -> str:
-        """Monta o input do agente: contexto do papel + prompt da tarefa."""
+    def _compose_input(self, params: AgentParams, resuming: bool = False) -> str:
+        """Monta o input do agente.
+
+        Prioridade:
+        1. remediation_prompt (E4): quando definido, contém os erros de sync.
+           - COM sessão confirmada (resuming): envia só os erros — a sessão já
+             carrega a persona e o contexto da tarefa.
+           - SEM sessão (kiro-cli descartou a sessão): anexa persona + prompt de
+             execução completo ANTES dos erros, para o agente não ficar sem
+             contexto (mesma guarda anti-delírio da continuação — E10).
+        2. resuming + continuation_prompt (E10): continuação em sessão confirmada.
+        3. persona + prompt de execução completo (fallback anti-delírio).
+        """
+        if params.remediation_prompt and params.remediation_prompt.strip():
+            rem = params.remediation_prompt.strip()
+            if resuming:
+                return rem
+            # Sessão ausente: sem o fio anterior, o agente precisa do contexto
+            # completo (persona + tarefa) além dos erros a corrigir.
+            return f"{self._full_input(params)}\n\n---\n\n{rem}"
+        if resuming and params.continuation_prompt and params.continuation_prompt.strip():
+            return params.continuation_prompt.strip()
+        return self._full_input(params)
+
+    def _full_input(self, params: AgentParams) -> str:
+        """Persona (se houver) + prompt de execução completo."""
         if params.context and params.context.strip():
             return f"{params.context.strip()}\n\n---\n\n{params.prompt}"
         return params.prompt
@@ -275,6 +299,16 @@ class KiroCliAgent(AgentPort):
         if params.work_dir:
             lines.append(f"- **work_dir**: {params.work_dir}")
         lines.append("")
+
+        # Persona (P1.4): quando injetada via AgentParams.context, registra no
+        # log para rastrear qual papel o agente assumiu nesta execução.
+        if params.context and params.context.strip():
+            lines.append("---")
+            lines.append("")
+            lines.append("## Persona")
+            lines.append("")
+            lines.append(params.context.strip())
+            lines.append("")
 
         # Prompt
         lines.append("---")

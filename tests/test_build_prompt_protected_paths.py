@@ -333,11 +333,13 @@ class TestBuildPromptRegressao:
 
     def test_prompt_contem_git_setup_para_create(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="create")
-        assert "git checkout -b" in prompt
+        # Forma DESCRITIVA (E3): seção de preparação de branch em prosa.
+        assert "## Git — preparação da branch" in prompt
 
     def test_prompt_nao_contem_git_setup_para_no_branch(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="no-branch")
         assert "git checkout -b" not in prompt
+        assert "## Git — preparação da branch" not in prompt
 
     def test_prompt_contem_path_addcomment(self, tmp_path):
         prompt = _build_prompt(tmp_path)
@@ -369,19 +371,21 @@ class TestBuildPromptRegressao:
 
     def test_prompt_contem_commit_e_push_para_create(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="create")
-        assert "## Commit e Push" in prompt
+        assert "## Versionar (commit e push)" in prompt
 
     def test_prompt_contem_pr_para_merge(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="merge")
-        assert "## Pull Request" in prompt
+        assert "## Abrir merge/PR" in prompt
 
     def test_prompt_nao_contem_pr_para_create(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="create")
-        assert "## Pull Request" not in prompt
+        assert "## Abrir merge/PR" not in prompt
 
     def test_prompt_contem_cleanup_para_create(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="create")
-        assert "## Cleanup" in prompt
+        # Cleanup em bash foi removido (E3); a preparação agora é idempotente
+        # e descrita em prosa. Validamos a instrução de reuso/idempotência.
+        assert "idempotente" in prompt.lower()
 
     def test_prompt_nao_contem_commit_para_no_branch(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="no-branch")

@@ -503,14 +503,14 @@ class TestContextGeneratorListaDeadLetter(unittest.TestCase):
     def test_lista_deadletter_json(self):
         from src.core.context_generator import generate_context
 
-        ctx_file = self.cwd / ".pipe" / "CONTEXT.md"
+        steering = self.cwd / ".kiro" / "steering" / "esteira.md"
         with patch("src.core.context_generator.PIPE_FILE", self.cwd / "pipe.yml"), \
-             patch("src.core.context_generator.CONTEXT_FILE", ctx_file):
+             patch("src.core.context_generator.STEERING_FILE", steering):
             generate_context({
                 "git": {"repo": {"main": "x"}, "flow": {"base": "main"}},
                 "boards": {"platform": "github"},
             })
-        content = ctx_file.read_text()
+        content = steering.read_text()
         self.assertIn(".pipe/deadLetter.json", content)
 
 

@@ -1,4 +1,4 @@
-"""Session index - mapeia (board, issue, agente) -> session_id do kiro-cli.
+"""Session index - mapeia (issue, coluna) -> session_id do kiro-cli.
 
 Persiste em .pipe/sessions.json um índice de ponteiros para as sessões do
 kiro-cli. A esteira NÃO gerencia o ciclo de vida das sessões (não apaga, não
@@ -6,13 +6,13 @@ limpa): apenas guarda o id para retomar a conversa com `--resume-id` quando a
 sessão ainda existir. Se o kiro-cli tiver descartado a sessão, a execução
 seguinte cria uma nova e o índice é atualizado com o novo id.
 
-Filosofia por agente (não por coluna): a chave inclui o agente, então o mesmo
-agente atuando em colunas diferentes retoma o próprio raciocínio da etapa
-anterior. Agentes distintos nunca herdam a sessão um do outro.
+Chave por (issue, coluna) (E10 — Opção X): NÃO depende do agente, então um
+override de agente na mesma coluna retoma o fio da etapa; e não há memória
+cross-coluna (cada coluna é seu próprio fio de raciocínio).
 
 Estrutura do arquivo:
 {
-  "<board>/<issue>/<agente>": {
+  "<issue>/<coluna>": {
     "session_id": "<uuid>",
     "updated_at": "<ISO 8601 UTC>"
   }
@@ -28,7 +28,7 @@ SESSIONS_FILE = PIPE_DIR / "sessions.json"
 
 
 class SessionIndex:
-    """Índice persistente de sessões do kiro-cli (ponteiros por agente)."""
+    """Índice persistente de sessões do kiro-cli (ponteiros por issue+coluna)."""
 
     def _read(self) -> dict:
         if not SESSIONS_FILE.exists():
@@ -45,21 +45,20 @@ class SessionIndex:
         )
 
     @staticmethod
-    def _key(board_id: str, issue_id: str, agent_id: str) -> str:
-        return f"{board_id}/{issue_id}/{agent_id}"
+    def _key(issue_id: str, col_id: str) -> str:
+        return f"{issue_id}/{col_id}"
 
-    def get(self, board_id: str, issue_id: str, agent_id: str) -> str | None:
-        """Retorna o session_id conhecido para (board, issue, agente) ou None."""
-        entry = self._read().get(self._key(board_id, issue_id, agent_id))
+    def get(self, issue_id: str, col_id: str) -> str | None:
+        """Retorna o session_id conhecido para (issue, coluna) ou None."""
+        entry = self._read().get(self._key(issue_id, col_id))
         return entry.get("session_id") if entry else None
 
-    def set(self, board_id: str, issue_id: str, agent_id: str,
-            session_id: str) -> None:
-        """Grava/atualiza o session_id para (board, issue, agente)."""
+    def set(self, issue_id: str, col_id: str, session_id: str) -> None:
+        """Grava/atualiza o session_id para (issue, coluna)."""
         if not session_id:
             return
         data = self._read()
-        data[self._key(board_id, issue_id, agent_id)] = {
+        data[self._key(issue_id, col_id)] = {
             "session_id": session_id,
             "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }

@@ -1,17 +1,23 @@
 from src.core.log import log
-from src.core.config import check_config as validate_config, ConfigError, SSH_KEY_ENV
+from src.core.config import (check_config as validate_config, ConfigError,
+                             SSH_KEY_ENV, CONTEXTS_DIR)
 from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
 from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
 from src.core.change_queue import ChangeQueue, QUEUE_FILE
-from src.core.sync import sync_remote, detect_local_changes, apply_changes
+from src.core.sync import (sync_remote, detect_local_changes, apply_changes,
+                           RemediationFailStop)
 from src.core.version import VERSION
-from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
+from src.core.agent import (AgentParams, build_prompt, build_continuation_prompt,
+                            build_remediation_prompt, resolve_agent_id,
+                            resolve_repo_id, resolve_work_dir)
+from src.core.context_generator import generate_context, ensure_steering_integrity
 from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
 from pathlib import Path
 from datetime import datetime, timedelta
+from typing import NoReturn
 import subprocess
 import shutil
 import os
@@ -101,7 +107,6 @@ def startup(config: dict):
     REPO_DIR.mkdir(exist_ok=True)
 
     # Gerar CONTEXT.md para instruir agentes sobre regras e estrutura do sistema
-    from src.core.context_generator import generate_context
     generate_context(config)
     log.info("Startup", "CONTEXT.md gerado/atualizado")
 
@@ -275,17 +280,99 @@ def process_queue(config: dict):
     global board
     queue = ChangeQueue()
     if queue.size() == 0:
-        return
+        return []
     try:
-        apply_changes(board, queue, config)
+        return apply_changes(board, queue, config) or []
     except PenaltyException:
         log.warning("Sync", "Penalty no process_queue")
+        return []
 
 
 # Sentinela de retorno do keep_task: distingue "nada a fazer" (None → avança
 # para o próximo board) de "fiz um auto-advance" (AUTO_ADVANCED → reinicia o
 # loop, pois há trabalho a caminho após o sync propagar a movimentação).
 AUTO_ADVANCED = object()
+
+
+# ── Remediação (E4) ───────────────────────────────────────────────────────────
+# Freio: cada alvo (board, issue) só é remediado UMA vez por episódio. Se após a
+# remediação o mesmo alvo falhar de novo com erro corrigível, é fail-stop.
+_remediated_targets: set[tuple[str, str]] = set()
+
+
+def _build_task_for_target(config: dict, board_id: str, issue_id: str) -> dict | None:
+    """Reconstrói o `task` de uma issue (por board+id) a partir do snapshot.
+
+    Usado pela remediação (E4): a issue que falhou o sync não é necessariamente
+    a selecionada por keep_task, então montamos o task diretamente do snapshot.
+    Retorna None se a issue/coluna não puder ser resolvida.
+    """
+    boards_cfg = config.get("boards", {})
+    board_cfg = boards_cfg.get(board_id)
+    if not isinstance(board_cfg, dict):
+        return None
+    snap = Snapshot(board_id).load()
+    issue = next((i for i in snap.issues if str(i.get("id")) == str(issue_id)), None)
+    if not issue:
+        return None
+    col_id = issue.get("column")
+    col = (board_cfg.get("columns", {}) or {}).get(col_id)
+    if not col:
+        return None
+    return {
+        "board_id": board_id,
+        "issue": issue,
+        "column": col,
+        "col_id": col_id,
+        "board": board_cfg,
+    }
+
+
+def remediate_pending(config: dict, signals: list) -> None:
+    """Orquestra a remediação única (E4) dos sinais devolvidos pela sync.
+
+    Para cada alvo:
+    - se já foi remediado neste episódio → fail-stop (log console+arquivo + PARA);
+    - senão, marca o alvo, monta o task e chama o agente UMA vez com o prompt de
+      remediação (que retoma a sessão da (issue, coluna) e recebe os erros).
+    O re-sync acontece naturalmente no próximo ciclo do loop (detect_local →
+    process_queue); se o mesmo alvo reincidir, cai no fail-stop acima.
+    """
+    for sig in signals or []:
+        target = (sig.board_id, str(sig.issue_id))
+        if target in _remediated_targets:
+            _remediation_fail_stop(sig)
+        _remediated_targets.add(target)
+
+        task = _build_task_for_target(config, sig.board_id, sig.issue_id)
+        if not task:
+            _remediation_fail_stop(sig)
+
+        log.warning(
+            "Remediação",
+            f"[{sig.board_id}] #{sig.issue_id} sync falhou (corrigível) - "
+            f"acionando remediação única do agente",
+            board_id=sig.board_id, issue_id=sig.issue_id, reason=sig.reason,
+        )
+        call_agent(config, task, remediation_errors=sig.reason)
+
+
+def _remediation_fail_stop(sig) -> NoReturn:
+    """Registra (console+arquivo via logger) e dispara o fail-stop controlado.
+
+    Nunca retorna: sempre levanta RemediationFailStop. A anotação `NoReturn`
+    torna explícito (para leitores e type-checkers) que o fluxo não continua
+    após uma chamada — por isso `remediate_pending` pode seguir assumindo que
+    `task` é válido.
+    """
+    log.error(
+        "Remediação",
+        f"[{sig.board_id}] #{sig.issue_id} remediação falhou - PARANDO a esteira "
+        f"(fail-stop): {sig.reason}",
+        event="remediation_fail_stop", board_id=sig.board_id,
+        issue_id=sig.issue_id, reason=sig.reason,
+    )
+    raise RemediationFailStop(sig.board_id, str(sig.issue_id), sig.reason)
 
 
 # Cache de cooldown de reexecução.
@@ -491,15 +578,13 @@ def _auto_advance(board_id: str, issue: dict, target_col: str, snap: Snapshot):
     log.info("KeepTask", f"[{board_id}] auto-advance #{issue['id']}: {old_col} → {target_col}")
 
 
-def call_agent(config: dict, task: dict | None):
+def call_agent(config: dict, task: dict | None, remediation_errors: str | None = None):
     if not task:
         return
     board_id = task["board_id"]
     col_id = task["col_id"]
     col = task["column"]
     issue = task["issue"]
-
-    from src.core.config import CONTEXTS_DIR
 
     agent_id = resolve_agent_id(col, issue)
     # Resolver plataforma e config do agente
@@ -524,6 +609,20 @@ def call_agent(config: dict, task: dict | None):
     work_dir = resolve_work_dir(config, board_cfg)
 
     prompt = build_prompt(config, task)
+    # E10: prompt de continuação (usado pelo adapter quando há sessão confirmada).
+    continuation_prompt = build_continuation_prompt(config, task)
+    # E4: prompt de remediação (com os erros de sync), quando solicitado.
+    remediation_prompt = None
+    if remediation_errors:
+        remediation_prompt = build_remediation_prompt(config, task, remediation_errors)
+
+    # Persona do agente (P1.4): injetada por código via AgentParams.context.
+    # A persona vive em contexts/<platform>/<agent_id>.md (NÃO vai para steering).
+    # O adapter (_compose_input) concatena context + prompt no input do agente.
+    persona = ""
+    persona_file = CONTEXTS_DIR / platform / f"{agent_id}.md"
+    if persona_file.exists():
+        persona = persona_file.read_text(encoding="utf-8").strip()
 
     # Extrair título da issue (primeira linha não-vazia do body, sem prefixo '# ')
     title = ""
@@ -543,11 +642,20 @@ def call_agent(config: dict, task: dict | None):
         prompt=prompt,
         work_dir=str(work_dir),
         repo_id=repo_id,
+        context=persona or None,
+        continuation_prompt=continuation_prompt,
+        remediation_prompt=remediation_prompt,
         col_name=col.get("name", col_id),
         title=title,
     )
 
     adapter = KiroCliAgent()
+
+    # P1.5 (F0.9): guarda de integridade do steering ANTES de despachar o agente.
+    # Se o steering foi corrompido/divergiu, reescreve com o conteúdo autoritativo.
+    if ensure_steering_integrity(config):
+        log.warning("Steering", "steering divergente detectado - reescrito antes "
+                    "de despachar o agente", event="steering_integrity_rewrite")
 
     from src.core.agent_guard import AgentGuard
     with AgentGuard(board_id, col_id):
@@ -651,7 +759,15 @@ def main():
                 had_changes = local_changes or remote_changes
 
                 # Fase 2: Processamento global da fila
-                process_queue(config)
+                remediation = process_queue(config)
+                if remediation:
+                    # E4: sync falhou com erro corrigível → remediação única.
+                    remediate_pending(config, remediation)
+                    index = 0
+                    continue
+                # Fila processada sem pendências de validação: libera o freio de
+                # remediação para episódios futuros.
+                _remediated_targets.clear()
 
                 # Se houve mudanças ou fila ainda tem itens, volta ao início
                 queue = ChangeQueue()
@@ -689,6 +805,15 @@ def main():
                 running = False
             except _Shutdown:
                 log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
+                running = False
+            except RemediationFailStop as e:
+                # E4: remediação única falhou → fail-stop controlado (para a esteira).
+                log.error(
+                    "Pipe",
+                    f"[{e.board_id}] #{e.issue_id} fail-stop de remediação - "
+                    f"encerrando a esteira: {e.reason}",
+                    event="remediation_fail_stop",
+                )
                 running = False
             except SnapshotIntegrityError as e:
                 log.error(
