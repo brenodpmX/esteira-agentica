@@ -20,10 +20,6 @@ from pathlib import Path
 PIPE_FILE: Path = Path("pipe.yml")
 STEERING_FILE: Path = Path(".kiro") / "steering" / "esteira.md"
 
-# Alias de compatibilidade: código/adapters antigos importam CONTEXT_FILE.
-# Aponta para o steering (mesma referência), evitando quebra durante a migração.
-CONTEXT_FILE: Path = STEERING_FILE
-
 # Frontmatter do steering. `inclusion: always` é portável (IDE/Web); no CLI todos
 # os arquivos de steering entram sempre (no-op), mas mantemos por portabilidade.
 _FRONTMATTER = "---\ninclusion: always\n---"
@@ -296,7 +292,7 @@ def ensure_steering_integrity(config: dict) -> bool:
     expected = _build_content(config)
     try:
         current = STEERING_FILE.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError):
+    except OSError:
         current = None
     if current == expected:
         return False

@@ -167,15 +167,28 @@ class KiroCliAgent(AgentPort):
         """Monta o input do agente.
 
         Prioridade:
-        1. remediation_prompt (E4): sempre que definido, contém os erros de sync
-           e tem precedência (a sessão, se existir, é retomada em paralelo).
+        1. remediation_prompt (E4): quando definido, contém os erros de sync.
+           - COM sessão confirmada (resuming): envia só os erros — a sessão já
+             carrega a persona e o contexto da tarefa.
+           - SEM sessão (kiro-cli descartou a sessão): anexa persona + prompt de
+             execução completo ANTES dos erros, para o agente não ficar sem
+             contexto (mesma guarda anti-delírio da continuação — E10).
         2. resuming + continuation_prompt (E10): continuação em sessão confirmada.
         3. persona + prompt de execução completo (fallback anti-delírio).
         """
         if params.remediation_prompt and params.remediation_prompt.strip():
-            return params.remediation_prompt.strip()
+            rem = params.remediation_prompt.strip()
+            if resuming:
+                return rem
+            # Sessão ausente: sem o fio anterior, o agente precisa do contexto
+            # completo (persona + tarefa) além dos erros a corrigir.
+            return f"{self._full_input(params)}\n\n---\n\n{rem}"
         if resuming and params.continuation_prompt and params.continuation_prompt.strip():
             return params.continuation_prompt.strip()
+        return self._full_input(params)
+
+    def _full_input(self, params: AgentParams) -> str:
+        """Persona (se houver) + prompt de execução completo."""
         if params.context and params.context.strip():
             return f"{params.context.strip()}\n\n---\n\n{params.prompt}"
         return params.prompt

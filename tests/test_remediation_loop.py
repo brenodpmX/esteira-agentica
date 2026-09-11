@@ -129,5 +129,39 @@ class TestRemediateOrchestration(unittest.TestCase):
                 m.remediate_pending({}, [self._signal()])
 
 
+class TestComposeInputRemediation(unittest.TestCase):
+    """_compose_input com remediation_prompt.
+
+    - COM sessão confirmada (resuming): envia só os erros (a sessão já carrega
+      persona + tarefa).
+    - SEM sessão (resuming=False): anexa persona + prompt completo ANTES dos
+      erros, para o agente não ficar sem contexto (guarda anti-delírio).
+    """
+
+    def _params(self):
+        from src.core.agent import AgentParams
+        return AgentParams(
+            platform="kiro-cli", agent_id="dev", agent_name="Eng", model="m",
+            issue_id="1", board_id="task", col_id="doing",
+            prompt="PROMPT_FULL", work_dir="/tmp",
+            context="PERSONA", continuation_prompt="CONT",
+            remediation_prompt="ERROS_422",
+        )
+
+    def test_remediacao_com_sessao_envia_so_erros(self):
+        from src.adapters.kiro_cli_agent import KiroCliAgent
+        out = KiroCliAgent()._compose_input(self._params(), resuming=True)
+        self.assertEqual(out, "ERROS_422")
+        self.assertNotIn("PROMPT_FULL", out)
+        self.assertNotIn("PERSONA", out)
+
+    def test_remediacao_sem_sessao_inclui_contexto_completo(self):
+        from src.adapters.kiro_cli_agent import KiroCliAgent
+        out = KiroCliAgent()._compose_input(self._params(), resuming=False)
+        self.assertIn("ERROS_422", out)
+        self.assertIn("PROMPT_FULL", out)
+        self.assertIn("PERSONA", out)
+
+
 if __name__ == "__main__":
     unittest.main()

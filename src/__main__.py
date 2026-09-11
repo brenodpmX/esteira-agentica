@@ -1,5 +1,6 @@
 from src.core.log import log
-from src.core.config import check_config as validate_config, ConfigError, SSH_KEY_ENV
+from src.core.config import (check_config as validate_config, ConfigError,
+                             SSH_KEY_ENV, CONTEXTS_DIR)
 from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
 from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
@@ -7,12 +8,16 @@ from src.core.change_queue import ChangeQueue, QUEUE_FILE
 from src.core.sync import (sync_remote, detect_local_changes, apply_changes,
                            RemediationFailStop)
 from src.core.version import VERSION
-from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
+from src.core.agent import (AgentParams, build_prompt, build_continuation_prompt,
+                            build_remediation_prompt, resolve_agent_id,
+                            resolve_repo_id, resolve_work_dir)
+from src.core.context_generator import generate_context, ensure_steering_integrity
 from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
 from pathlib import Path
 from datetime import datetime, timedelta
+from typing import NoReturn
 import subprocess
 import shutil
 import os
@@ -102,7 +107,6 @@ def startup(config: dict):
     REPO_DIR.mkdir(exist_ok=True)
 
     # Gerar CONTEXT.md para instruir agentes sobre regras e estrutura do sistema
-    from src.core.context_generator import generate_context
     generate_context(config)
     log.info("Startup", "CONTEXT.md gerado/atualizado")
 
@@ -353,8 +357,14 @@ def remediate_pending(config: dict, signals: list) -> None:
         call_agent(config, task, remediation_errors=sig.reason)
 
 
-def _remediation_fail_stop(sig) -> None:
-    """Registra (console+arquivo via logger) e dispara o fail-stop controlado."""
+def _remediation_fail_stop(sig) -> NoReturn:
+    """Registra (console+arquivo via logger) e dispara o fail-stop controlado.
+
+    Nunca retorna: sempre levanta RemediationFailStop. A anotação `NoReturn`
+    torna explícito (para leitores e type-checkers) que o fluxo não continua
+    após uma chamada — por isso `remediate_pending` pode seguir assumindo que
+    `task` é válido.
+    """
     log.error(
         "Remediação",
         f"[{sig.board_id}] #{sig.issue_id} remediação falhou - PARANDO a esteira "
@@ -576,8 +586,6 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
     col = task["column"]
     issue = task["issue"]
 
-    from src.core.config import CONTEXTS_DIR
-
     agent_id = resolve_agent_id(col, issue)
     # Resolver plataforma e config do agente
     agents_cfg = config.get("agents", {})
@@ -602,12 +610,10 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
 
     prompt = build_prompt(config, task)
     # E10: prompt de continuação (usado pelo adapter quando há sessão confirmada).
-    from src.core.agent import build_continuation_prompt
     continuation_prompt = build_continuation_prompt(config, task)
     # E4: prompt de remediação (com os erros de sync), quando solicitado.
     remediation_prompt = None
     if remediation_errors:
-        from src.core.agent import build_remediation_prompt
         remediation_prompt = build_remediation_prompt(config, task, remediation_errors)
 
     # Persona do agente (P1.4): injetada por código via AgentParams.context.
@@ -647,7 +653,6 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
 
     # P1.5 (F0.9): guarda de integridade do steering ANTES de despachar o agente.
     # Se o steering foi corrompido/divergiu, reescreve com o conteúdo autoritativo.
-    from src.core.context_generator import ensure_steering_integrity
     if ensure_steering_integrity(config):
         log.warning("Steering", "steering divergente detectado - reescrito antes "
                     "de despachar o agente", event="steering_integrity_rewrite")
