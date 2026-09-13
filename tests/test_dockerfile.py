@@ -6,7 +6,7 @@ Verificam se o Dockerfile atende os critérios de aceitação das issues:
   - ADR-04: versões pinadas (pyyaml, gh, git, openssh-client)
   - ADR-05: usuário não-root (pipe, uid 1000)
   - ADR-06: nenhum segredo embarcado, .dockerignore bloqueia tudo
-  - ADR-07: código da esteira via git clone, NÃO via COPY
+  - Código da esteira via COPY do contexto (supersede ADR-07: cache por checksum)
   - ADR-03: kiro-cli instalado via download URL + verificação SHA256
 
 Testes estáticos (não constroem a imagem) — executam sem Docker.
@@ -365,117 +365,62 @@ class TestKiroCliInstalacao:
 
 
 # ---------------------------------------------------------------------------
-# ADR-07 — Código da esteira via git clone (NÃO via COPY)
+# Código da esteira via COPY do contexto (supersede ADR-07)
 # ---------------------------------------------------------------------------
 
-class TestGitClone:
-    """ADR-07: código da esteira deve vir via git clone, não via COPY do contexto de build."""
+class TestCopySrc:
+    """Código da esteira entra via COPY do contexto de build (supersede ADR-07).
 
-    def test_nao_copia_src_via_copy(self, dockerfile_text):
-        """ADR-07: src/ NÃO deve ser copiado via instrução COPY.
+    O `src/` é provisionado no contexto pelo Makefile (fetch-app) e copiado com
+    COPY. O cache-key da camada passa a ser o CHECKSUM dos arquivos: qualquer
+    mudança no código invalida a camada, e `docker compose build` sempre baka o
+    código atual. O `git clone` anterior era cacheado pela string do comando e
+    não re-clonava novos commits da mesma branch (imagem ficava com código velho).
+    """
 
-        A abordagem anterior (COPY --chown=pipe:pipe src/ /app/src/) foi superada
-        pelo ADR-07: o código da esteira entra via git clone durante o build,
-        garantindo que a imagem contenha exatamente o commit referenciado por PIPE_REF.
-        """
+    def test_copia_src_via_copy(self, dockerfile_text):
+        """src deve ser copiado para /app/src via COPY do contexto de build."""
         copy_src = [
             l for l in dockerfile_text.splitlines()
-            if re.match(r"^\s*COPY\b", l) and re.search(r"\bsrc/", l)
+            if re.match(r"^\s*COPY\b", l) and re.search(r"\bsrc\b", l) and "/app/src" in l
         ]
-        assert not copy_src, (
-            "src/ está sendo copiado via COPY. "
-            "ADR-07: o código da esteira deve entrar via git clone com PIPE_REPO/PIPE_REF."
+        assert copy_src, (
+            "COPY de src para /app/src ausente. O código da esteira deve entrar "
+            "via COPY do contexto (provisionado pelo Makefile)."
         )
 
-    def test_arg_pipe_repo_presente(self, dockerfile_text):
-        """ARG PIPE_REPO deve estar declarado para parametrizar o repositório clonado."""
-        assert re.search(r"ARG\s+PIPE_REPO\b", dockerfile_text), (
-            "ARG PIPE_REPO não declarado. "
-            "ADR-07: o repositório clonado deve ser configurável via build-arg."
+    def test_copy_src_usa_chown_pipe(self, dockerfile_text):
+        """O COPY do src deve ajustar owner para o usuário não-root pipe."""
+        assert re.search(r"COPY\s+--chown=pipe(:pipe)?\s+src\s+/app/src", dockerfile_text), (
+            "COPY do src deve usar --chown=pipe:pipe (usuário não-root uid 1000)."
         )
 
-    def test_arg_pipe_ref_presente(self, dockerfile_text):
-        """ARG PIPE_REF deve estar declarado com valor padrão 'main'."""
-        assert re.search(r"ARG\s+PIPE_REF", dockerfile_text), (
-            "ARG PIPE_REF não declarado. "
-            "ADR-07: a branch/tag/sha clonada deve ser configurável."
+    def test_nao_usa_git_clone_para_o_codigo(self, dockerfile_text):
+        """git clone NÃO deve ser usado para o código (cache não re-clona commits)."""
+        code_lines = [
+            l for l in dockerfile_text.splitlines()
+            if not l.strip().startswith("#")
+        ]
+        assert not any(re.search(r"git\s+clone", l) for l in code_lines), (
+            "git clone presente em instrução do Dockerfile. Foi substituído por "
+            "COPY do contexto: o RUN git clone era cacheado pela string do comando "
+            "e não trazia novos commits, deixando código velho na imagem."
         )
 
-    def test_pipe_ref_default_main(self, dockerfile_text):
-        """ARG PIPE_REF deve ter valor padrão 'main'."""
-        assert re.search(r"ARG\s+PIPE_REF=main\b", dockerfile_text), (
-            "ARG PIPE_REF não tem valor padrão 'main'. "
-            "ADR-07: 'main' é o branch padrão de produção."
+    def test_build_nao_depende_de_secret_ssh(self, dockerfile_text):
+        """O build não deve mais montar secret SSH (COPY dispensa clone via SSH)."""
+        assert not re.search(r"--mount=type=secret", dockerfile_text), (
+            "--mount=type=secret ainda presente. Com COPY do contexto, o build "
+            "não precisa de chave SSH (o clone via SSH foi removido)."
         )
 
-    def test_git_clone_no_dockerfile(self, dockerfile_text):
-        """git clone deve aparecer no Dockerfile para baixar o código da esteira."""
-        assert re.search(r"git\s+clone\b", dockerfile_text), (
-            "git clone ausente no Dockerfile. "
-            "ADR-07: código da esteira deve ser clonado durante o build."
+    def test_nao_declara_pipe_repo_ref(self, dockerfile_text):
+        """ARG PIPE_REPO/PIPE_REF não são mais necessários (sem git clone)."""
+        assert not re.search(r"ARG\s+PIPE_REPO\b", dockerfile_text), (
+            "ARG PIPE_REPO obsoleto: o código vem via COPY, não via clone parametrizado."
         )
-
-    def test_git_clone_depth_1(self, dockerfile_text):
-        """git clone deve usar --depth 1 para shallow clone (ADR-07, eficiência)."""
-        assert re.search(r"git\s+clone\s+--depth\s+1", dockerfile_text), (
-            "git clone --depth 1 ausente. "
-            "ADR-07: shallow clone reduz tamanho da imagem e tempo de build."
-        )
-
-    def test_git_clone_usa_pipe_ref(self, dockerfile_text):
-        """git clone deve usar $PIPE_REF como branch/tag."""
-        assert re.search(r"git\s+clone.*PIPE_REF", dockerfile_text), (
-            "git clone não usa PIPE_REF. "
-            "ADR-07: branch clonada deve ser controlada pelo build-arg PIPE_REF."
-        )
-
-    def test_git_clone_usa_pipe_repo(self, dockerfile_text):
-        """git clone deve usar $PIPE_REPO como URL do repositório."""
-        assert re.search(r"git\s+clone.*PIPE_REPO", dockerfile_text), (
-            "git clone não usa PIPE_REPO. "
-            "ADR-07: repositório clonado deve ser configurável via build-arg."
-        )
-
-    def test_buildkit_secret_mount_ssh(self, dockerfile_text):
-        """--mount=type=secret,id=ssh_key deve estar presente para chave SSH efêmera (ADR-06)."""
-        assert re.search(r"--mount=type=secret.*id=ssh_key", dockerfile_text), (
-            "--mount=type=secret,id=ssh_key ausente. "
-            "ADR-06: chave SSH deve ser injetada via BuildKit secret, nunca via ARG/ENV/COPY."
-        )
-
-    def test_buildkit_secret_uid_1000(self, dockerfile_text):
-        """O secret ssh_key deve ter uid=1000 para ser acessível pelo usuário pipe."""
-        assert re.search(r"--mount=type=secret.*uid=1000", dockerfile_text), (
-            "uid=1000 ausente no --mount=type=secret. "
-            "Sem uid=1000, o usuário pipe (uid 1000) não consegue ler a chave SSH montada."
-        )
-
-    def test_git_ssh_command_configurado(self, dockerfile_text):
-        """GIT_SSH_COMMAND deve ser configurado para usar a chave SSH montada."""
-        assert re.search(r"GIT_SSH_COMMAND", dockerfile_text), (
-            "GIT_SSH_COMMAND não configurado. "
-            "ADR-07: necessário para git clone usar a chave SSH efêmera do BuildKit secret."
-        )
-
-    def test_strict_host_checking_accept_new(self, dockerfile_text):
-        """StrictHostKeyChecking=accept-new deve ser configurado para evitar prompt interativo."""
-        assert re.search(r"StrictHostKeyChecking=accept-new", dockerfile_text), (
-            "StrictHostKeyChecking=accept-new ausente. "
-            "Sem isso, git clone falhará interativamente ao conectar ao GitHub pela primeira vez."
-        )
-
-    def test_copia_apenas_src_do_clone(self, dockerfile_text):
-        """Apenas src/ deve ser copiado do clone para /app/src (não o repositório inteiro)."""
-        assert re.search(r"/tmp/esteira.*src.*app.*src|cp.*src.*app/src", dockerfile_text), (
-            "Cópia de src/ do clone para /app/src não encontrada. "
-            "ADR-07: copiar apenas src/ do clone temporário, depois remover /tmp/esteira."
-        )
-
-    def test_remove_clone_temporario(self, dockerfile_text):
-        """O diretório temporário /tmp/esteira deve ser removido após cópia."""
-        assert re.search(r"rm\s+-rf\s+/tmp/esteira", dockerfile_text), (
-            "rm -rf /tmp/esteira ausente. "
-            "ADR-07: o clone temporário deve ser removido para não inflar a imagem."
+        assert not re.search(r"ARG\s+PIPE_REF\b", dockerfile_text), (
+            "ARG PIPE_REF obsoleto: o código vem via COPY, não via clone parametrizado."
         )
 
 
@@ -566,19 +511,19 @@ class TestEstruturaDockerfile:
         )
 
     def test_sem_copy_geral_de_contexto(self, dockerfile_text):
-        """Nenhum COPY genérico (. ou src/) deve existir, pois o código vem via git clone.
+        """O único COPY permitido é o do `src` (código da esteira).
 
-        ADR-07 + ADR-06: o contexto de build é praticamente vazio (apenas o próprio
-        Dockerfile); todo código entra via git clone durante o RUN.
+        Não deve existir COPY genérico do contexto (ex.: `COPY . /app`) nem cópia
+        de credenciais/config — só o código-fonte, mantendo o contexto mínimo.
         """
         copy_lines = [
             l.strip() for l in dockerfile_text.splitlines()
             if re.match(r"^\s*COPY\b", l.strip())
         ]
-        # Não deve haver nenhum COPY (código vem via git clone)
-        assert not copy_lines, (
-            f"Instrução COPY encontrada no Dockerfile: {copy_lines}. "
-            "ADR-07: nenhum COPY — código da esteira entra via git clone."
+        # Deve haver exatamente o COPY do src, e nenhum COPY genérico.
+        assert copy_lines == ["COPY --chown=pipe:pipe src /app/src"], (
+            f"COPY inesperado no Dockerfile: {copy_lines}. "
+            "Apenas 'COPY --chown=pipe:pipe src /app/src' é permitido; nada de COPY genérico."
         )
 
 
@@ -593,20 +538,26 @@ class TestDockerignore:
         assert DOCKERIGNORE.exists(), ".dockerignore não encontrado na raiz do repositório."
 
     def test_dockerignore_contem_apenas_asterisco(self, dockerignore_text):
-        """.dockerignore deve conter apenas '*' para bloquear todo o contexto (ADR-06 + ADR-07).
+        """.dockerignore deve bloquear tudo, EXCETO o `src` (necessário ao COPY da imagem).
 
-        Com o código da esteira entrando via git clone (ADR-07), nenhum arquivo
-        do host precisa estar no contexto de build. A única linha não-comentário
-        deve ser '*', garantindo por construção que pipe.yml, contexts/, .ssh,
-        .env e qualquer credencial fiquem de fora.
+        O contexto de build fica mínimo: apenas o código-fonte entra (via COPY).
+        pipe.yml, contexts/, .ssh, .env e credenciais continuam de fora por
+        construção — a única exceção permitida é o `src`.
         """
         linhas_conteudo = [
             l.strip() for l in dockerignore_text.splitlines()
             if l.strip() and not l.strip().startswith("#")
         ]
-        assert linhas_conteudo == ["*"], (
-            f".dockerignore não contém apenas '*'. Linhas de conteúdo: {linhas_conteudo!r}. "
-            "ADR-06: use somente '*' para garantir que nenhum arquivo do host entre no build."
+        assert linhas_conteudo[0] == "*", (
+            f".dockerignore deve começar bloqueando tudo com '*'. Linhas: {linhas_conteudo!r}."
+        )
+        excecoes = set(linhas_conteudo[1:])
+        assert excecoes <= {"!src", "!src/**"}, (
+            f".dockerignore só pode excetuar o 'src'. Exceções encontradas: {sorted(excecoes)!r}. "
+            "Nada além de !src / !src/** deve entrar no contexto de build."
+        )
+        assert "!src" in excecoes, (
+            "Falta a exceção '!src' no .dockerignore — o COPY do código precisa do src no contexto."
         )
 
     def test_dockerignore_sem_excecao_kiro_cli(self, dockerignore_text):
@@ -712,14 +663,14 @@ class TestOrdemCamadas:
         )
 
     def test_git_clone_apos_env_path(self, dockerfile_lines):
-        """git clone (código da esteira) deve ser a última camada — mais volátil."""
+        """O COPY do código (camada mais volátil) deve vir após o ENV PATH."""
         env_path_idx = self._find_line(dockerfile_lines, r"PATH=.*local/bin")
-        clone_idx = self._find_line(dockerfile_lines, r"git\s+clone\b")
+        copy_idx = self._find_line(dockerfile_lines, r"^\s*COPY\b.*src\s+/app/src")
         assert env_path_idx is not None, "ENV PATH com ~/.local/bin não encontrado."
-        assert clone_idx is not None, "git clone não encontrado."
-        assert clone_idx > env_path_idx, (
-            f"git clone (linha {clone_idx+1}) aparece antes de ENV PATH (linha {env_path_idx+1}). "
-            "git clone deve ser a camada mais volátil (última), para aproveitar cache das camadas anteriores."
+        assert copy_idx is not None, "COPY do src (/app/src) não encontrado."
+        assert copy_idx > env_path_idx, (
+            f"COPY do src (linha {copy_idx+1}) aparece antes de ENV PATH (linha {env_path_idx+1}). "
+            "O código é a camada mais volátil (última), para aproveitar o cache das anteriores."
         )
 
 

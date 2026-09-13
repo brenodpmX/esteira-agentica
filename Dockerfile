@@ -1,14 +1,12 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
-# Comando de build (BuildKit obrigatório para --secret):
+# Build (o código da esteira entra via COPY do contexto — ver Camada 8):
 #
-#   DOCKER_BUILDKIT=1 docker build \
-#     --secret id=ssh_key,src="$PIPE_SSH_KEY_FILE" \
-#     --build-arg PIPE_REF=main \
-#     -t esteira .
+#   docker compose build && docker compose up
 #
-# Para uma versão específica: --build-arg PIPE_REF=<tag|sha>
+# O `src/` é provisionado no contexto de build pelo Makefile (fetch-app da
+# branch de produção). Não requer secret SSH nem build-arg de ref.
 
 # ---------------------------------------------------------------------------
 # Camada 2 — Dependências de sistema
@@ -84,18 +82,16 @@ ENV PYTHONUNBUFFERED=1 \
     PATH=/home/pipe/.local/bin:$PATH
 
 # ---------------------------------------------------------------------------
-# Camada 8 — Código da esteira via git clone (ADR-07)
-# Camada mais volátil — última para preservar cache das anteriores
-# Chave SSH efêmera via BuildKit secret (ADR-06): nunca persiste na imagem
+# Camada 8 — Código da esteira via COPY do contexto (supersede ADR-07)
+# Camada mais volátil — última para preservar o cache das anteriores.
+# O `src/` é provisionado no contexto de build pelo Makefile (fetch-app da
+# branch de produção). Usar COPY (em vez de `git clone`) faz o cache-key desta
+# camada ser o CHECKSUM dos arquivos: qualquer mudança no código invalida a
+# camada automaticamente, então `docker compose build` sempre baka o código
+# atual. O `git clone` anterior era cacheado pela string do comando e NÃO
+# re-clonava novos commits da mesma branch — deixando código velho na imagem.
 # ---------------------------------------------------------------------------
-ARG PIPE_REPO=git@github.com:brenotmp-agent/pipe.git
-ARG PIPE_REF=main
-
-RUN --mount=type=secret,id=ssh_key,uid=1000 \
-    GIT_SSH_COMMAND="ssh -i /run/secrets/ssh_key -o StrictHostKeyChecking=accept-new" \
-    git clone --depth 1 --branch "$PIPE_REF" "$PIPE_REPO" /tmp/esteira \
-    && cp -r /tmp/esteira/src /app/src \
-    && rm -rf /tmp/esteira
+COPY --chown=pipe:pipe src /app/src
 
 # ---------------------------------------------------------------------------
 # Entrypoint
