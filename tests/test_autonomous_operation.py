@@ -398,9 +398,11 @@ class TestNeedHumanGate:
 
         _write_snapshot(tmp_path, board_id, [
             {"id": "10", "column": col_id, "status": "ok",
-             "body_path": str(body_10), "labels": []},
+             "body_path": str(body_10), "labels": [],
+             "participation_intent": "origin"},
             {"id": "11", "column": col_id, "status": "ok",
-             "body_path": str(body_11), "labels": []},
+             "body_path": str(body_11), "labels": [],
+             "participation_intent": "origin"},
         ])
 
         from src.__main__ import keep_task
@@ -563,6 +565,7 @@ class TestNeedHumanGate:
                 "id": str(i), "column": col_id, "status": "ok",
                 "body_path": str(bf), "labels": [],
                 "created_at": f"2026-01-{i-39:02d}T00:00:00Z",
+                "participation_intent": "origin",
             })
 
         bf_clean = _write_body(col_dir, "43", "elegivel",
@@ -571,6 +574,7 @@ class TestNeedHumanGate:
             "id": "43", "column": col_id, "status": "ok",
             "body_path": str(bf_clean), "labels": [],
             "created_at": "2026-01-05T00:00:00Z",
+            "participation_intent": "origin",
         })
 
         _write_snapshot(tmp_path, board_id, snapshot_issues)
