@@ -1,1 +1,6 @@
+# Ignora todo o contexto de build, EXCETO o código-fonte necessário à imagem
+# (Camada 8 do Dockerfile faz `COPY src /app/src`). pipe.yml/contexts são
+# montados em runtime (não entram na imagem).
 *
+!src
+!src/**
