@@ -357,6 +357,48 @@ def _purge_expired_rerun(cooldown: int) -> None:
         del _rerun_cache[k]
 
 
+def _has_confirmed_intent(issue: dict) -> bool:
+    """True se participation_intent da issue é 'origin' ou 'authorized'.
+
+    Campo ausente, None, string vazia, ou qualquer outro valor (incluindo
+    'propagated'/'unresolved') retorna False - falha fechada (RN-B01).
+    Não faz I/O: lê exclusivamente o dict da issue já carregado do
+    snapshot local por keep_task.
+    """
+    return issue.get("participation_intent") in ("origin", "authorized")
+
+
+# Registra as chaves (board_id, col_id, issue_id) para as quais o evento
+# dispatch_blocked_unconfirmed_intent já foi emitido, evitando inundar os logs
+# a cada ciclo enquanto a mesma issue permanece pendente na mesma coluna. Mesmo
+# padrão efêmero (só em memória de processo) do cache de cooldown _rerun_cache:
+# a entrada só deixa de ser relevante quando a issue muda de coluna (chave nova)
+# ou é removida do board, e reiniciar o processo esvazia tudo.
+_unconfirmed_intent_logged: set[tuple[str, str, str]] = set()
+
+
+def _log_unconfirmed_intent_once(board_id: str, col_id: str, issue: dict) -> None:
+    """Registra dispatch_blocked_unconfirmed_intent uma vez por
+    (board, coluna, issue) enquanto o processo estiver rodando.
+
+    Deduplicado para não inundar os logs a cada ciclo enquanto a mesma
+    issue permanece pendente na mesma coluna - loga de novo apenas se a
+    issue mudar de coluna (nova chave) ou o processo reiniciar.
+    """
+    key = (board_id, col_id, str(issue.get("id")))
+    if key in _unconfirmed_intent_logged:
+        return
+    _unconfirmed_intent_logged.add(key)
+    log.warning(
+        "KeepTask",
+        f"[{board_id}] #{issue.get('id')} despacho bloqueado - "
+        f"participation_intent não confirmado em '{col_id}'",
+        event_type="dispatch_blocked_unconfirmed_intent",
+        board_id=board_id, issue_id=issue.get("id"), col_id=col_id,
+        participation_intent=issue.get("participation_intent"),
+    )
+
+
 def keep_task(board_id: str, config: dict) -> dict | object | None:
     """Seleciona a próxima tarefa elegível no board indicado.
 
@@ -374,6 +416,9 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
     - Elegível se: status=='ok', coluna tem 'agent', coluna tem 'change.advance'
     - parallel:false → bloqueia auto-advance se já existe issue ativa
     - /need_human ou /blocked_by no body → bloqueada
+    - participation_intent must be 'origin'/'authorized' (gate fail-closed):
+      sem intenção confirmada não há auto-advance nem seleção; emite o evento
+      dispatch_blocked_unconfirmed_intent deduplicado
     - boards.rerun_cooldown → pula issue reexecutada há pouco (mesmo board+coluna)
     """
     boards_cfg = config["boards"]
@@ -412,6 +457,11 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
         if todo_col and col_id == todo_col:
             if block_auto_advance:
                 continue
+            # Gate de intenção confirmada: uma issue sem participation_intent
+            # 'origin'/'authorized' não avança de coluna automaticamente.
+            if not _has_confirmed_intent(issue):
+                _log_unconfirmed_intent_once(board_id, col_id, issue)
+                continue
             advance_col = columns.get(todo_col, {}).get("change", {}).get("advance")
             if advance_col:
                 _auto_advance(board_id, issue, advance_col, snap)
@@ -424,6 +474,12 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
         if not col.get("change", {}).get("advance"):
             continue
         if _is_blocked(issue):
+            continue
+        # Gate de intenção confirmada: uma issue sem participation_intent
+        # 'origin'/'authorized' nunca é despachada. Vem ANTES do cooldown para
+        # não consumir/reiniciar o cooldown de uma issue que nunca é executada.
+        if not _has_confirmed_intent(issue):
+            _log_unconfirmed_intent_once(board_id, col_id, issue)
             continue
         # Cooldown: pula a issue se foi reexecutada há pouco (mesmo board+coluna).
         if _in_rerun_cooldown(board_id, col_id, issue["id"], cooldown):

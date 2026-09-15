@@ -39,8 +39,10 @@ from src.__main__ import (
 def cache_limpo():
     """Isola o cache de módulo entre testes."""
     pipe._rerun_cache.clear()
+    pipe._unconfirmed_intent_logged.clear()
     yield
     pipe._rerun_cache.clear()
+    pipe._unconfirmed_intent_logged.clear()
 
 
 def _snapshot(board_dir: Path, col: str, stem: str, issue_id: str = "42"):
@@ -62,6 +64,7 @@ def _snapshot(board_dir: Path, col: str, stem: str, issue_id: str = "42"):
                 "blocks": [],
                 "archived": False,
                 "state": "open",
+                "participation_intent": "origin",
             }
         ],
         "last_sync": None,

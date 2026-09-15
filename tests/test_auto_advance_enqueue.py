@@ -47,6 +47,7 @@ def task_board(tmp_path, monkeypatch):
                 "blocks": [],
                 "archived": False,
                 "state": "open",
+                "participation_intent": "origin",
             }
         ],
         "last_sync": None,
@@ -155,6 +156,7 @@ def _add_planning_issue(board_dir, issue_id, stem, updated_at):
         "status": "ok",
         "labels": [], "parent": None, "children": [],
         "blocked_by": [], "blocks": [], "archived": False, "state": "open",
+        "participation_intent": "origin",
     })
     snap_file.write_text(json.dumps(data, indent=2))
 
