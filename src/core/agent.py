@@ -245,8 +245,11 @@ def build_prompt(config: dict, task: dict) -> str:
     # Origem da branch: a anotação `branch pai` tem precedência; caso não haja
     # pai, a origem declarada no flow (`create`) ou a base.
     origin_branch = annot.parent_branch or flow_cfg.get("create", base_branch)
-    # Alvo do merge/PR: `merge` do flow (ou a base).
-    merge_branch = flow_cfg.get("merge", base_branch)
+    # Alvo do merge/PR: a branch do PAI tem precedência (a issue nasce de e
+    # retorna para a branch do pai — simétrico a `origin_branch`); sem pai, o
+    # `merge` declarado no flow ou a base. Evita apontar para um literal (ex.:
+    # `epic`) que não existe como branch quando o padrão é `epic/<id>-<slug>`.
+    merge_branch = annot.parent_branch or flow_cfg.get("merge", base_branch)
     # Template legível do nome da branch (E1 — obrigatório por flow no pipe.yml).
     branch_pattern = flow_cfg.get("branch_pattern", "")
 

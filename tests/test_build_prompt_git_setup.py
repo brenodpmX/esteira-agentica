@@ -244,6 +244,27 @@ class TestGuardDeBaseNoPREmProsa:
         prompt = _prompt(tmp_path, flow="story", gitevents="merge")
         assert "confirme-o em vez de criar outro" in prompt
 
+    def test_alvo_de_merge_vem_da_branch_pai_quando_presente(self, tmp_path):
+        """Simétrico à origem: o alvo do merge/PR usa a branch do PAI quando
+        anotada (`branch pai`), em vez do literal `merge` do flow (ex.: `epic`).
+
+        Necessário porque o padrão `epic/<id>-<slug>` (branch_pattern obrigatório)
+        não pode coexistir com uma branch literal `epic` — o merge deve mirar a
+        branch real do épico-pai, não o literal do flow.
+        """
+        body = _body_with_annotations(branch="story/74-my-feature",
+                                      branch_pai="epic/230-integridade")
+        prompt = _prompt(tmp_path, flow="story", gitevents="merge", body=body)
+        assert "para `epic/230-integridade`" in prompt, (
+            "o alvo do PR deve ser a branch do pai anotada, não o literal do flow"
+        )
+        assert "origin/epic/230-integridade" in prompt
+
+    def test_sem_branch_pai_alvo_cai_no_merge_do_flow(self, tmp_path):
+        """Sem `branch pai`, o alvo de merge cai no `merge` declarado no flow."""
+        prompt = _prompt(tmp_path, flow="story", gitevents="merge")
+        assert "para `epic`" in prompt
+
     @pytest.mark.parametrize("gitevents", ["create", "use", "no-branch"])
     def test_secao_pr_ausente_quando_nao_ha_merge(self, tmp_path, gitevents):
         prompt = _prompt(tmp_path, flow="story", gitevents=gitevents)
