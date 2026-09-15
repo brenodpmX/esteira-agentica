@@ -24,18 +24,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---------------------------------------------------------------------------
 # Camada 3 — GitHub CLI (gh)
-# Repositório APT oficial do GitHub com chave GPG assinada
-# Versão pinada conforme docker/versions.env (ADR-04)
+# Instala o .deb pinado direto das releases do GitHub (github.com/cli/cli/releases),
+# que ficam arquivadas permanentemente -> pin exato reproduzivel.
+# NAO usar o repo APT https://cli.github.com/packages: ele serve APENAS a ultima
+# versao publicada, entao qualquer pin exato quebra na proxima release do gh
+# (E: Version 'X' for 'gh' was not found). Historico: 2.96.0 -> 2.97.0 -> 2.101.0.
+# Versao pinada conforme docker/versions.env (ADR-04).
 # ---------------------------------------------------------------------------
+ARG GH_VERSION=2.101.0
 RUN curl --proto '=https' --tlsv1.2 -fsSL \
-        https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list \
+        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb" \
+        -o /tmp/ghcli.deb \
     && apt-get update \
-    && apt-get install -y --no-install-recommends gh=2.97.0 \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends /tmp/ghcli.deb \
+    && rm -rf /tmp/ghcli.deb /var/lib/apt/lists/*
+RUN gh --version
 
 # ---------------------------------------------------------------------------
 # Camada 4 — PyYAML

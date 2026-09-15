@@ -770,13 +770,15 @@ class TestDockerIntegracao:
         r = self._run(["--version"], entrypoint="git")
         assert r.returncode == 0, f"git não disponível: {r.stderr}"
 
-    def test_gh_disponivel_e_versao_correta(self):
-        """gh deve estar disponível na versão 2.96.0 (AC da issue #45)."""
+    def test_gh_disponivel_e_versao_correta(self, versions):
+        """gh deve estar disponível na versão pinada em docker/versions.env (AC da issue #45)."""
         r = self._run(["--version"], entrypoint="gh")
         assert r.returncode == 0, f"gh não disponível: {r.stderr}"
         output = r.stdout + r.stderr
-        assert "2.96.0" in output, (
-            f"gh não reporta versão 2.96.0: {output.strip()!r}"
+        gh_version = versions.get("GH_VERSION", "")
+        assert gh_version, "GH_VERSION não encontrado em docker/versions.env."
+        assert gh_version in output, (
+            f"gh não reporta versão {gh_version} (pinada em versions.env): {output.strip()!r}"
         )
 
     def test_kiro_cli_disponivel(self):
