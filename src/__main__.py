@@ -5,6 +5,7 @@ from src.core.board import Board, PenaltyException, BoardAccessError
 from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
 from src.core.change_queue import ChangeQueue, QUEUE_FILE
 from src.core.sync import sync_remote, detect_local_changes, apply_changes
+from src.core.participation_migration import migrate_legacy_participation_intent
 from src.core.version import VERSION
 from src.core.agent import AgentParams, build_prompt, resolve_agent_id, resolve_repo_id, resolve_work_dir
 from src.core.lock import InstanceLock, LockHeldError
@@ -196,6 +197,13 @@ def board_full_sync(config: dict):
                 log.warning("Board", f"Rate limit em '{board_id}' - retoma às {back_at}")
                 time.sleep(e.wait_seconds)
     log.info("Board", f"{total} mudança(s) remota(s) adicionada(s) à fila")
+
+    # Migração de snapshots legados sem participation_intent (RN-B01/ADR-001).
+    # Roda depois de sync_boards e da detecção remota (snapshots já refletem o
+    # estado remoto do ciclo) e antes do fim da função — garantindo que a
+    # migração vê o conjunto completo de boards/issues antes do primeiro
+    # keep_task do loop principal.
+    migrate_legacy_participation_intent(config)
 
 
 def get_board_ids(config: dict) -> list[str]:
