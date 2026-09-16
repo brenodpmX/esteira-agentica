@@ -265,3 +265,28 @@ correlacionar despachos e créditos.
 | RF-07, RN-B09 | eventos JSON e enriquecimento do log de agente |
 | RF-08, RN-B05/RN-B06 | migração bloqueia ambiguidade; resíduos permanecem separados |
 | RF-09, RN-B07 | chave de contingência relida sem restart |
+
+## Changes
+
+### 2026-09-16 — Convergência de linhagem para base única de #249 (débito #296)
+
+Registrada a decisão de arquitetura de integração que resolve a divergência de
+linhagem git entre a baseline documental (#230) e a implementação (#242),
+identificada no débito #296. Os dois insumos exigidos por #249 existiam em
+branches paralelas (`epic/230` × `epic-integration`), sem uma base única na
+ancestralidade da branch de trabalho de #249. Decisão: **convergir numa base
+única** (merge de `epic/230` em `epic-integration` e recriação de `feature/249`
+sobre a base convergida), preservando o critério negocial/QA como régua.
+
+Novos artefatos:
+
+- `decisions/adr-004-convergencia-de-linhagem-para-base-unica-de-249.md`
+  — contexto, decisão, justificativa, consequências e critério objetivo de
+  convergência.
+- `integracao/convergencia-de-linhagem-249.md` — topologia atual, base única
+  alvo, estratégia executável (merge + resolução de 2 conflitos triviais +
+  recriação de `feature/249`) e verificação por comandos git.
+
+Sem alteração de regras de negócio, RN/ADR-001/002/003 ou do critério de
+desbloqueio de QA de 28/08/2026: a mudança apenas torna esses insumos
+alcançáveis pela ancestralidade única.
