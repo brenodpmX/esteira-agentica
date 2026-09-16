@@ -134,3 +134,63 @@ baseline documental estava em
 `epic230` não era ancestral de `origin/epic`, da branch de origem de #249 nem
 desta correção. Essa ausência é uma dependência explícita de desbloqueio, não
 evidência de que as regras ou ADRs ainda precisem ser reinventados.
+
+## Addendum — Débito negocial #296 (2026-09-16, Helena Costa — Product Manager)
+
+O débito #296 registrou que a baseline documental do épico #230 e a
+implementação da story #242 não convergem numa base única para #249. Ao saná-lo
+pela lente de negócio, verifiquei a topologia real das branches em
+`/app/repo/main` após `git fetch origin`:
+
+| Artefato | Onde existe hoje |
+|----------|------------------|
+| `business-rules.md`, `adr-001-…`, `adr-002-…` (baseline #230) | apenas `origin/epic/230-integridade_de_issues_entre_boards` |
+| `participation_policy.py` (`classify_participation`, `ParticipationClassification`) e `Board.list_participations` (impl. #242) | apenas `origin/epic-integration` |
+| `origin/story/242-…` | não contém nem a baseline nem a implementação |
+| `feature/249-…` (base atual da task) | não contém nenhum dos dois |
+
+### Decisão de produto: não há lacuna negocial nova a sanar
+
+A definição de valor e as regras de negócio que sustentam #249 **já existem e
+são coerentes**, e este documento (28/08/2026) já as fixou como critério de
+desbloqueio:
+
+- as regras de negócio (RN-B01, RN-B02, RN-B03, RN-B04, RN-B10) estão completas
+  na `business-rules.md`;
+- ADR-001 define os quatro resultados da classificação
+  (`origin`/`authorized`/`propagated`/`unresolved`); ADR-002 define como a
+  reconciliação consome essa classificação;
+- a implementação em `epic-integration` **referencia e adere às mesmas RN/ADR**
+  (as docstrings de `classify_participation`/`ParticipationClassification`
+  citam RN-B01, RN-B02, RN-B04, RN-B10 e ADR-001). Não há divergência de
+  **significado de negócio** entre a baseline documental e o que foi
+  implementado — os quatro resultados e suas regras de prioridade são os
+  mesmos descritos aqui.
+
+Ou seja: o problema de #296 **não é uma indefinição de negócio**. O valor, as
+regras e o critério de desbloqueio de QA permanecem válidos e inalterados. O que
+falta é a **convergência de linhagem git** — reunir, numa base única na
+ancestralidade de `feature/249`, dois conjuntos de artefatos que evoluíram em
+branches paralelas. Definir e executar essa estratégia de convergência
+(consolidar branches, rebasear/recriar a base de #249, preservar
+ancestralidade) é decisão de **design/arquitetura de integração do épico** —
+fora do escopo de Product Management, que não decide tecnologia, arquitetura ou
+implementação.
+
+### Reafirmação do critério (não muda)
+
+O critério de desbloqueio de QA da seção "Critério de desbloqueio de QA"
+**continua valendo integralmente**. Em particular, "não haja divergência entre
+a implementação integrada e a baseline documental" já está negocialmente
+satisfeito no plano de conteúdo — a convergência pendente é de linhagem, não de
+significado. Nenhum documento de negócio precisa ser reescrito para desbloquear
+#249.
+
+### Encaminhamento
+
+Débito #296 encaminhado ao board de **débito arquitetural** (coluna
+`architecture`): a resolução depende de definir e executar a estratégia de
+convergência das branches (`epic/230` × `epic-integration`) sobre a qual
+`feature/249` será (re)criada, preservando a ancestralidade exigida por este
+critério. O critério negocial acima é a régua a ser preservada por essa
+convergência.
