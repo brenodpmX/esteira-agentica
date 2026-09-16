@@ -75,8 +75,19 @@ class TestCloseIssueReason(unittest.TestCase):
         adapter._gh = lambda *a, **k: captured.setdefault("args", list(a))
         adapter.close_issue("board", "5", reason="not_planned")
         self.assertIn("--reason", captured["args"])
-        self.assertIn("not_planned", captured["args"])
+        # O token interno `not_planned` é traduzido para o valor aceito pelo
+        # `gh issue close --reason`, que é `not planned` (com espaço).
+        self.assertIn("not planned", captured["args"])
+        self.assertNotIn("not_planned", captured["args"])
         self.assertIn("close", captured["args"])
+
+    def test_close_com_reason_completed_monta_flag(self):
+        adapter = self._adapter()
+        captured = {}
+        adapter._gh = lambda *a, **k: captured.setdefault("args", list(a))
+        adapter.close_issue("board", "5", reason="completed")
+        self.assertIn("--reason", captured["args"])
+        self.assertIn("completed", captured["args"])
 
     def test_close_sem_reason_nao_inclui_flag(self):
         adapter = self._adapter()
