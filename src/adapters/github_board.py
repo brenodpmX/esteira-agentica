@@ -1079,8 +1079,12 @@ query($owner:String!,$repo:String!,$number:Int!){
                  operation="close_issue", board_id=board_id, issue_id=issue_id)
         args = ["issue", "close", issue_id, "--repo", self._repo]
         # E9: motivo do fechamento (completed | not_planned) quando informado.
-        if reason in ("completed", "not_planned"):
-            args += ["--reason", reason]
+        # O token interno usa underscore (é também o nome da label), mas o
+        # `gh issue close --reason` só aceita {completed | not planned | duplicate}
+        # — com ESPAÇO. Traduz o token para o valor que o CLI espera.
+        cli_reason = self._CLOSE_REASON_CLI.get(reason)
+        if cli_reason:
+            args += ["--reason", cli_reason]
         self._gh(*args)
 
     # ── Resolução de databaseId ───────────────────────────────────────────────
@@ -1436,6 +1440,11 @@ query($owner:String!,$repo:String!,$number:Int!){
     # Labels que, quando presentes, disparam o fechamento da issue (E9).
     # O core é agnóstico: só adiciona a label; o efeito de fechar vive aqui.
     _CLOSING_LABELS = ("completed", "not_planned")
+
+    # Tradução do token interno de motivo para o valor aceito pelo
+    # `gh issue close --reason` {completed | not planned | duplicate}. O token
+    # `not_planned` (label, underscore) vira `not planned` (com espaço) no CLI.
+    _CLOSE_REASON_CLI = {"completed": "completed", "not_planned": "not planned"}
 
     def _interpret_closing_labels(self, board_id: str, issue_id: str,
                                   labels: list[str]) -> None:
