@@ -867,3 +867,87 @@ class TestDockerIntegracao:
             "/usr/local/bin/kiro-cli encontrado. "
             "ADR-03: kiro-cli deve ser instalado em ~/.local/bin pelo install.sh, não copiado para /usr/local/bin."
         )
+
+
+# ---------------------------------------------------------------------------
+# Toolchain de dev/test (Opção B — Docker-in-Docker), v1.13.0
+# ---------------------------------------------------------------------------
+
+class TestToolchainDevTest:
+    """A imagem embute o cliente docker + plugins, jq, JDK e Maven (pinados).
+
+    Instalados como root, ANTES de 'USER pipe' (system-wide). O daemon NÃO roda
+    aqui — vive no sidecar dind; o agente fala via DOCKER_HOST=tcp://127.0.0.1:2375.
+    """
+
+    def test_docker_cli_baixado_via_curl(self, dockerfile_text):
+        assert re.search(r"curl\b[^\n]*DOCKER_CLI_URL", dockerfile_text), (
+            "Download do cliente docker (curl ... $DOCKER_CLI_URL) ausente."
+        )
+
+    def test_docker_cli_extrai_apenas_o_client(self, dockerfile_text):
+        """Só o binário 'docker/docker' deve ser extraído do tgz estático (não o dockerd)."""
+        assert re.search(r"tar\b[^\n]*docker/docker", dockerfile_text), (
+            "Extração do binário 'docker/docker' do tgz estático não encontrada."
+        )
+
+    def test_plugins_compose_e_buildx(self, dockerfile_text):
+        assert "DOCKER_COMPOSE_URL" in dockerfile_text and "DOCKER_BUILDX_URL" in dockerfile_text, (
+            "ARGs de compose/buildx ausentes no Dockerfile."
+        )
+        assert "cli-plugins" in dockerfile_text, (
+            "Plugins docker devem ir para /usr/local/lib/docker/cli-plugins."
+        )
+
+    def test_jq_instalado(self, dockerfile_text):
+        assert re.search(r"curl\b[^\n]*JQ_URL", dockerfile_text), "Download do jq ausente."
+
+    def test_jdk_e_maven_em_opt(self, dockerfile_text):
+        assert "TEMURIN_JDK_URL" in dockerfile_text, "ARG TEMURIN_JDK_URL ausente."
+        assert "MAVEN_URL" in dockerfile_text, "ARG MAVEN_URL ausente."
+        assert re.search(r"tar\b[^\n]*/opt/java", dockerfile_text), "JDK não extraído em /opt/java."
+        assert re.search(r"tar\b[^\n]*/opt/maven", dockerfile_text), "Maven não extraído em /opt/maven."
+
+    def test_args_consistentes_com_versions_env(self, dockerfile_text, versions):
+        """URLs default dos ARGs devem bater com docker/versions.env (ADR-04)."""
+        for key in ("DOCKER_CLI_URL", "DOCKER_COMPOSE_URL", "DOCKER_BUILDX_URL",
+                    "JQ_URL", "TEMURIN_JDK_URL", "MAVEN_URL"):
+            url = versions.get(key, "")
+            assert url, f"{key} ausente em versions.env."
+            assert url in dockerfile_text, (
+                f"URL de {key} ({url!r}) do versions.env não aparece no Dockerfile."
+            )
+
+    def test_java_home_no_env(self, dockerfile_text):
+        assert re.search(r"JAVA_HOME=/opt/java", dockerfile_text), "JAVA_HOME=/opt/java ausente no ENV."
+
+    def test_path_inclui_java_e_maven(self, dockerfile_text):
+        assert re.search(r"PATH=[^\n]*/opt/java/bin", dockerfile_text), "/opt/java/bin ausente no PATH."
+        assert re.search(r"PATH=[^\n]*/opt/maven/bin", dockerfile_text), "/opt/maven/bin ausente no PATH."
+
+    def test_docker_host_default_no_env(self, dockerfile_text):
+        assert re.search(r"DOCKER_HOST=tcp://127\.0\.0\.1:2375", dockerfile_text), (
+            "DOCKER_HOST default (tcp://127.0.0.1:2375, daemon do sidecar dind) ausente no ENV."
+        )
+
+    def test_toolchain_instalado_como_root_antes_do_user_pipe(self, dockerfile_lines):
+        """Os downloads do toolchain rodam como root, antes de 'USER pipe'."""
+        def find(pat):
+            for i, l in enumerate(dockerfile_lines):
+                if re.search(pat, l):
+                    return i
+            return None
+        cli_idx = find(r"DOCKER_CLI_URL=")
+        user_idx = find(r"^USER\s+pipe\b")
+        assert cli_idx is not None, "ARG DOCKER_CLI_URL não encontrado."
+        assert user_idx is not None, "'USER pipe' não encontrado."
+        assert cli_idx < user_idx, (
+            "Toolchain (docker/jdk/maven) deve ser instalado como root antes de USER pipe."
+        )
+
+    def test_smoke_tests_do_toolchain(self, dockerfile_text):
+        for smoke in (r"docker --version", r"docker compose version",
+                      r"docker buildx version", r"jq --version", r"mvn -version"):
+            assert re.search(smoke, dockerfile_text), (
+                f"Smoke test ausente no Dockerfile: {smoke!r} (falhar cedo no build)."
+            )

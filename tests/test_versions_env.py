@@ -303,3 +303,74 @@ class TestAusenciaDeSegredos:
                 f"Campo sensível detectado: {descricao}. "
                 "docker/versions.env deve conter apenas versões e checksums."
             )
+
+
+# ---------------------------------------------------------------------------
+# Toolchain de dev/test para agentes (Opção B — Docker-in-Docker), v1.13.0
+# ---------------------------------------------------------------------------
+
+class TestToolchainDevTest:
+    """Pins do toolchain que permite ao agente subir as stacks dev/qa e rodar ITs.
+
+    Componentes: sidecar dind, cliente docker + plugins compose/buildx, jq,
+    JDK Temurin 21 e Maven. Todos pinados em docker/versions.env (ADR-04).
+    """
+
+    REQUIRED_KEYS = [
+        "DIND_IMAGE",
+        "DOCKER_CLI_VERSION",
+        "DOCKER_CLI_URL",
+        "DOCKER_COMPOSE_VERSION",
+        "DOCKER_COMPOSE_URL",
+        "DOCKER_BUILDX_VERSION",
+        "DOCKER_BUILDX_URL",
+        "JQ_VERSION",
+        "JQ_URL",
+        "TEMURIN_JDK_VERSION",
+        "TEMURIN_JDK_URL",
+        "MAVEN_VERSION",
+        "MAVEN_URL",
+    ]
+
+    def test_chaves_toolchain_presentes(self, versions_env):
+        ausentes = [k for k in self.REQUIRED_KEYS if k not in versions_env]
+        assert not ausentes, (
+            f"Campos do toolchain de dev/test ausentes em versions.env: {ausentes}."
+        )
+
+    def test_valores_toolchain_nao_vazios(self, versions_env):
+        vazios = [k for k in self.REQUIRED_KEYS if not versions_env.get(k, "").strip()]
+        assert not vazios, f"Campos do toolchain com valor vazio: {vazios}."
+
+    def test_urls_toolchain_https(self, versions_env):
+        for k in ("DOCKER_CLI_URL", "DOCKER_COMPOSE_URL", "DOCKER_BUILDX_URL",
+                  "JQ_URL", "TEMURIN_JDK_URL", "MAVEN_URL"):
+            v = versions_env.get(k, "")
+            assert v.startswith("https://"), f"{k}='{v}' não usa HTTPS."
+
+    def test_dind_image_pinada(self, versions_env):
+        """DIND_IMAGE deve ter tag -dind explícita, nunca latest."""
+        img = versions_env.get("DIND_IMAGE", "")
+        assert "-dind" in img, f"DIND_IMAGE='{img}' não é uma imagem docker:*-dind."
+        assert "latest" not in img.lower(), f"DIND_IMAGE='{img}' usa 'latest'."
+
+    def test_dind_image_versao_bate_com_docker_cli(self, versions_env):
+        """Tag do docker:*-dind deve ser a mesma versão do cliente docker estático."""
+        cli_v = versions_env.get("DOCKER_CLI_VERSION", "")
+        img = versions_env.get("DIND_IMAGE", "")
+        assert cli_v and cli_v in img, (
+            f"DIND_IMAGE='{img}' não referencia DOCKER_CLI_VERSION='{cli_v}'. "
+            "Daemon e cliente devem ser da mesma versão."
+        )
+
+    def test_temurin_versao_no_url(self, versions_env):
+        """A versão do JDK deve aparecer na URL (ainda que url-encoded)."""
+        v = versions_env.get("TEMURIN_JDK_VERSION", "")  # ex.: 21.0.5+11
+        url = versions_env.get("TEMURIN_JDK_URL", "")
+        assert v.split("+")[0].split(".")[0] == "21", "JDK deve ser a linha 21."
+        assert "21.0.5" in url, f"TEMURIN_JDK_URL não referencia a versão {v!r}."
+
+    def test_maven_versao_no_url(self, versions_env):
+        v = versions_env.get("MAVEN_VERSION", "")
+        url = versions_env.get("MAVEN_URL", "")
+        assert v and v in url, f"MAVEN_URL não referencia MAVEN_VERSION={v!r}."
