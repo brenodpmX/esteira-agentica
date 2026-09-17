@@ -545,7 +545,6 @@ de comandos separado por uma linha `@---`.
   vence, anteriores removidos.
 - `compose_body(body, cmds)` → body completo com bloco.
 - `from_issue(issue)` → IssueCommands (extrai `need_human` e `agent_hub` das labels; ambos tratados como campos especiais — não aparecem em `cmds.labels`).
-- `annotations_doc()` → documentação compartilhada por prompts e contexts.
 
 Filosofia presença/ausência: o estado escrito é o estado final (SET). Sem
 comandos de "remover".

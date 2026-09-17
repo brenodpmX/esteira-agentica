@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.commands import annotations_doc, parse_body, AGENT_HUB_PREFIX
+from src.core.commands import parse_body, AGENT_HUB_PREFIX
 from src.core.snapshot import BOARDS_DIR
 
 REPO_DIR = Path("repo")
@@ -358,10 +358,6 @@ def build_prompt(config: dict, task: dict) -> str:
             "(bug #108). Se já houver um PR aberto para esta branch, confirme-o em vez de criar outro."
         )
         lines.append("")
-
-    # ── Anotações no body (comandos @---) ──
-    lines.append(annotations_doc())
-    lines.append("")
 
     # ── Transição de coluna ──
     lines.append("## Transição de coluna")
