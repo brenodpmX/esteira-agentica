@@ -430,59 +430,6 @@ def compose_body(body: str, cmds: IssueCommands) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Documentação para agentes (usada em prompts e contexts)
-# ══════════════════════════════════════════════════════════════════════════════
-
-ANNOTATIONS_DOC = """\
-## Anotações no body da issue
-
-O arquivo `-body.md` pode conter um bloco de comandos no final, separado do \
-conteúdo real por uma linha contendo apenas `@---`. Tudo antes do `@---` é o \
-conteúdo da issue; tudo depois são comandos que a esteira aplica no board.
-
-Regras:
-- Use exatamente `@---` (linha isolada) como separador.
-- Cada comando é uma linha iniciada por `/`.
-- Filosofia presença/ausência: o que estiver escrito é o estado final. Se o \
-comando existe, a relação/atributo é garantido; se não existe, é removido. \
-Não há comandos de "remover".
-
-Comandos disponíveis:
-- `/parent #N`            esta issue é sub-issue (filha) de N
-- `/children #N, #M`      N e M são sub-issues (filhas) desta
-- `/blocked_by #N, #M`    esta issue está bloqueada por N e M (não avança até fecharem)
-- `/blocks #N, #M`        esta issue bloqueia N e M
-- `/labels a, b, c`       define as labels da issue (substitui todas)
-- `/agent-hub-<valor>`    roteamento de agente (hub); escreva como um label, ex.: `/agent-hub-low`
-- `/need_human`           marca que precisa de intervenção humana
-- `/archive`              arquiva a issue no board
-
-Ao criar uma sub-issue, sempre anote o vínculo: no body da nova issue use \
-`/parent #N` apontando para a issue pai. Quando a sub-issue ainda não tem id \
-(foi criada localmente), registre o vínculo na issue que já possui id usando \
-`/children`.
-
-Para dependências: quando uma tarefa nova (sem id) depende de outra que já \
-tem id, anote `/blocked_by #N` na tarefa nova; se a tarefa nova bloqueia \
-outra que já tem id, anote `/blocks #N`.
-
-Exemplo de bloco no final do body:
-
-    @---
-    /parent #10
-    /blocked_by #42, #58
-    /labels backend, security
-    /agent-hub-high
-    /need_human
-"""
-
-
-def annotations_doc() -> str:
-    """Retorna a documentação das anotações para incluir em prompts/contexts."""
-    return ANNOTATIONS_DOC
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # Eventos de coluna aplicados sobre IssueCommands (on_in / on_out)
 # ══════════════════════════════════════════════════════════════════════════════
 

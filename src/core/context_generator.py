@@ -149,6 +149,15 @@ def _section_body_structure() -> list[str]:
         "- Só use `/parent #N` se for realmente relação mãe→filha (confira o "
         "esquema de issues e o prompt do agente).",
         "",
+        "### Exemplo de bloco de comandos (final do body)",
+        "",
+        "    @---",
+        "    /parent #10",
+        "    /blocked_by #42, #58",
+        "    /labels backend, security",
+        "    /agent-hub-high",
+        "    /need_human",
+        "",
     ]
 
 

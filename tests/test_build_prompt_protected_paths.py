@@ -365,9 +365,13 @@ class TestBuildPromptRegressao:
         prompt = _build_prompt(tmp_path)
         assert "## Diretório de trabalho" in prompt
 
-    def test_prompt_contem_secao_anotacoes_body(self, tmp_path):
+    def test_prompt_nao_contem_secao_anotacoes_body(self, tmp_path):
+        # O bloco de anotações/comandos @--- foi removido do prompt: agora vive
+        # apenas no steering (context_generator._section_body_structure), fonte
+        # única. O prompt não deve mais duplicá-lo.
         prompt = _build_prompt(tmp_path)
-        assert "Anotações no body" in prompt
+        assert "Anotações no body" not in prompt
+        assert "Comandos disponíveis" not in prompt
 
     def test_prompt_contem_commit_e_push_para_create(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="create")
