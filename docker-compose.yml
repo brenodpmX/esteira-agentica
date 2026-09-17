@@ -2,6 +2,36 @@
 # Valor central: trocar pipe.yml, contexts/ ou credenciais NÃO exige 'docker build'
 
 services:
+  # Daemon Docker isolado (Docker-in-Docker) para o agente subir as stacks
+  # dev/qa do produto e rodar ITs Testcontainers. Fica num sidecar privileged;
+  # o daemon e os containers aninhados NÃO tocam o host (raio de dano contido).
+  # Os dados do daemon (imagens, volumes das stacks) persistem em dind-storage,
+  # dando um ambiente de desenvolvimento/teste "de verdade" entre execuções.
+  # NOTA DE SEGURANÇA: privileged é requisito do dind; por isso o daemon é
+  # isolado aqui em vez de expor o socket do host ao agente.
+  dind:
+    image: ${DIND_IMAGE:-docker:27.3.1-dind}
+    privileged: true
+    environment:
+      # TLS desligado: o entrypoint do docker:dind passa a publicar o daemon em
+      # tcp://0.0.0.0:2375 (além do socket unix) dentro DESTE network namespace,
+      # que só o serviço pipe compartilha — não é publicado no host. O pipe
+      # conecta por tcp://127.0.0.1:2375.
+      - DOCKER_TLS_CERTDIR=
+    volumes:
+      # /var/lib/docker: imagens + volumes das stacks aninhadas (dev/qa).
+      - dind-storage:/var/lib/docker
+      # Repo compartilhado NO MESMO PATH que o pipe: bind mounts das stacks do
+      # produto (ex.: dev/lib) são resolvidos pelo daemon no filesystem do dind,
+      # então precisam existir aqui com o mesmo caminho absoluto.
+      - pipe-repo:/app/repo
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
   pipe:
     build:
       context: .
@@ -12,6 +42,16 @@ services:
       - PIPE_SSH_KEY_FILE=/run/secrets/ssh_key
       # Fuso horário do container (default: host ou America/Sao_Paulo)
       - TZ=${TZ:-America/Sao_Paulo}
+      # Fala com o daemon do sidecar dind (netns compartilhado abaixo)
+      - DOCKER_HOST=tcp://127.0.0.1:2375
+    # Compartilha o network namespace do dind: assim as portas publicadas pelas
+    # stacks aninhadas (api:8080, web:3000, etc.) ficam em localhost para o
+    # agente, e os seeds/validações do dev.sh que batem em http://localhost:PORT
+    # funcionam sem alterar os scripts do produto.
+    network_mode: "service:dind"
+    depends_on:
+      dind:
+        condition: service_healthy
     volumes:
       # Configuração: editar no host + 'docker compose up -d' = nova config SEM rebuild
       - ./pipe.yml:/app/pipe.yml:ro
@@ -40,3 +80,7 @@ volumes:
   pipe-state:
   kiro-home:
   kiro-local:
+  # Storage do daemon dind: persiste imagens e volumes das stacks dev/qa entre
+  # execuções (ambiente de desenvolvimento/teste "real"). qa/run.sh faz seu
+  # próprio down -v a cada rodada; os dados do modo dev persistem aqui.
+  dind-storage:

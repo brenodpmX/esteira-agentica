@@ -2,6 +2,33 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.13.0] - 2026-09-17
+
+### Adicionado
+
+- Toolchain de dev/test para os agentes dentro do container (Opção B —
+  Docker-in-Docker). O container do agente agora consegue subir as stacks
+  `dev`/`qa` do produto (docker compose) e rodar ITs Testcontainers, que antes
+  falhavam com "Could not find a valid Docker environment".
+  - Novo sidecar `dind` (`docker:*-dind`, privileged) no `docker-compose.yml`:
+    daemon Docker isolado; o serviço `pipe` fala com ele via
+    `DOCKER_HOST=tcp://127.0.0.1:2375` compartilhando o network namespace
+    (`network_mode: service:dind`), o que também torna as portas das stacks
+    aninhadas alcançáveis em `localhost` sem alterar os scripts do produto.
+  - Volume `dind-storage` (`/var/lib/docker` do dind) persiste imagens e volumes
+    das stacks entre execuções — ambiente de desenvolvimento/teste "real".
+  - `compose.dev.yml` compartilha o repo (bind mount) com o `dind` no mesmo
+    path, para os bind mounts das stacks aninhadas resolverem.
+  - Dockerfile passa a embutir, com versões pinadas em `docker/versions.env`:
+    cliente `docker` (estático), plugins `compose` v2 e `buildx`, `jq`, JDK
+    Temurin 21 e Apache Maven.
+
+### Segurança
+
+- O daemon Docker fica isolado no sidecar `dind` (privileged) em vez de expor o
+  socket do host ao agente — o raio de dano das operações do agente fica contido
+  no sidecar. Homologação não é coberta (roda fora de containers, no host).
+
 ## [1.11.0] - 2026-08-22
 
 ### Alterado

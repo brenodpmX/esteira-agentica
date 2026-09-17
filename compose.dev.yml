@@ -24,3 +24,11 @@ services:
       - ${PIPE_STATE_DIR:-./.pipe}:/app/.pipe
       - ${PIPE_REPO_DIR:-./repo}:/app/repo
       - ${PIPE_LOGS_DIR:-./logs}:/app/logs
+
+  # O dind precisa enxergar o repo NO MESMO PATH que o pipe para resolver os
+  # bind mounts das stacks aninhadas (dev/lib etc.). Em modo dev o repo é um
+  # bind mount do host, então o mesmo bind é aplicado ao dind. O dind-storage
+  # (/var/lib/docker) continua named volume, herdado do compose base.
+  dind:
+    volumes:
+      - ${PIPE_REPO_DIR:-./repo}:/app/repo

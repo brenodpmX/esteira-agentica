@@ -1675,3 +1675,100 @@ class TestInitTrueIntegracao:
         finally:
             import os as _os
             _os.unlink(fake_key)
+
+
+# ---------------------------------------------------------------------------
+# Docker-in-Docker (Opção B) — sidecar dind + wiring do serviço pipe, v1.13.0
+# ---------------------------------------------------------------------------
+
+
+class TestDindSidecar:
+    """O compose base declara um sidecar 'dind' isolado e liga o 'pipe' a ele.
+
+    Objetivo: o agente sobe as stacks dev/qa do produto e roda ITs Testcontainers
+    contra um daemon Docker isolado (raio de dano contido), sem expor o socket do
+    host. As portas das stacks aninhadas ficam em localhost via netns compartilhado.
+    """
+
+    def _services(self, compose_text):
+        import yaml
+        return (yaml.safe_load(compose_text) or {}).get("services", {})
+
+    def test_servico_dind_presente(self, compose_text):
+        assert "dind" in self._services(compose_text), (
+            "Serviço 'dind' ausente no docker-compose.yml (Opção B — Docker-in-Docker)."
+        )
+
+    def test_dind_privileged(self, compose_text):
+        dind = self._services(compose_text).get("dind", {})
+        assert dind.get("privileged") is True, (
+            "Serviço 'dind' deve ter privileged: true (requisito do daemon dind)."
+        )
+
+    def test_dind_imagem_pinada(self, compose_text):
+        dind = self._services(compose_text).get("dind", {})
+        img = str(dind.get("image", ""))
+        assert "dind" in img, f"Imagem do dind inesperada: {img!r}."
+        assert "latest" not in img.lower(), f"Imagem do dind não pode ser latest: {img!r}."
+
+    def test_dind_storage_volume_declarado_e_montado(self, compose_text):
+        import yaml
+        conf = yaml.safe_load(compose_text) or {}
+        assert "dind-storage" in (conf.get("volumes") or {}), (
+            "Named volume 'dind-storage' (persistência do daemon) não declarado."
+        )
+        assert re.search(r"-\s*dind-storage:/var/lib/docker", compose_text), (
+            "dind-storage não está montado em /var/lib/docker no serviço dind."
+        )
+
+    def test_dind_compartilha_repo_no_mesmo_path(self, compose_text):
+        """O dind deve montar o repo em /app/repo (mesmo path do pipe) para
+        resolver bind mounts das stacks aninhadas."""
+        dind = self._services(compose_text).get("dind", {})
+        vols = " ".join(dind.get("volumes", []) or [])
+        assert "/app/repo" in vols, (
+            "Serviço 'dind' não monta o repo em /app/repo — bind mounts das stacks "
+            "aninhadas (ex.: dev/lib) não resolveriam no filesystem do daemon."
+        )
+
+    def test_pipe_docker_host_aponta_para_dind(self, compose_text):
+        assert re.search(r"DOCKER_HOST=tcp://127\.0\.0\.1:2375", compose_text), (
+            "DOCKER_HOST=tcp://127.0.0.1:2375 ausente — o pipe não fala com o daemon do dind."
+        )
+
+    def test_pipe_compartilha_netns_do_dind(self, compose_text):
+        pipe = self._services(compose_text).get("pipe", {})
+        assert pipe.get("network_mode") == "service:dind", (
+            "pipe deve usar network_mode: service:dind para expor as portas das "
+            "stacks aninhadas em localhost (seeds/validações do dev.sh usam localhost:PORT)."
+        )
+
+    def test_pipe_depends_on_dind(self, compose_text):
+        pipe = self._services(compose_text).get("pipe", {})
+        dep = pipe.get("depends_on", {})
+        # aceita tanto lista quanto forma longa com condition
+        if isinstance(dep, dict):
+            assert "dind" in dep, "pipe não declara depends_on dind."
+        else:
+            assert "dind" in dep, "pipe não declara depends_on dind."
+
+    def test_pipe_mantem_init_e_restart(self, compose_text):
+        """A adição do dind não deve remover init/restart do pipe."""
+        pipe = self._services(compose_text).get("pipe", {})
+        assert pipe.get("init") is True, "pipe perdeu 'init: true'."
+        assert pipe.get("restart") == "unless-stopped", "pipe perdeu 'restart: unless-stopped'."
+
+
+@US04_SKIP
+class TestDindDevOverride:
+    """No modo dev, o dind compartilha o repo por bind mount (mesmo do pipe)."""
+
+    def test_dev_override_compartilha_repo_com_dind(self, compose_dev_text):
+        import yaml
+        conf = yaml.safe_load(compose_dev_text) or {}
+        dind = (conf.get("services") or {}).get("dind", {})
+        vols = " ".join(dind.get("volumes", []) or [])
+        assert "/app/repo" in vols and "PIPE_REPO_DIR" in vols, (
+            "compose.dev.yml deve dar ao dind o mesmo bind mount de repo do pipe "
+            "(${PIPE_REPO_DIR:-./repo}:/app/repo) para os bind mounts aninhados resolverem."
+        )
