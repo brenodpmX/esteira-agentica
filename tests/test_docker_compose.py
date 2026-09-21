@@ -1705,6 +1705,15 @@ class TestDindSidecar:
             "Serviço 'dind' deve ter privileged: true (requisito do daemon dind)."
         )
 
+    def test_dind_nao_anexa_logs(self, compose_text):
+        """Os logs do daemon dind não devem poluir a saída do 'docker compose up'
+        (foreground do make). attach: false desanexa a saída sem parar o serviço."""
+        dind = self._services(compose_text).get("dind", {})
+        assert dind.get("attach") is False, (
+            "Serviço 'dind' deve ter attach: false para não poluir o log da esteira "
+            "no foreground; os logs seguem acessíveis via 'docker compose logs dind'."
+        )
+
     def test_dind_imagem_pinada(self, compose_text):
         dind = self._services(compose_text).get("dind", {})
         img = str(dind.get("image", ""))

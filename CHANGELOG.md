@@ -2,6 +2,16 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.13.1] - 2026-09-21
+
+### Corrigido
+
+- Os logs do sidecar `dind` deixam de poluir a saída do `docker compose up`
+  (foreground do `make`). Adicionado `attach: false` ao serviço `dind` no
+  `docker-compose.yml`: o daemon continua rodando normalmente e seus logs
+  seguem acessíveis sob demanda via `docker compose logs dind`, mas não são mais
+  agregados ao log da esteira. Requer Compose v2.20+.
+
 ## [1.13.0] - 2026-09-17
 
 ### Adicionado

@@ -12,6 +12,11 @@ services:
   dind:
     image: ${DIND_IMAGE:-docker:27.3.1-dind}
     privileged: true
+    # Não anexa os logs do daemon dind à saída agregada do 'docker compose up'
+    # (o 'make' roda em foreground): o log do dind poluía o log da esteira. O
+    # serviço continua rodando normalmente e seus logs seguem acessíveis via
+    # 'docker compose logs dind'. Requer Compose v2.20+.
+    attach: false
     environment:
       # TLS desligado: o entrypoint do docker:dind passa a publicar o daemon em
       # tcp://0.0.0.0:2375 (além do socket unix) dentro DESTE network namespace,
