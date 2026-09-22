@@ -450,6 +450,8 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
     - Dentro de cada coluna, pega a issue elegível mais antiga (created_at,
       com fallback para updated_at)
     - Se issue está em 'todo', faz auto-advance local e retorna AUTO_ADVANCED
+      (exceto se bloqueada: /need_human ou /blocked_by no body → é pulada, e o
+      auto-advance passa para a próxima issue elegível do todo)
     - Elegível se: status=='ok', coluna tem 'agent', coluna tem 'change.advance'
     - parallel:false → bloqueia auto-advance se já existe issue ativa
     - /need_human ou /blocked_by no body → bloqueada
@@ -490,6 +492,12 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
         # Auto-advance do todo
         if todo_col and col_id == todo_col:
             if block_auto_advance:
+                continue
+            # Respeita o bloqueio: uma issue em 'todo' com /blocked_by ou
+            # /need_human NÃO deve ser avançada. Pular deixa o loop seguir para
+            # a próxima issue elegível do todo (tipicamente a bloqueante), que
+            # avança em seu lugar — preservando a ordem da fila por bloqueios.
+            if _is_blocked(issue):
                 continue
             advance_col = columns.get(todo_col, {}).get("change", {}).get("advance")
             if advance_col:

@@ -2,6 +2,18 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.13.2] - 2026-09-22
+
+### Corrigido
+
+- O auto-advance de uma issue na coluna `todo` (`keep_task`) agora respeita os
+  bloqueios. Antes, o guard `_is_blocked` (que verifica `/blocked_by` e
+  `/need_human` no body) só era aplicado às colunas com agente; uma issue
+  bloqueada parada no `todo` era avançada mesmo assim, ignorando a fila ordenada
+  por bloqueios — trazendo a issue bloqueada e deixando a bloqueante no `todo`.
+  Agora issues bloqueadas no `todo` são puladas, e o auto-advance segue para a
+  próxima issue elegível (tipicamente a bloqueante), preservando a ordem da fila.
+
 ## [1.13.1] - 2026-09-21
 
 ### Corrigido
