@@ -2,6 +2,26 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.14.0] - 2026-09-24
+
+### Adicionado
+
+- Itens arquivados no board agora servem como gatilho explícito de `delete-down`
+  fora da varredura completa (startup/diária). O adapter do GitHub deixa de
+  descartar itens `isArchived` e passa a superficializá-los como uma `Issue`
+  leve (`archived=True`, sem coluna/labels/deps — não são reinseridos no board
+  local). As camadas de sync (`sync_remote` incremental por-ciclo e
+  `detect_board_changes` na varredura completa) enfileiram `delete-down` quando
+  o id ainda existe no snapshot, e ignoram quando já não existe (idempotente).
+
+### Alterado
+
+- Para o caso comum de término (issue arquivada), a poda do snapshot deixa de
+  depender da heurística frágil "ausente do fetch" (sujeita a falso-positivo de
+  deleção sob fetch parcial/paginação truncada) e passa a usar o sinal positivo
+  de arquivamento. A detecção por ausência permanece na varredura completa para
+  cobrir deleções reais (issue removida do project).
+
 ## [1.13.2] - 2026-09-22
 
 ### Corrigido
