@@ -651,6 +651,18 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
             max_updated = issue.updated_at
 
         known = snapshot_by_id.get(issue_id)
+
+        # Arquivada: gatilho de delete-down, nunca create/change-down (não
+        # reinsere localmente). Só poda quando o id ainda existe no snapshot;
+        # se já não existe (poda anterior), ignora — idempotente.
+        if getattr(issue, "archived", False):
+            if known is not None and queue.add(
+                ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)
+            ):
+                known["status"] = SyncEvent.DELETE_DOWN.value
+                log.trace("Sync", f"[{board_id}] #{issue_id} delete-down (arquivada)")
+            continue
+
         if known is None:
             # Create precisa de fullsync: monta o body com deps (from_issue) e
             # não há baseline no snapshot para preservá-las.
