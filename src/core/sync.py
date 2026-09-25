@@ -632,7 +632,23 @@ def _deps_deltas_from_snapshot(issue, issue_data: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
-    """Busca issues modificados desde last_board_update e enfileira mudanças."""
+    """Busca mudanças remotas desde last_board_update e enfileira eventos.
+
+    Fluxo incremental por-ciclo, sobre o fetch completo do board atual:
+      - create-down / change-down: issues com `updated_at > since`;
+      - delete-down: issues presentes no snapshot mas AUSENTES do fetch atual —
+        arquivadas (o ProjectV2 remove itens arquivados da connection `items`,
+        eles NÃO voltam com isArchived=true) ou deletadas no board.
+
+    A detecção de ausência antes só existia na varredura completa
+    (`detect_board_changes`, startup/diária); por isso uma issue arquivada
+    ficava no snapshot até o full sync do dia seguinte, congelando boards
+    `parallel:false`. Aqui ela passa a ocorrer a cada ciclo, sem custo extra de
+    API: o fetch completo (`list_issues`) já era feito por dentro de
+    `list_issues_since`. O fetch é atômico (rate limit levanta PenaltyException
+    em vez de devolver página parcial), então uma leitura truncada não gera
+    falso-positivo de deleção.
+    """
     snap = Snapshot(board_id).load()
     since = snap.last_board_update
 
@@ -641,28 +657,20 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
         board_obj.detect_board_changes(board_id, snap, queue)
         return
 
-    remote_issues = board_obj.list_issues_since(board_id, since)
+    remote_issues = board_obj.list_issues(board_id)
+    remote_by_id = {str(i.id): i for i in remote_issues}
     snapshot_by_id = {str(i["id"]): i for i in snap.issues if i.get("id")}
     max_updated = since
 
+    # Criadas/modificadas desde `since` (incremental leve).
     for issue in remote_issues:
+        if not (issue.updated_at and issue.updated_at > since):
+            continue
         issue_id = str(issue.id)
-        if issue.updated_at and issue.updated_at > max_updated:
+        if issue.updated_at > max_updated:
             max_updated = issue.updated_at
 
         known = snapshot_by_id.get(issue_id)
-
-        # Arquivada: gatilho de delete-down, nunca create/change-down (não
-        # reinsere localmente). Só poda quando o id ainda existe no snapshot;
-        # se já não existe (poda anterior), ignora — idempotente.
-        if getattr(issue, "archived", False):
-            if known is not None and queue.add(
-                ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)
-            ):
-                known["status"] = SyncEvent.DELETE_DOWN.value
-                log.trace("Sync", f"[{board_id}] #{issue_id} delete-down (arquivada)")
-            continue
-
         if known is None:
             # Create precisa de fullsync: monta o body com deps (from_issue) e
             # não há baseline no snapshot para preservá-las.
@@ -673,6 +681,13 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id, board=board_id)):
                 known["status"] = SyncEvent.CHANGE_DOWN.value
                 log.trace("Sync", f"[{board_id}] #{issue_id} change-down")
+
+    # Ausentes do fetch atual -> delete-down (arquivadas ou deletadas no board).
+    for issue_id, known in snapshot_by_id.items():
+        if issue_id not in remote_by_id:
+            if queue.add(ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)):
+                known["status"] = SyncEvent.DELETE_DOWN.value
+                log.trace("Sync", f"[{board_id}] #{issue_id} delete-down (ausente do fetch)")
 
     if max_updated != since:
         snap.last_board_update = max_updated

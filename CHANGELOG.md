@@ -4,30 +4,27 @@ Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
 ## [1.14.0] - 2026-09-24
 
-### Adicionado
+### Corrigido
 
-- Itens arquivados no board agora servem como gatilho explícito de `delete-down`
-  fora da varredura completa (startup/diária). O adapter do GitHub deixa de
-  descartar itens `isArchived` e passa a superficializá-los como uma `Issue`
-  leve (`archived=True`, sem coluna/labels/deps — não são reinseridos no board
-  local). As camadas de sync (`sync_remote` incremental por-ciclo e
-  `detect_board_changes` na varredura completa) enfileiram `delete-down` quando
-  o id ainda existe no snapshot, e ignoram quando já não existe (idempotente).
-- `list_issues_since` (sync incremental por-ciclo) passa a incluir SEMPRE os
-  itens arquivados, independente do `since`. O arquivamento não bumpa o
-  `updated_at` acima do `since` já registrado (o fechamento que o antecede fixa
-  `updated_at == last_board_update`), então o filtro `> since` os excluiria e a
-  poda só ocorreria no full sync diário. Como a poda é idempotente (só afeta ids
-  ainda no snapshot), incluí-los sempre é seguro e torna a poda por-ciclo
-  confiável.
+- O sync incremental por-ciclo (`sync_remote`) agora detecta issues presentes no
+  snapshot mas AUSENTES do fetch atual e enfileira `delete-down` para elas —
+  arquivadas (o GitHub ProjectV2 remove itens arquivados da connection `items`,
+  eles não voltam com `isArchived=true`) ou deletadas no board. Antes, essa
+  detecção de ausência só existia na varredura completa (`detect_board_changes`,
+  startup/diária); por isso uma issue arquivada permanecia no snapshot até o full
+  sync do dia seguinte, congelando boards `parallel:false` (uma issue terminal
+  parada era contada como ocupante ativo, bloqueando o auto-advance do backlog).
+  Agora a poda ocorre no ciclo seguinte ao arquivamento.
 
-### Alterado
+### Detalhes
 
-- Para o caso comum de término (issue arquivada), a poda do snapshot deixa de
-  depender da heurística frágil "ausente do fetch" (sujeita a falso-positivo de
-  deleção sob fetch parcial/paginação truncada) e passa a usar o sinal positivo
-  de arquivamento. A detecção por ausência permanece na varredura completa para
-  cobrir deleções reais (issue removida do project).
+- Custo de API zero: o fetch completo (`list_issues`) já era feito a cada ciclo
+  por dentro de `list_issues_since`; `sync_remote` passa a usá-lo diretamente,
+  derivando o subconjunto modificado (`updated_at > since`) para create/change e
+  o conjunto completo para a detecção de ausência.
+- O fetch é atômico (rate limit levanta `PenaltyException` em vez de devolver
+  página parcial), então uma leitura truncada não gera falso-positivo de
+  deleção — mesmo risco/garantia da varredura completa.
 
 ## [1.13.2] - 2026-09-22
 

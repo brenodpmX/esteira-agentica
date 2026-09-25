@@ -746,25 +746,10 @@ class GitHubBoardAdapter(BoardPort):
             node = data.get("node") or {}
             page = node.get("items", {})
             for item in page.get("nodes", []):
+                if item.get("isArchived"):
+                    continue
                 content = item.get("content")
                 if not content or not content.get("number"):
-                    continue
-
-                # Itens arquivados NÃO são reinseridos no board local: entram
-                # apenas como gatilho leve de delete-down (id + updated_at, sem
-                # coluna/labels/deps). A camada de sync poda o snapshot quando o
-                # id ainda existe localmente. Isso desacopla a poda da varredura
-                # completa (startup/diária) e usa um sinal explícito de
-                # arquivamento em vez da heurística frágil "ausente do fetch".
-                if item.get("isArchived"):
-                    issues.append(Issue(
-                        id=str(content["number"]),
-                        title=content.get("title", ""),
-                        body="",
-                        column="",
-                        updated_at=content.get("updatedAt", ""),
-                        archived=True,
-                    ))
                     continue
 
                 column = ""
@@ -795,22 +780,10 @@ class GitHubBoardAdapter(BoardPort):
         return issues
 
     def list_issues_since(self, board_id: str, since: str) -> list[Issue]:
-        """Lista issues modificadas desde `since` usando list_issues + filtro client-side.
-
-        Itens arquivados são SEMPRE incluídos, independente de `since`: eles
-        servem apenas como gatilho de delete-down e o arquivamento pode não
-        bumpar o `updated_at` acima do `since` já registrado (o fechamento que
-        antecede o arquivamento costuma fixar `updated_at == last_board_update`).
-        Sem isso, a poda por-ciclo não dispararia e o item arquivado só seria
-        removido no full sync diário. A poda é idempotente: só afeta ids ainda
-        presentes no snapshot.
-        """
+        """Lista issues modificadas desde `since` usando list_issues + filtro client-side."""
         self._penalty_check()
         all_issues = self.list_issues(board_id)
-        return [
-            i for i in all_issues
-            if getattr(i, "archived", False) or (i.updated_at and i.updated_at > since)
-        ]
+        return [i for i in all_issues if i.updated_at and i.updated_at > since]
 
     def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
         self._penalty_check()
