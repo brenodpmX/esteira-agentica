@@ -473,7 +473,6 @@ class Board:
 
           - issue no board sem correspondência no snapshot  -> create-down
           - issue no snapshot (com id) ausente no board      -> delete-down
-          - issue arquivada no board (presente no snapshot)  -> delete-down
           - issue com updated_at no board > snapshot         -> change-down
 
         Atualiza snapshot.last_board_update com a data mais recente.
@@ -498,19 +497,6 @@ class Board:
 
             if issue.updated_at and issue.updated_at > max_updated:
                 max_updated = issue.updated_at
-
-            # Arquivada: aparece no fetch apenas como gatilho de delete-down
-            # (não é reinserida). Poda quando ainda existe no snapshot; nunca
-            # gera create/change-down. Substitui, para o caso comum de término,
-            # a heurística "ausente do fetch" (frágil sob fetch parcial) por um
-            # sinal explícito de arquivamento.
-            if getattr(issue, "archived", False):
-                if known is not None and queue.add(
-                    ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)
-                ):
-                    known["status"] = SyncEvent.DELETE_DOWN.value
-                    added += 1
-                continue
 
             if known is None:
                 if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,

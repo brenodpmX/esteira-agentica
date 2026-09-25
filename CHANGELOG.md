@@ -2,6 +2,37 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.14.1] - 2026-09-24
+
+### Corrigido
+
+- A abordagem de 1.14.0 (tratar itens arquivados como gatilho de `delete-down`)
+  era **inócua**: o GitHub ProjectV2 REMOVE itens arquivados da connection
+  `items` — eles não retornam com `isArchived=true` —, então o código que
+  "superficializava arquivadas" em `list_issues`/`list_issues_since` nunca era
+  exercido. Verificado no board: `items(first:100)` não devolve a issue
+  arquivada. Resultado: o sync incremental (`sync_remote`) continuava sem podar
+  arquivadas, e boards `parallel:false` seguiam congelando até o full sync
+  diário.
+- Correção correta: `sync_remote` passa a detectar issues presentes no snapshot
+  mas AUSENTES do fetch atual e enfileira `delete-down` (arquivadas ou
+  deletadas), mesma lógica que já existia só na varredura completa
+  (`detect_board_changes`). Agora a poda ocorre no ciclo seguinte ao
+  arquivamento.
+- Revertidas as mudanças inócuas de 1.14.0 em
+  `GitHubBoardAdapter.list_issues`/`list_issues_since` e
+  `Board.detect_board_changes`.
+
+### Detalhes
+
+- Custo de API zero: o fetch completo (`list_issues`) já era feito a cada ciclo
+  por dentro de `list_issues_since`; `sync_remote` passa a usá-lo diretamente,
+  derivando o subconjunto modificado (`updated_at > since`) para create/change e
+  o conjunto completo para a detecção de ausência.
+- O fetch é atômico (rate limit levanta `PenaltyException` em vez de devolver
+  página parcial), então uma leitura truncada não gera falso-positivo de
+  deleção — mesma garantia da varredura completa.
+
 ## [1.14.0] - 2026-09-24
 
 ### Adicionado
