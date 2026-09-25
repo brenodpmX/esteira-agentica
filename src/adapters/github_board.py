@@ -795,10 +795,22 @@ class GitHubBoardAdapter(BoardPort):
         return issues
 
     def list_issues_since(self, board_id: str, since: str) -> list[Issue]:
-        """Lista issues modificadas desde `since` usando list_issues + filtro client-side."""
+        """Lista issues modificadas desde `since` usando list_issues + filtro client-side.
+
+        Itens arquivados são SEMPRE incluídos, independente de `since`: eles
+        servem apenas como gatilho de delete-down e o arquivamento pode não
+        bumpar o `updated_at` acima do `since` já registrado (o fechamento que
+        antecede o arquivamento costuma fixar `updated_at == last_board_update`).
+        Sem isso, a poda por-ciclo não dispararia e o item arquivado só seria
+        removido no full sync diário. A poda é idempotente: só afeta ids ainda
+        presentes no snapshot.
+        """
         self._penalty_check()
         all_issues = self.list_issues(board_id)
-        return [i for i in all_issues if i.updated_at and i.updated_at > since]
+        return [
+            i for i in all_issues
+            if getattr(i, "archived", False) or (i.updated_at and i.updated_at > since)
+        ]
 
     def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
         self._penalty_check()

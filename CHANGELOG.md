@@ -13,6 +13,13 @@ Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
   local). As camadas de sync (`sync_remote` incremental por-ciclo e
   `detect_board_changes` na varredura completa) enfileiram `delete-down` quando
   o id ainda existe no snapshot, e ignoram quando já não existe (idempotente).
+- `list_issues_since` (sync incremental por-ciclo) passa a incluir SEMPRE os
+  itens arquivados, independente do `since`. O arquivamento não bumpa o
+  `updated_at` acima do `since` já registrado (o fechamento que o antecede fixa
+  `updated_at == last_board_update`), então o filtro `> since` os excluiria e a
+  poda só ocorreria no full sync diário. Como a poda é idempotente (só afeta ids
+  ainda no snapshot), incluí-los sempre é seguro e torna a poda por-ciclo
+  confiável.
 
 ### Alterado
 

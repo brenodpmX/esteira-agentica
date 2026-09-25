@@ -131,6 +131,32 @@ def test_adapter_list_issues_surfaces_archived_as_trigger(monkeypatch):
     assert by_id["70"].labels == ["x"]
 
 
+def test_adapter_list_issues_since_always_includes_archived(monkeypatch):
+    """Arquivadas passam mesmo com updated_at <= since (gatilho por-ciclo)."""
+    from src.adapters.github_board import GitHubBoardAdapter
+
+    adapter = object.__new__(GitHubBoardAdapter)
+    monkeypatch.setattr(GitHubBoardAdapter, "_tp", "", raising=False)
+    monkeypatch.setattr(adapter, "_penalty_check", lambda: None, raising=False)
+    monkeypatch.setattr(adapter, "list_issues", lambda board_id: [
+        # arquivada com updated_at IGUAL ao since -> não passaria por '> since'
+        Issue(id="69", title="", body="", column="", archived=True,
+              updated_at="2026-09-24T20:00:00Z"),
+        # normal antiga -> filtrada
+        Issue(id="80", title="", body="", column="backlog",
+              updated_at="2026-09-24T19:00:00Z"),
+        # normal recente -> passa
+        Issue(id="81", title="", body="", column="backlog",
+              updated_at="2026-09-24T21:00:00Z"),
+    ], raising=False)
+
+    out = adapter.list_issues_since("story", since="2026-09-24T20:00:00Z")
+    ids = {i.id for i in out}
+    assert "69" in ids   # arquivada incluída apesar de updated_at == since
+    assert "81" in ids   # recente
+    assert "80" not in ids  # antiga, não arquivada -> filtrada
+
+
 # ── detect_board_changes (varredura completa) ─────────────────────────────────
 
 def test_detect_archived_in_snapshot_triggers_delete_down():
