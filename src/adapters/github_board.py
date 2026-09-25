@@ -746,25 +746,10 @@ class GitHubBoardAdapter(BoardPort):
             node = data.get("node") or {}
             page = node.get("items", {})
             for item in page.get("nodes", []):
+                if item.get("isArchived"):
+                    continue
                 content = item.get("content")
                 if not content or not content.get("number"):
-                    continue
-
-                # Itens arquivados NÃO são reinseridos no board local: entram
-                # apenas como gatilho leve de delete-down (id + updated_at, sem
-                # coluna/labels/deps). A camada de sync poda o snapshot quando o
-                # id ainda existe localmente. Isso desacopla a poda da varredura
-                # completa (startup/diária) e usa um sinal explícito de
-                # arquivamento em vez da heurística frágil "ausente do fetch".
-                if item.get("isArchived"):
-                    issues.append(Issue(
-                        id=str(content["number"]),
-                        title=content.get("title", ""),
-                        body="",
-                        column="",
-                        updated_at=content.get("updatedAt", ""),
-                        archived=True,
-                    ))
                     continue
 
                 column = ""
