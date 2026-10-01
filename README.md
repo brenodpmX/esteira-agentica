@@ -898,3 +898,4 @@ penalty indevidamente.
 - [Changelog](CHANGELOG.md)
 - [Runbook de operação Docker](doc/runbook/docker.md)
 - [Runbook de homologação — Branches não mergeadas (#73)](doc/runbook/homologacao-branches-nao-mergeadas.md)
+- [Runbook — Retirada segura de colunas (#305)](doc/runbook/retirada-colunas.md)
