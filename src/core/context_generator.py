@@ -256,9 +256,6 @@ def _section_branches(config: dict) -> list[str]:
         "",
         f"Branch base: `{base}`",
         "",
-        "Ao criar uma branch, use o prefixo correspondente ao flow do board.",
-        "Exemplo: flow `feature` → branch `feature/<id>-<slug>`.",
-        "",
     ]
     return lines
 

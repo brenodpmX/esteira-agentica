@@ -11,7 +11,8 @@ from src.core.version import VERSION
 from src.core.agent import (AgentParams, build_prompt, build_continuation_prompt,
                             build_remediation_prompt, resolve_agent_id,
                             resolve_repo_id, resolve_work_dir)
-from src.core.context_generator import generate_context, ensure_steering_integrity
+from src.core.context_generator import generate_context, ensure_steering_integrity, STEERING_FILE
+from src.core import composition
 from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
@@ -691,7 +692,70 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
         log.warning("Steering", "steering divergente detectado - reescrito antes "
                     "de despachar o agente", event="steering_integrity_rewrite")
 
+    # ── Composição em camadas (#308): medição + gate de instruções obrigatórias ──
+    # Emitimos o registro de medição POR EXECUÇÃO antes de acionar o agente e
+    # verificamos o contrato de carregamento das instruções obrigatórias (o
+    # steering, contexto SEMPRE carregado). Fail-closed (CA-5): sem as instruções
+    # obrigatórias, NÃO acionamos o agente e sinalizamos a falha de composição.
+    record = compose_execution_record(adapter, prompt, continuation_prompt, col, issue)
+    log.info(
+        "Composicao",
+        f"[{board_id}] #{issue['id']} medição da composição",
+        event="composicao_medicao", **record,
+    )
+    if not record["instrucoes_obrigatorias_carregadas"]:
+        log.error(
+            "Composicao",
+            f"[{board_id}] #{issue['id']} composição recusada - instruções "
+            f"obrigatórias não carregadas: {record.get('motivo', '')}",
+            event="composicao_fail_closed",
+            instrucoes_obrigatorias_carregadas=False,
+            motivo=record.get("motivo", ""),
+        )
+        return None
+
     return _dispatch_with_recovery(config, adapter, params, board_id, col_id)
+
+
+def compose_execution_record(adapter, prompt: str, continuation_prompt: str | None,
+                             col: dict, issue: dict) -> dict:
+    """Monta o registro de medição por execução (contrato observável #308).
+
+    Função de orquestração que mede o prompt dinâmico e o contexto SEMPRE
+    carregado (steering), deriva as referências sob demanda da etapa e verifica
+    o contrato de instruções obrigatórias. Não aciona o agente.
+
+    O adapter kiro-cli NÃO expõe contagem de tokens de entrada; logo
+    ``tokens_entrada`` é ``None`` (CA-17), sem falhar.
+    """
+    # Contexto SEMPRE carregado = steering (.kiro/steering/esteira.md).
+    try:
+        steering_text = STEERING_FILE.read_text(encoding="utf-8")
+    except OSError:
+        steering_text = ""
+
+    check = composition.check_required_instructions(STEERING_FILE)
+    refs = composition.on_demand_references(col)
+
+    # Capacidade de tokens do adapter: hoje o kiro-cli não expõe tokens de
+    # entrada antes de executar — degradação suave para None (CA-17).
+    tokens = getattr(adapter, "input_token_count", None)
+    if callable(tokens):
+        try:
+            tokens = tokens(prompt)
+        except Exception:
+            tokens = None
+
+    return composition.compose_measurement(
+        execucao=str(issue.get("id", "")),
+        adapter=getattr(adapter, "name", adapter.__class__.__name__),
+        prompt_dinamico=prompt,
+        contexto_sempre_carregado=steering_text,
+        referencias_sob_demanda_incluidas=refs,
+        instrucoes_obrigatorias_carregadas=check.carregadas,
+        tokens_entrada=tokens if isinstance(tokens, int) else None,
+        motivo=check.motivo,
+    )
 
 
 def _log_execution_outcome(board_id: str, issue_id, result) -> None:

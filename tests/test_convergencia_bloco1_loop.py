@@ -202,6 +202,14 @@ def _drive_main(env: _Env, config: dict, rec: _Recorder,
     rec.remote_true_cycles = set(remote_true_cycles or ())
     rec.local_true_cycles = set(local_true_cycles or ())
 
+    # Contexto obrigatório (steering) presente na raiz do cwd de teste: o gate de
+    # composição (#308) é fail-closed e exige o contexto carregado para acionar o
+    # agente — em runtime real o startup o gera. Como aqui `ensure_steering_
+    # integrity` é mockado, criamos o arquivo explicitamente.
+    steering = env.root / ".kiro" / "steering" / "esteira.md"
+    steering.parent.mkdir(parents=True, exist_ok=True)
+    steering.write_text("---\ninclusion: always\n---\n# contexto\n", encoding="utf-8")
+
     # --- Fakes de descoberta (provider), mas usando a fila/estado REAL ---
     def fake_detect_local_changes(board_id, queue):
         # Primeira chamada de detect_local_all em cada ciclo marca o início do
