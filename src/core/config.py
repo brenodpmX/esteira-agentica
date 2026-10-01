@@ -97,6 +97,42 @@ def _validate_agents(agents: dict):
         raise ConfigError("\n".join(parts))
 
 
+def validate_column_migrations(board_id: str, board_cfg: dict) -> None:
+    """Valida a chave opcional `boards.<board>.column-migrations` (issue #305).
+
+    Validação de FORMA apenas (a validação semântica — destino existir no mesmo
+    board, ser diferente da origem e não ser outra coluna também em retirada no
+    ciclo — é feita em tempo de reconciliação pelo núcleo de decisão).
+
+    Regras (cada violação levanta ConfigError citando o caminho e a entrada):
+    - quando presente, deve ser um mapa (dict);
+    - cada chave (origem) e cada valor (destino) deve ser string não-vazia após
+      remoção de espaços; tipo diferente, nulo ou vazio é rejeitado.
+
+    A ausência da chave é configuração válida (declaração opcional).
+    """
+    path = f"boards.{board_id}.column-migrations"
+    if "column-migrations" not in board_cfg:
+        return
+    migrations = board_cfg["column-migrations"]
+    if not isinstance(migrations, dict):
+        raise ConfigError(
+            f"{path}: deve ser um mapa (origem -> destino) "
+            f"(valor recebido: {migrations!r})"
+        )
+    for source, destination in migrations.items():
+        if not isinstance(source, str) or not source.strip():
+            raise ConfigError(
+                f"{path}: chave de origem inválida — deve ser string não-vazia "
+                f"(entrada: {source!r})"
+            )
+        if not isinstance(destination, str) or not destination.strip():
+            raise ConfigError(
+                f"{path}: destino inválido para '{source.strip()}' — deve ser "
+                f"string não-vazia (entrada: {destination!r})"
+            )
+
+
 def _validate_boards(boards: dict, known_agents: set[str] | None = None):
     known_agents = known_agents or set()
     _require(boards, "platform", "boards")
@@ -118,6 +154,9 @@ def _validate_boards(boards: dict, known_agents: set[str] | None = None):
             continue
         _require(board, "name", f"boards.{board_id}")
         columns = _require(board, "columns", f"boards.{board_id}")
+
+        # Validação de forma do mapa opcional de destinos de migração (#305).
+        validate_column_migrations(board_id, board)
         
         for col_id, col in columns.items():
             _require(col, "name", f"boards.{board_id}.columns.{col_id}")

@@ -134,36 +134,65 @@ def board_startup_sync(config: dict):
     global board
     log.info("Board", "Sincronizando estrutura local")
 
-    # Criar diretórios e sincronizar snapshot local por board
+    # Criar diretórios locais por board/coluna (config desejada). Diretórios de
+    # origens retidas (publicadas remotamente mas fora da config) são preservados
+    # mais abaixo, após a reconciliação remota.
     for board_id in board.board_ids(config):
         board_cfg = config["boards"][board_id]
         columns = board_cfg.get("columns", {})
-
-        # Criar diretórios .pipe/boards/<board_id>/<col_id>
         board_dir = Path(".pipe/boards") / board_id
         board_dir.mkdir(parents=True, exist_ok=True)
         for col_id in columns:
             (board_dir / col_id).mkdir(exist_ok=True)
 
-        # Sincronizar snapshot local (estrutura de colunas)
-        snap = Snapshot(board_id).load()
-        snap.board = {col_id: col["name"] for col_id, col in columns.items()}
-        snap.save()
+    # ── Reconciliação remota ANTES de gravar o snapshot (RF-17 / CA-13) ────────
+    # A estrutura remota é reconciliada primeiro (preparação não destrutiva +
+    # retirada segura de colunas: validar/drenar/confirmar/contrair). Só então o
+    # snapshot é gravado, refletindo a ESTRUTURA REMOTA EFETIVA (incluindo
+    # origens retidas por bloqueio/interrupção). Uma falha de reconciliação NÃO
+    # pode sobrescrever o snapshot anterior.
+    from src.core.column_withdrawal import reconcile_structure
 
-    # Sync online
-    log.info("Board", "Sincronizando boards remotos")
+    log.info("Board", "Reconciliando estrutura remota")
     attempt = 0
     while True:
         try:
             attempt += 1
             if attempt > 1:
-                log.info("Board", f"Sincronizando boards remotos - tentativa {attempt}")
-            board.sync_boards(config)
+                log.info("Board", f"Reconciliando estrutura remota - tentativa {attempt}")
+            reconcile_structure(board, config)
             break
         except PenaltyException as e:
             back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
             log.warning("Board", f"Rate limit - retorna às {back_at}")
             time.sleep(e.wait_seconds)
+
+    # Grava o snapshot com a estrutura remota EFETIVA (não a config desejada
+    # quando divergem por retenção). Preserva diretórios locais de origens
+    # retidas que permanecem publicadas no board remoto.
+    for board_id in board.board_ids(config):
+        board_cfg = config["boards"][board_id]
+        columns = board_cfg.get("columns", {})
+        board_dir = Path(".pipe/boards") / board_id
+
+        try:
+            published = board.remote_columns(board_id)
+        except PenaltyException:
+            published = []
+        # Estrutura efetiva: colunas da config + origens retidas (publicadas mas
+        # fora da config). Nome: usa o da config quando houver, senão o próprio id.
+        effective: dict[str, str] = {
+            col_id: col["name"] for col_id, col in columns.items()
+        }
+        for col_name in published:
+            if col_name not in effective:
+                effective[col_name] = col_name
+                # Preserva o diretório local da origem retida (não apaga).
+                (board_dir / col_name).mkdir(parents=True, exist_ok=True)
+
+        snap = Snapshot(board_id).load()
+        snap.board = effective
+        snap.save()
 
     # Recuperar issues com status pendente (sistema caiu antes de processar)
     queue = ChangeQueue()
