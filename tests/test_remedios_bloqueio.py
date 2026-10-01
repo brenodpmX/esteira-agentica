@@ -248,10 +248,10 @@ def test_remedio2_untracked_targets_skipped():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_remedio3_detected_change_is_fullsync():
+    from src.core.sync import sync_remote
     snap = Snapshot("b").load()
     snap.issues = [{"id": "1", "column": "todo",
                     "updated_at": "2020-01-01T00:00:00Z", "status": "ok"}]
-    snap.last_board_update = "2020-01-01T00:00:00Z"
     snap.save()
 
     class P(FakePort):
@@ -260,7 +260,7 @@ def test_remedio3_detected_change_is_fullsync():
                           updated_at="2030-01-01T00:00:00Z")]
 
     queue = ChangeQueue()
-    Board(P()).detect_board_changes("b", Snapshot("b").load(), queue)
+    sync_remote("b", Board(P()), queue)
 
     it = queue.getNext()
     assert it is not None
@@ -268,6 +268,7 @@ def test_remedio3_detected_change_is_fullsync():
 
 
 def test_remedio3_detected_create_is_fullsync():
+    from src.core.sync import sync_remote
     Snapshot("b").load().save()  # snapshot vazio
 
     class P(FakePort):
@@ -276,7 +277,7 @@ def test_remedio3_detected_create_is_fullsync():
                           updated_at="2030-01-01T00:00:00Z")]
 
     queue = ChangeQueue()
-    Board(P()).detect_board_changes("b", Snapshot("b").load(), queue)
+    sync_remote("b", Board(P()), queue)
 
     it = queue.getNext()
     assert it.id == "2" and it.event == "create-down" and it.fullsync is True

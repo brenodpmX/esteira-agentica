@@ -268,7 +268,7 @@ class TestLoopPrincipalNaoCapturaSnapshotIntegrityError:
 
         monkeypatch.setattr(m, "check_config", lambda: config)
         monkeypatch.setattr(m, "startup", lambda cfg: None)
-        monkeypatch.setattr(m, "board_full_sync", lambda cfg: None)
+        monkeypatch.setattr(m, "board_startup_sync", lambda cfg: None)
         monkeypatch.setattr(m, "get_board_ids", lambda cfg: [BOARD_ID])
         monkeypatch.setattr(m, "detect_local_all", fake_sync_board)
         monkeypatch.setattr(m, "sync_remote_board", fake_sync_board)

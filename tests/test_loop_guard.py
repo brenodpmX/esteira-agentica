@@ -34,7 +34,7 @@ class TestLoopGuard:
              patch("src.__main__.keep_task") as mock_keep, \
              patch("src.__main__.call_agent") as mock_call, \
              patch("src.__main__.sleep_time") as mock_sleep, \
-             patch("src.__main__.board_full_sync"), \
+             patch("src.__main__.board_startup_sync"), \
              patch("src.__main__.check_config", return_value={"sleep": 10, "boards": {}}), \
              patch("src.__main__.startup"), \
              patch("src.__main__.Board"), \
