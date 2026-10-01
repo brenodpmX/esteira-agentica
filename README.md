@@ -33,6 +33,11 @@ log:
   ttl: 10
   level: INFO
 
+retry:                  # opcional: retry inline SEGURO (só p/ DEFINITE_NOT_STARTED,
+  max_tentativas: 3     # ex.: kiro-cli ausente no PATH). NÃO se aplica a resultado
+  backoff_inicial_seg: 30  # ambíguo (UNKNOWN_OUTCOME), que é fail-closed. Ausente =
+  backoff_fator: 2.0    # defaults 3 / 30 / 2.0. Ver "Execução de Agentes".
+
 git:
   repo:
     main: git@github.com:user/repo.git
@@ -47,7 +52,7 @@ agents:
   kiro-cli:
     dev:
       name: engineering
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-5
 
 boards:
   platform: github
@@ -360,6 +365,81 @@ columns:
 Validação (`config.py`): `agent-hub` deve ser um mapa `<valor>: <agente>`,
 a coluna precisa ter um `agent` default, e todo agente referenciado deve existir
 em `agents`.
+
+### Detecção de falha (apenas canais estruturados)
+
+A classificação de uma execução como sucesso ou falha considera **apenas** os
+canais estruturados emitidos pela ferramenta de execução — **nunca** a narrativa
+(texto livre) escrita pelo próprio agente. É o mesmo princípio já adotado na
+detecção de rate limit (não escanear o corpo textual da resposta).
+
+Sinais que afirmam **falha**:
+
+| Canal estruturado | Marcador |
+|-------------------|----------|
+| Código de saída diferente de zero | `[exit-code: N≠0]` |
+| Timeout | `[TIMEOUT]` |
+| Erro interno (falha ao iniciar a ferramenta) | `[ERRO]` |
+| Saída de erro estruturada da própria ferramenta | bloco/marcador de erro |
+
+A **ausência de sinal estruturado é sucesso**: um output vazio, curto ou cuja
+prosa cita uma frase associada a erro (ex.: "Kiro is having trouble responding")
+é classificado como **sucesso**. Isso elimina o falso positivo histórico em que
+a narrativa do agente inflava a métrica de falha. A causa real da falha continua
+sendo extraída dos canais estruturados e registrada no log, com a origem do
+canal (ex.: distinguir `exit-code` de `timeout` de `erro interno`).
+
+### Recuperação de interrupção transitória
+
+A ferramenta de execução pode abortar o turno no meio, de forma transitória,
+quando o streaming da requisição/resposta quebra. Esse aborto é tratado com a
+política de segurança da ADR #217 (fail-closed), **sem** retry inline cego de
+uma execução possivelmente parcial. O resultado da execução é classificado em:
+
+| Classe | Significado | Tratamento |
+|--------|-------------|------------|
+| `sucedido` | sem sinal estruturado de falha | segue o fluxo normal |
+| `falha` | falha definitiva por canal estruturado | registrada; sem retry inline |
+| `UNKNOWN_OUTCOME` | resultado ambíguo (dispatch failure / `InternalServerError` após output parcial / timeout) | **fail-closed**: uma única invocação por entrega, sem backoff; output, request ID, causa e `session_id` preservados; reconciliação e eventual retomada ficam a cargo do loop normal |
+| `DEFINITE_NOT_STARTED` | não-inicialização comprovada mecanicamente (ex.: `kiro-cli` ausente no PATH) | **único** caso de retry inline, com backoff crescente até o limite |
+| `falha persistente` | retry seguro esgotado | encerra sem laço infinito; log registra total de tentativas e última causa |
+
+O retry inline atua **somente** sobre `DEFINITE_NOT_STARTED` — quando há
+evidência estruturada de que o subprocesso **não começou**, situação em que
+nenhum efeito colateral (branch, commit, push, movimentação de coluna) pôde ser
+aplicado. Ausência de tool call em output parcial **não** é evidência de
+não-inicialização: é `UNKNOWN_OUTCOME`. O resultado ambíguo é registrado de
+forma acionável (causa + evidência preservada), distinto de sucesso e de falha
+definitiva.
+
+Os parâmetros do retry seguro vêm da chave opcional `retry` do `pipe.yml`,
+aplicáveis **apenas** a `DEFINITE_NOT_STARTED`:
+
+| Parâmetro | Restrição | Default |
+|-----------|-----------|---------|
+| `retry.max_tentativas` | inteiro > 0 | `3` |
+| `retry.backoff_inicial_seg` | inteiro ≥ 0 | `30` |
+| `retry.backoff_fator` | número ≥ 1.0 | `2.0` |
+
+A ausência da chave `retry` (ou de qualquer subchave) aplica os defaults.
+Valores fora das restrições são rejeitados na validação do `pipe.yml`
+(`ConfigError` nomeando a chave).
+
+> **Fora de escopo desta entrega:** a fronteira idempotente completa da seção 4
+> da ADR #217 (chave estável, journal/outbox durável, interposição real de
+> commit/push/movimento de coluna, verificação de pós-condição) e, por
+> consequência, o retry automático de uma execução possivelmente parcial
+> (`UNKNOWN_OUTCOME`). Ficam para entrega dedicada futura.
+
+### Caminhos de apoio (templates)
+
+Os modelos de documento/issue referenciados pela configuração e pelos contextos
+de agente são resolvidos a partir de uma **fonte única**, `contexts/templates/`
+— tanto os caminhos dirigidos por configuração quanto os derivados por código
+apontam para o mesmo diretório. A resolução é feita **por item**: um caminho
+inexistente é sinalizado isoladamente e **não cancela** as demais chamadas de
+ferramenta válidas do lote, evitando o desperdício de turnos e crédito que
+ocorria quando um único caminho ausente invalidava o lote inteiro.
 
 ### Log de execução
 

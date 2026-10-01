@@ -1,6 +1,7 @@
 """Config core - carrega e valida pipe.yml."""
 
 from pathlib import Path
+from dataclasses import dataclass
 import os
 import yaml
 
@@ -223,6 +224,78 @@ def resolve_max_attempts(config: dict) -> int:
     return sync_cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
 
 
+# ── retry.* (issue #303) ──────────────────────────────────────────────────────
+# Parâmetros do retry inline SEGURO, aplicáveis SOMENTE ao caso
+# DEFINITE_NOT_STARTED (não-inicialização comprovada mecanicamente, ex.:
+# kiro-cli ausente no PATH). NÃO se aplicam ao UNKNOWN_OUTCOME (fail-closed, sem
+# retry inline — ver ADR doc/architecture/retry-kiro-cli/idempotencia.md).
+DEFAULT_RETRY_MAX_TENTATIVAS = 3
+DEFAULT_RETRY_BACKOFF_INICIAL_SEG = 30
+DEFAULT_RETRY_BACKOFF_FATOR = 2.0
+
+
+@dataclass
+class RetryConfig:
+    """Configuração resolvida do retry seguro (DEFINITE_NOT_STARTED)."""
+    max_tentativas: int = DEFAULT_RETRY_MAX_TENTATIVAS
+    backoff_inicial_seg: int = DEFAULT_RETRY_BACKOFF_INICIAL_SEG
+    backoff_fator: float = DEFAULT_RETRY_BACKOFF_FATOR
+
+
+def validate_retry(config: dict) -> None:
+    """Valida a chave opcional `retry` do pipe.yml (issue #303).
+
+    Restrições (cada violação levanta ConfigError nomeando a chave):
+    - `retry.max_tentativas`: inteiro > 0 (rejeita 0, negativos, bool, float, str);
+    - `retry.backoff_inicial_seg`: inteiro >= 0 (rejeita negativos, bool, float, str);
+    - `retry.backoff_fator`: número >= 1.0 (rejeita < 1.0, bool, str).
+
+    Ausência da chave `retry` (ou de qualquer subchave) é válida: os defaults
+    são aplicados por `resolve_retry`. `bool` é rejeitado ANTES de int/number
+    (True/False são instâncias de int em Python).
+    """
+    retry_cfg = config.get("retry") or {}
+
+    if "max_tentativas" in retry_cfg:
+        value = retry_cfg["max_tentativas"]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ConfigError(
+                f"retry.max_tentativas: deve ser inteiro > 0 (valor recebido: {value!r})"
+            )
+
+    if "backoff_inicial_seg" in retry_cfg:
+        value = retry_cfg["backoff_inicial_seg"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ConfigError(
+                f"retry.backoff_inicial_seg: deve ser inteiro >= 0 "
+                f"(valor recebido: {value!r})"
+            )
+
+    if "backoff_fator" in retry_cfg:
+        value = retry_cfg["backoff_fator"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 1.0:
+            raise ConfigError(
+                f"retry.backoff_fator: deve ser número >= 1.0 "
+                f"(valor recebido: {value!r})"
+            )
+
+
+def resolve_retry(config: dict) -> RetryConfig:
+    """Resolve os parâmetros `retry.*` com defaults seguros.
+
+    Default quando a chave (ou subchave) está ausente:
+    `max_tentativas=3`, `backoff_inicial_seg=30`, `backoff_fator=2.0`.
+    Não valida — assume que `validate_retry` já rodou em `check_config`.
+    """
+    retry_cfg = config.get("retry") or {}
+    return RetryConfig(
+        max_tentativas=retry_cfg.get("max_tentativas", DEFAULT_RETRY_MAX_TENTATIVAS),
+        backoff_inicial_seg=retry_cfg.get(
+            "backoff_inicial_seg", DEFAULT_RETRY_BACKOFF_INICIAL_SEG),
+        backoff_fator=retry_cfg.get("backoff_fator", DEFAULT_RETRY_BACKOFF_FATOR),
+    )
+
+
 def check_config() -> dict:
     """Valida e retorna configuração do pipe.yml."""
     _validate_env()
@@ -243,6 +316,7 @@ def check_config() -> dict:
     _validate_sleep(config["sleep"])
 
     validate_max_attempts(config)
+    validate_retry(config)
 
     project = _require(config, "project", "pipe.yml")
     _validate_project(project)

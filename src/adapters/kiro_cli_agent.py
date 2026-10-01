@@ -10,6 +10,9 @@ from src.core.agent import AgentPort, AgentParams
 from src.core.log import log
 from src.core.session import SessionIndex
 from src.core.context_generator import STEERING_FILE
+from src.core.execution import (
+    ExecutionResult, SUCEDIDO, FALHA, UNKNOWN_OUTCOME, DEFINITE_NOT_STARTED,
+)
 
 _tz = timezone(timedelta(hours=-3))
 
@@ -22,11 +25,43 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\].*?(?:\x07|\x1b\\)|\x1b[@-Z\\-
 # UUID de sessão do kiro-cli (formato canônico 8-4-4-4-12).
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
+# Request ID do servidor (preservado para auditoria — ADR #217 §2).
+_REQUEST_ID = re.compile(r"[Rr]equest[ _][Ii][Dd]:\s*([^\s|]+)")
+
+# Marcador emitido por _run quando o subprocesso NÃO iniciou (FileNotFoundError:
+# kiro-cli ausente no PATH). É a ÚNICA evidência estrutural de não-inicialização
+# comprovada mecanicamente (DEFINITE_NOT_STARTED) — único caso com retry inline.
+_NOT_STARTED_MARKER = "[ERRO] kiro-cli não encontrado no PATH"
+
+# Trechos que indicam interrupção transitória AMBÍGUA (UNKNOWN_OUTCOME): o
+# subprocesso iniciou e pode ter aplicado efeitos antes de abortar. Fail-closed
+# (sem retry inline). O timeout entra por marcador próprio (ver _classify).
+_AMBIGUOUS_HINTS = (
+    "dispatch failure",
+    "InternalServerError",
+)
+
 
 class KiroCliAgent(AgentPort):
     """Adapter de agente para kiro-cli."""
 
-    def execute(self, params: AgentParams) -> None:
+    def execute(self, params: AgentParams) -> ExecutionResult:
+        """Executa o agente e retorna o resultado CLASSIFICADO (issue #303).
+
+        A classificação segue a ADR #217 (máquina de estados da seção 5):
+        SUCEDIDO / FALHA / UNKNOWN_OUTCOME (ambíguo, fail-closed) /
+        DEFINITE_NOT_STARTED (não-inicialização comprovada — único caso com
+        retry inline, decidido por call_agent).
+
+        Observabilidade (CT-13): toda falha/ambiguidade registra no log a causa
+        real E a origem (canal estruturado) — nunca a narrativa do agente. O
+        UNKNOWN_OUTCOME é logado de forma acionável, distinto de sucesso e de
+        falha definitiva, com as evidências preservadas (output/request
+        ID/causa/session_id).
+
+        Mantém a interface antiga (callers que ignoram o retorno seguem válidos)
+        e o contrato de logging da suíte congelada.
+        """
         log_path = self._create_log(params)
         title_part = f" {params.title}" if params.title else ""
         col_part = f" [{params.col_name}]" if params.col_name else ""
@@ -40,23 +75,118 @@ class KiroCliAgent(AgentPort):
                 )
             output = self._run(params, work_dir)
             self._append_log(log_path, self._strip_ansi(output) + "\n")
-            # O exit-code do kiro-cli nem sempre reflete a falha: erros de
-            # modelo/servidor voltam como texto no output com exit 0. Sem esta
-            # análise, uma execução quebrada era logada como "concluída".
-            error = self._detect_failure(output)
-            if error:
-                log.error("Kiro", f"[{params.board_id}] #{params.issue_id} "
-                          f"falhou: {error}", log=str(log_path))
-            else:
-                log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "
-                         f"execução concluída: {self._last_meaningful_line(output)}",
-                         log=str(log_path))
+
+            result = self._classify(params, output)
+            self._log_outcome(params, result, log_path)
+            return result
         except Exception as e:
             self._append_log(log_path, f"\n**ERRO**: {e}\n")
             log.error("Kiro", f"[{params.board_id}] #{params.issue_id} "
                       f"erro: {self._last_meaningful_line(str(e))}",
                       log=str(log_path))
             raise
+
+    def _classify(self, params: AgentParams, output: str) -> ExecutionResult:
+        """Classifica o output em uma das classes da ADR #217 (seção 5).
+
+        Ordem de precedência:
+        1. DEFINITE_NOT_STARTED — marcador de não-inicialização comprovada
+           (kiro-cli ausente no PATH): nenhum efeito pôde ter sido aplicado.
+        2. UNKNOWN_OUTCOME — interrupção transitória ambígua: `[TIMEOUT]` ou
+           `dispatch failure`/`InternalServerError` (o subprocesso iniciou e
+           pode ter aplicado efeitos). Fail-closed.
+        3. FALHA — demais falhas por canal estruturado (exit-code != 0, saída
+           de erro). Falha definitiva.
+        4. SUCEDIDO — nenhum sinal estruturado de falha.
+        """
+        clean = self._strip_ansi(output)
+        session_id = self._current_session(params)
+        request_id = self._extract_request_id(clean)
+
+        # 1. Não-inicialização comprovada mecanicamente.
+        if _NOT_STARTED_MARKER in clean:
+            return ExecutionResult(
+                classe=DEFINITE_NOT_STARTED, output=output,
+                causa=_NOT_STARTED_MARKER, origem="erro interno",
+                session_id=session_id, request_id=request_id,
+            )
+
+        error = self._detect_failure(output)
+        if error is None:
+            return ExecutionResult(
+                classe=SUCEDIDO, output=output,
+                session_id=session_id, request_id=request_id,
+            )
+
+        origem = self._structured_channel(output)
+
+        # 2. Interrupção transitória ambígua (fail-closed).
+        if "[TIMEOUT]" in clean:
+            return ExecutionResult(
+                classe=UNKNOWN_OUTCOME, output=output, causa=error,
+                origem="timeout", session_id=session_id, request_id=request_id,
+            )
+        if any(hint in clean for hint in _AMBIGUOUS_HINTS):
+            return ExecutionResult(
+                classe=UNKNOWN_OUTCOME, output=output, causa=error,
+                origem="dispatch failure", session_id=session_id,
+                request_id=request_id,
+            )
+
+        # 3. Falha definitiva por canal estruturado.
+        return ExecutionResult(
+            classe=FALHA, output=output, causa=error, origem=origem,
+            session_id=session_id, request_id=request_id,
+        )
+
+    def _log_outcome(self, params: AgentParams, result: ExecutionResult,
+                     log_path: Path) -> None:
+        """Observabilidade (CT-13): registra o resultado com causa + origem.
+
+        - SUCEDIDO: info de conclusão (contrato da suíte congelada preservado).
+        - FALHA: error com causa real + origem do canal estruturado.
+        - UNKNOWN_OUTCOME: error ACIONÁVEL, distinto de sucesso e de falha
+          definitiva, com evidências preservadas (request ID/session_id).
+        - DEFINITE_NOT_STARTED: error com causa + origem (o retry é decidido
+          por call_agent, que loga as tentativas).
+        """
+        prefix = f"[{params.board_id}] #{params.issue_id}"
+        if result.classe == SUCEDIDO:
+            log.info("Kiro", f"{prefix} execução concluída: "
+                     f"{self._last_meaningful_line(result.output)}",
+                     log=str(log_path))
+            return
+        if result.classe == UNKNOWN_OUTCOME:
+            log.error(
+                "Kiro",
+                f"{prefix} resultado ambíguo (UNKNOWN_OUTCOME) - fail-closed: "
+                f"{result.causa}",
+                log=str(log_path), classe=UNKNOWN_OUTCOME, origem=result.origem,
+                causa=result.causa, request_id=result.request_id,
+                session_id=result.session_id,
+            )
+            return
+        # FALHA e DEFINITE_NOT_STARTED.
+        log.error("Kiro", f"{prefix} falhou: {result.causa}",
+                  log=str(log_path), classe=result.classe, origem=result.origem,
+                  causa=result.causa)
+
+    def _extract_request_id(self, clean: str) -> str | None:
+        """Extrai o request ID do servidor do output, se presente."""
+        m = _REQUEST_ID.search(clean)
+        return m.group(1) if m else None
+
+    def _current_session(self, params: AgentParams) -> str | None:
+        """Lê o session_id persistido para (issue, coluna), se houver.
+
+        _run grava no índice após a chamada; aqui apenas lemos para preservar
+        a evidência no ExecutionResult (ADR #217 §2). Falhas de leitura do
+        índice não devem derrubar a classificação.
+        """
+        try:
+            return SessionIndex().get(params.issue_id, params.col_id)
+        except Exception:
+            return None
 
     def _run(self, params: AgentParams, work_dir: Path) -> str:
         """Executa kiro-cli chat em modo headless DENTRO de repo/<repo_id>.
@@ -207,49 +337,93 @@ class KiroCliAgent(AgentPort):
         lines = [l.strip() for l in clean.strip().splitlines() if l.strip()]
         return lines[-1] if lines else "(sem output)"
 
-    # Marcadores que indicam que a execução do kiro-cli falhou.
-    _FAILURE_MARKERS = (
-        "[exit-code:",
-        "[TIMEOUT]",
-        "[ERRO]",
-        "Kiro is having trouble responding",
+    # Marcadores ESTRUTURAIS da ferramenta de execução (kiro-cli / adapter) que
+    # classificam uma execução como falha. #303: a classificação considera
+    # APENAS canais estruturados — a narrativa (texto livre) do agente NUNCA
+    # classifica, pelo mesmo motivo que a detecção de rate limit não escaneia o
+    # corpo textual da resposta (evita falso positivo quando o agente apenas
+    # CITA um termo de erro na sua prosa). Cada marcador é emitido pelo próprio
+    # _run (exit-code/timeout/erro interno) ou pela ferramenta como seção de
+    # erro reconhecível por marcador — nunca inferido de prosa.
+    #
+    # Mapeia marcador estrutural -> origem (canal) para observabilidade: o log
+    # registra qual canal classificou a falha (CT-13), nunca a narrativa.
+    _STRUCTURED_MARKERS: tuple[tuple[str, str], ...] = (
+        ("[TIMEOUT]", "timeout"),
+        ("[ERRO]", "erro interno"),
+        ("[exit-code:", "exit-code"),
     )
 
-    # Trechos que identificam a linha do erro real dentro do output.
+    # Trechos que, QUANDO já há sinal estrutural presente, ajudam a extrair a
+    # linha com a causa real dentro do output (não disparam falha sozinhos).
     _ERROR_HINTS = (
-        "Kiro is having trouble responding",
+        "[TIMEOUT]",
+        "[ERRO]",
+        "[exit-code:",
+        "dispatch failure",
+        "InternalServerError",
         "temporarily unavailable",
         "unavailable",
-        "InternalServerError",
+        "Kiro is having trouble responding",
         "Request ID:",
         "request_id:",
         "error:",
         "Error:",
         "ERRO",
         "Location:",
-        "[exit-code:",
-        "[TIMEOUT]",
     )
 
+    def _structured_channel(self, output: str) -> str | None:
+        """Retorna a ORIGEM (canal estruturado) que classifica a falha, ou None.
+
+        Só considera marcadores estruturais (_STRUCTURED_MARKERS). A narrativa
+        do agente nunca é origem. Usado pela observabilidade (CT-13) e por
+        _detect_failure. Para exit-code, só classifica falha se N != 0.
+        """
+        clean = self._strip_ansi(output)
+        for marker, origin in self._STRUCTURED_MARKERS:
+            if marker not in clean:
+                continue
+            if marker == "[exit-code:":
+                # Só é falha se o código for diferente de zero.
+                if not self._nonzero_exit_code(clean):
+                    continue
+            return origin
+        return None
+
+    @staticmethod
+    def _nonzero_exit_code(clean: str) -> bool:
+        """True se houver um marcador [exit-code: N] com N != 0."""
+        for m in re.finditer(r"\[exit-code:\s*(-?\d+)\]", clean):
+            if int(m.group(1)) != 0:
+                return True
+        return False
+
     def _detect_failure(self, output: str) -> str | None:
-        """Detecta falha na execução do kiro-cli e extrai o erro real.
+        """Detecta falha na execução do kiro-cli SÓ por canais estruturados.
 
-        O kiro-cli nem sempre sinaliza falha só pelo exit-code: erros de
-        modelo/servidor aparecem como blocos de texto ('Kiro is having trouble
-        responding...', 'InternalServerError', 'The model ... is temporarily
-        unavailable', 'error: ...'). Sem isso, o log de conclusão mostrava
-        apenas a última linha (ex.: 'Request ID: ...'), escondendo a causa.
+        #303: a classificação considera apenas os canais estruturados da
+        ferramenta — código de saída != 0 (`[exit-code: N]`), marcador de
+        timeout (`[TIMEOUT]`), marcador de erro interno (`[ERRO]`) e saída de
+        erro estruturada reconhecível por marcador. A narrativa (texto livre)
+        do agente NUNCA classifica: um agente pode legitimamente CITAR na sua
+        prosa frases como "Kiro is having trouble responding" ou
+        "InternalServerError" numa execução bem-sucedida — isso não é falha.
+        (Mesmo princípio da detecção de rate limit, que não escaneia o corpo.)
 
-        Retorna uma mensagem de uma linha com o erro real (linhas relevantes
-        unidas por ' | '), ou None se a execução foi bem-sucedida. O output
-        completo continua gravado no arquivo de log da issue.
+        Ausência de sinal estruturado = SUCESSO (retorna None).
+
+        Retorna uma mensagem de uma linha com a causa real extraída dos canais
+        estruturados (linhas relevantes unidas por ' | '), ou None se não houve
+        falha. O output completo continua gravado no arquivo de log da issue.
         """
         clean = self._strip_ansi(output)
         non_empty = [l.strip() for l in clean.splitlines() if l.strip()]
         if not non_empty:
             return None
 
-        if not any(m in clean for m in self._FAILURE_MARKERS):
+        # Só classifica falha quando há um canal estruturado presente.
+        if self._structured_channel(output) is None:
             return None
 
         relevant: list[str] = []

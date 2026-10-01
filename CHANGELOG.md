@@ -2,6 +2,73 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.16.0] - 2026-10-01
+
+### Adicionado
+
+- **Classificação de resultado de execução por canais estruturados** (issue
+  #303). Novo módulo `src/core/execution.py` com `ExecutionResult` e as classes
+  de resultado alinhadas à ADR #217 (`doc/architecture/retry-kiro-cli/`):
+  `SUCEDIDO`, `FALHA`, `UNKNOWN_OUTCOME`, `DEFINITE_NOT_STARTED` e
+  `FALHA_PERSISTENTE`. Cada resultado preserva output, causa, origem do canal,
+  `request_id` e `session_id` para auditoria e continuidade.
+- **Tratamento seguro de interrupção transitória** no despacho da execução
+  (`src/__main__.py::call_agent` via `_dispatch_with_recovery`), conforme a ADR
+  #217 (política *fail-closed*, sem a fronteira idempotente da seção 4):
+  - `UNKNOWN_OUTCOME` (dispatch failure / `InternalServerError` após output
+    parcial / timeout): **uma única invocação por entrega**, sem retry inline
+    nem backoff; evidências preservadas; reconciliação e eventual retomada de
+    sessão ficam a cargo do loop normal;
+  - `DEFINITE_NOT_STARTED` (não-inicialização comprovada mecanicamente, ex.:
+    `kiro-cli` ausente no PATH): **único** caso de retry inline, com backoff
+    crescente até o limite; esgotado o limite, o resultado é falha persistente,
+    sem laço infinito.
+- **Parâmetros de configuração `retry.*`** (opcionais) no `pipe.yml`, aplicáveis
+  **apenas** ao caso seguro `DEFINITE_NOT_STARTED` (`src/core/config.py`:
+  `RetryConfig`, `validate_retry`, `resolve_retry`): `retry.max_tentativas`
+  (inteiro > 0, default 3), `retry.backoff_inicial_seg` (inteiro ≥ 0, default
+  30) e `retry.backoff_fator` (número ≥ 1.0, default 2.0). Ausência da chave
+  aplica os defaults; valores fora das restrições são rejeitados por
+  `ConfigError` nomeando a chave.
+- **Resolução dos caminhos de apoio por item** (issue #303). Novo módulo
+  `src/core/support_paths.py`: `resolve_support_paths` separa caminhos
+  existentes de ausentes **sem cancelar o lote** — um template inexistente
+  deixa de cancelar as demais chamadas de ferramenta válidas. Config e código
+  passam a apontar para a mesma fonte única `contexts/templates/`.
+
+### Alterado
+
+- **Detecção de falha deixa de escanear a narrativa do agente**
+  (`src/adapters/kiro_cli_agent.py::_detect_failure`). A classificação de
+  sucesso/falha passa a considerar **apenas** canais estruturados da ferramenta
+  de execução (`[exit-code: N≠0]`, `[TIMEOUT]`, `[ERRO]`, saída de erro
+  estruturada), alinhando-se ao mesmo princípio já adotado na detecção de rate
+  limit. Um output cuja prosa cita uma frase de erro (ex.: "Kiro is having
+  trouble responding"), mas sem sinal estruturado, agora é classificado como
+  **sucesso** — fim do falso positivo histórico que inflava a métrica de falha.
+  A ausência de sinal estruturado é sucesso.
+- **Contexto do sistema sempre derivado da configuração vigente**
+  (`src/core/context_generator.py`). O artefato legado
+  `.kiro/agents/pipe_context.json` deixa de ser gerado e é removido em
+  `generate_context`/`ensure_steering_integrity`, para que nenhum artefato
+  congelado com tabelas vazias tenha precedência sobre o contexto derivado da
+  config nem gere aviso de conflito.
+
+### Corrigido
+
+- Referência de exemplo a identificador de modelo inexistente no `README.md`
+  (`model: claude-sonnet-4-20250514`) corrigida para o válido
+  `claude-sonnet-5`.
+
+### Detalhes
+
+- A fronteira idempotente completa da seção 4 da ADR #217 (chave estável de
+  operação, journal/outbox durável, interposição real de commit/push/movimento
+  de coluna, verificação de pós-condição) e, por consequência, o retry
+  automático de execução possivelmente parcial (`UNKNOWN_OUTCOME`) **não** fazem
+  parte desta entrega — ficam para entrega dedicada futura, pois exigiriam
+  redefinir o modelo de execução e o mecanismo de auto-aprovação de ferramentas.
+
 ## [1.15.0] - 2026-10-01
 
 ### Alterado
