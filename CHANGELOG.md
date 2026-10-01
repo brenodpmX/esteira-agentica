@@ -2,6 +2,66 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.19.0] - 2026-10-01
+
+### Adicionado
+
+- **Limitador de reexecuções de agente por contexto** (issue #306). Mecanismo
+  **opt-in** que conta toda execução entregue ao agente por contexto
+  `(board, coluna, issue)` — no instante da entrega, independentemente do
+  resultado — e, quando o operador configura uma política de limite por janela
+  de tempo, **impede a execução excedente antes de ela começar**, marca a issue
+  com `need_human`, publica um comentário acionável idempotente e **zera a
+  franquia** do contexto. Complementa o cooldown existente
+  (`boards.rerun_cooldown`): enquanto o cooldown apenas **espaça** reexecuções
+  (sem teto), o limitador impõe um **teto** e **pede intervenção humana**.
+  - Novo módulo `src/core/agent_circuit_break.py` como **fonte única** da
+    contagem (sem contador paralelo): identidade `(board, coluna, issue)` com
+    reinício da contagem ao mudar de coluna; janela deslizante contando apenas
+    ocorrências com idade **estritamente menor que `T`** (borda fechada em `T`);
+    máquina de estados do bloqueio na ordem obrigatória (persistir evento +
+    esvaziar ocorrências → aplicar `need_human` → publicar comentário
+    idempotente via marcador oculto `<!-- agent-circuit-break:<event_id> -->` →
+    reconciliar); reinício da franquia no bloqueio e retomada humana ao remover
+    `need_human`, sem resíduo da janela anterior.
+  - **Configuração opcional na raiz** do `pipe.yml` (fora do mapa `boards`):
+    `agent_circuit_break.executions` (`N`, inteiro `>= 1`) e
+    `agent_circuit_break.window` (`T`, segundos, inteiro `>= 1`), exigidos
+    juntos; a ausência do bloco mantém a política inativa **sem** desligar a
+    contagem interna. Validada em `src/core/config.py::check_config`
+    (`validate_agent_circuit_break`) antes de qualquer alteração de estado,
+    rejeitando campo faltante, booleano, valor `< 1`, campo desconhecido ou
+    bloco dentro de `boards`, com `ConfigError` citando o caminho do campo.
+  - **Persistência atômica e protegida** em `.pipe/agentCircuitBreak.json`
+    (`tempfile` + `fsync` + `os.replace`), resistente a reinício;
+    **fail-closed** em estado corrompido/ilegível e em falha de escrita com a
+    política ativa. O arquivo entra em `PROTECTED_PATHS`
+    (`src/core/agent.py`) — seu conteúdo e caminho nunca são expostos ao agente,
+    a comentários ou a logs.
+  - **Gate de capacidade do adaptador na inicialização**: com a política ativa,
+    um adaptador de board sem capacidade real de aplicar label faz a esteira
+    **falhar na inicialização**, em vez de aparentar sinalização sem efeito.
+  - **Isolamento:** uma issue bloqueada não trava a fila — `keep_task` já pula
+    issues com `need_human`, de modo que as demais seguem sendo processadas.
+
+### Alterado
+
+- **`src/__main__.py::call_agent`** passa a admitir a execução pelo limitador
+  (`_admit_circuit_break`) **antes** de `_dispatch_with_recovery`, no mesmo
+  padrão fail-closed do gate de composição (#308); `main` ganha o gate de
+  capacidade de label após `check_access` e antes de `board_startup_sync`.
+
+### Documentação
+
+- Novo runbook do operador
+  [`doc/runbook/limitador-reexecucoes-agente.md`](doc/runbook/limitador-reexecucoes-agente.md),
+  com a distinção inequívoca **cooldown × limitador**, formato da configuração,
+  semântica da janela, o que acontece em um bloqueio, como retomar uma issue e
+  os eventos de observabilidade.
+- `README.md` ganhou a seção "Limitador de reexecuções por contexto
+  (`agent_circuit_break`)" e registrou `.pipe/agentCircuitBreak.json` na tabela
+  de arquivos protegidos (`PROTECTED_PATHS`).
+
 ## [1.18.0] - 2026-10-01
 
 ### Adicionado
