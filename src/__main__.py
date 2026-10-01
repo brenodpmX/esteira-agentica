@@ -665,10 +665,121 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
         log.warning("Steering", "steering divergente detectado - reescrito antes "
                     "de despachar o agente", event="steering_integrity_rewrite")
 
+    return _dispatch_with_recovery(config, adapter, params, board_id, col_id)
+
+
+def _log_execution_outcome(board_id: str, issue_id, result) -> None:
+    """Observabilidade (CT-13) no nível do orquestrador.
+
+    Registra, de forma acionável, o resultado classificado que a entrega vai
+    devolver ao loop — com a CAUSA real e a ORIGEM (canal estruturado), nunca a
+    narrativa do agente. Distingue o UNKNOWN_OUTCOME (ambíguo, fail-closed) de
+    sucesso e de falha definitiva. É complementar ao log do adapter: garante a
+    evidência mesmo que o resultado venha de outro caminho (ex.: adapter fake
+    em teste, ou futura reclassificação no core).
+    """
+    from src.core import execution
+
+    prefix = f"[{board_id}] #{issue_id}"
+    if result.classe == execution.SUCEDIDO:
+        return  # sucesso já é logado pelo adapter (contrato da suíte congelada)
+    if result.classe == execution.UNKNOWN_OUTCOME:
+        log.error(
+            "Kiro",
+            f"{prefix} resultado ambíguo (UNKNOWN_OUTCOME) - fail-closed, "
+            f"reconciliação pelo loop normal: {result.causa}",
+            event="unknown_outcome", classe=execution.UNKNOWN_OUTCOME,
+            origem=result.origem, causa=result.causa,
+            request_id=result.request_id, session_id=result.session_id,
+        )
+        return
+    # FALHA (definitiva por canal estruturado).
+    log.error(
+        "Kiro", f"{prefix} falhou ({result.classe}): {result.causa}",
+        event="falha_classificada", classe=result.classe,
+        origem=result.origem, causa=result.causa,
+    )
+
+
+def _dispatch_with_recovery(config: dict, adapter, params, board_id: str,
+                            col_id: str):
+    """Despacha o agente com recuperação segura de interrupção (issue #303).
+
+    Alinhado à ADR #217 (sem a fronteira idempotente da seção 4):
+
+    - `UNKNOWN_OUTCOME` (dispatch failure / InternalServerError após output
+      parcial / timeout): FAIL-CLOSED — uma ÚNICA invocação por entrega, SEM
+      retry inline nem backoff. Evidências (output/request ID/causa/session_id)
+      ficam preservadas no ExecutionResult; a reconciliação e a eventual
+      retomada via --resume-id ficam a cargo do loop normal.
+    - `DEFINITE_NOT_STARTED` (não-inicialização comprovada mecanicamente, ex.:
+      kiro-cli ausente no PATH): ÚNICO caso de retry inline. Reexecuta com
+      backoff crescente (backoff_inicial_seg * backoff_fator^n) até sucesso ou
+      até `max_tentativas` invocações; esgotado o limite, resultado = FALHA
+      PERSISTENTE e o log registra o total de tentativas e a última causa.
+    - Demais classes (SUCEDIDO / FALHA): retornadas na primeira invocação.
+
+    Retorna o ExecutionResult final da entrega.
+    """
     from src.core.agent_guard import AgentGuard
-    with AgentGuard(board_id, col_id):
-        with SnapshotGuard(board_id):
-            adapter.execute(params)
+    from src.core import execution
+    from src.core.config import resolve_retry
+
+    retry = resolve_retry(config)
+    prefix = f"[{board_id}] #{params.issue_id}"
+
+    result = None
+    ultima_causa = None
+    for tentativa in range(1, retry.max_tentativas + 1):
+        with AgentGuard(board_id, col_id):
+            with SnapshotGuard(board_id):
+                result = adapter.execute(params)
+
+        # Compatibilidade: um adapter que ainda honra o contrato antigo
+        # (execute -> None) não é classificável — tratamos como execução
+        # concluída (sem retry inline), preservando o comportamento anterior.
+        if result is None:
+            return None
+
+        result.tentativas = tentativa
+        ultima_causa = result.causa
+
+        # Retry inline SOMENTE para não-inicialização comprovada.
+        if result.classe != execution.DEFINITE_NOT_STARTED:
+            _log_execution_outcome(board_id, params.issue_id, result)
+            return result
+
+        # Última tentativa: não dorme, encerra em falha persistente.
+        if tentativa >= retry.max_tentativas:
+            break
+
+        espera = retry.backoff_inicial_seg * (retry.backoff_fator ** (tentativa - 1))
+        log.warning(
+            "Kiro",
+            f"{prefix} não-inicialização (DEFINITE_NOT_STARTED) - "
+            f"retry {tentativa + 1}/{retry.max_tentativas} em {int(espera)}s: "
+            f"{result.causa}",
+            event="retry_definite_not_started", tentativa=tentativa,
+            backoff=int(espera), causa=result.causa, origem=result.origem,
+        )
+        time.sleep(int(espera))
+
+    # Esgotou o limite de tentativas em DEFINITE_NOT_STARTED → falha persistente.
+    log.error(
+        "Kiro",
+        f"{prefix} falha persistente após {retry.max_tentativas} tentativa(s) - "
+        f"última causa: {ultima_causa}",
+        event="retry_exhausted", tentativas=retry.max_tentativas,
+        ultima_causa=ultima_causa,
+    )
+    return execution.ExecutionResult(
+        classe=execution.FALHA_PERSISTENTE,
+        output=result.output if result else "",
+        causa=ultima_causa, origem=result.origem if result else None,
+        session_id=result.session_id if result else None,
+        request_id=result.request_id if result else None,
+        tentativas=retry.max_tentativas,
+    )
 
 
 def sleep_time(config: dict):

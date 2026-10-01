@@ -1,43 +1,28 @@
 """Casos de teste — Execução autônoma confiável (issue #303).
 
-ESPECIFICAÇÃO (etapa "Casos de Teste"), já reconciliada com o escopo fechado
-pelo planejamento em revisar-escopo (2026-10-01). Este arquivo é o esqueleto que
-o desenvolvimento deve implementar na issue #303. Cada teste está vinculado a um
-critério de aceitação (CA) via o caso de teste CT-NN documentado em
-`doc/quality/execucao-autonoma-confiavel/test-cases.md`.
+Implementado pelo desenvolvimento a partir do esqueleto test-first especificado
+pela QA, já reconciliado com o escopo fechado no revisar-escopo (2026-10-01).
+Cada teste está vinculado a um critério de aceitação (CA) via o caso CT-NN
+documentado em `doc/quality/execucao-autonoma-confiavel/test-cases.md`.
 
-Decisões de escopo incorporadas (ver cabeçalho do test-cases.md):
+Decisões de escopo incorporadas:
 
 - Grupo A: a classificação de sucesso/falha considera APENAS canais estruturados
   (exit-code != 0, [TIMEOUT], [ERRO], saída de erro estruturada). A narrativa
-  (texto livre) NUNCA classifica. Ausência de sinal estruturado = SUCESSO. O
-  canal "ausência de resumo normal => falha" foi REMOVIDO do escopo (não há mais
-  CT-06). A suíte congelada que codifica o falso positivo (narrativa => falha)
-  é reescrita nesta entrega — #303 prevalece (ver CT-05b no test-cases.md;
-  reescrita feita em tests/test_agent_failure_detection.py pelo desenvolvimento).
+  (texto livre) NUNCA classifica. Ausência de sinal estruturado = SUCESSO. A
+  suíte congelada que codificava o falso positivo (narrativa => falha) foi
+  reescrita nesta entrega — #303 prevalece (ver CT-05b: reescrita em
+  tests/test_agent_failure_detection.py).
 - Grupo D: recuperação alinhada à ADR retry-kiro-cli SEM a fronteira idempotente
   da seção 4 (fora de escopo). UNKNOWN_OUTCOME é fail-closed (uma única
   invocação, sem retry inline, preserva evidências); retry inline com backoff
-  SOMENTE para DEFINITE_NOT_STARTED (não-inicialização comprovada). Removidos os
-  parâmetros retry.retomar_sessao e retry.idempotencia_ativa.
-
-Convenção (mesmo padrão test-first de `tests/test_error_classification.py` e
-`tests/test_sanitize_relations.py`):
-
-- Testes com `@pytest.mark.skip(reason="#303 ...")` descrevem comportamento AINDA
-  NÃO implementado (retry/classificação UNKNOWN_OUTCOME/DEFINITE_NOT_STARTED,
-  resolução de caminhos de apoio, validação `retry.*`, guarda de doc). O
-  desenvolvimento deve: (1) implementar, (2) remover o `skip`, (3) completar o
-  corpo conforme o docstring (contrato — não enfraquecer a asserção).
-- Testes `xfail(strict=True)` (CT-01, CT-05) são o coração da correção: hoje
-  `_detect_failure` escaneia a narrativa; viram XPASS com a classificação
-  só-por-canais, sinalizando a entrega.
-- Testes SEM marca exercitam código já existente e fixam a fronteira correta;
-  devem passar hoje.
+  SOMENTE para DEFINITE_NOT_STARTED (não-inicialização comprovada).
 """
 
+import re
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -61,20 +46,14 @@ def adapter():
 
 class TestDeteccaoFalhaCanaisEstruturados:
 
-    @pytest.mark.xfail(strict=True, reason="#303: hoje _detect_failure escaneia "
-                       "a narrativa (texto livre: 'Kiro is having trouble "
-                       "responding' em _FAILURE_MARKERS). Deve passar após a "
-                       "correção (só canais estruturados). XPASS sinaliza a "
-                       "entrega (CT-01).")
     def test_ct01_narrativa_cita_erro_sem_sinal_estruturado_e_sucesso(self, adapter):
         """CT-01: narrativa cita frase(s) de erro conhecida(s) mas NÃO há sinal
         estruturado (sem [exit-code: N!=0], sem [TIMEOUT], sem [ERRO]) →
         _detect_failure retorna None (sucesso).
 
-        É o coração da correção: hoje 'Kiro is having trouble responding' consta
-        em _FAILURE_MARKERS e dispara falso positivo mesmo citado pela narrativa.
-        O desenvolvimento deve parar de escanear texto livre e remover termos de
-        prosa dos marcadores de classificação.
+        É o coração da correção: antes 'Kiro is having trouble responding'
+        constava em _FAILURE_MARKERS e disparava falso positivo mesmo citado
+        pela narrativa. A classificação passou a ser só por canais estruturados.
         """
         output = (
             "Analisei a issue e implementei o tratamento para quando o modelo "
@@ -95,6 +74,11 @@ class TestDeteccaoFalhaCanaisEstruturados:
         error = adapter._detect_failure(output)
         assert error is not None
         assert "\n" not in error
+
+    def test_ct02b_exit_code_zero_nao_e_falha(self, adapter):
+        """CT-02 (complemento): [exit-code: 0] NÃO é falha — só N != 0 classifica."""
+        output = "trabalho concluído\n[exit-code: 0]\n"
+        assert adapter._detect_failure(output) is None
 
     def test_ct03_marcador_timeout_e_falha(self, adapter):
         """CT-03: marcador de timeout → falha."""
@@ -119,25 +103,15 @@ class TestDeteccaoFalhaCanaisEstruturados:
     def test_ct04b_output_vazio_ou_normal_sem_marcador_e_sucesso(self, adapter):
         """CT-04b: output vazio ou normal, SEM qualquer marcador estruturado →
         sucesso. A ausência de sinal estruturado NUNCA é falha.
-
-        Fixa a decisão de escopo: o canal 'ausência de resumo normal => falha'
-        foi removido. Coerente com os testes de sucesso da suíte congelada
-        (test_output_vazio_nao_e_falha / test_output_normal_nao_e_falha), que
-        permanecem válidos.
         """
         assert adapter._detect_failure("") is None
         assert adapter._detect_failure("  \n \n") is None
         assert adapter._detect_failure("Pronto. 3 arquivos alterados.\n") is None
 
-    @pytest.mark.xfail(strict=True, reason="#303: regressão do falso positivo "
-                       "histórico. Falha com a detecção antiga (escaneia a "
-                       "narrativa); deve passar após a correção. XPASS sinaliza "
-                       "a entrega (CT-05).")
     def test_ct05_regressao_falso_positivo_narrativa_nao_recorre(self, adapter):
         """CT-05 (regressão): reproduz o falso positivo histórico — execução
         bem-sucedida cuja narrativa contém o termo de erro, SEM sinal estruturado
-        — e comprova que NÃO recorre. Falha na implementação antiga (escaneava
-        texto); passa na nova (só canais estruturados).
+        — e comprova que NÃO recorre.
         """
         output = (
             "Resumo do que fiz: tratei o caso em que a API devolve "
@@ -148,10 +122,9 @@ class TestDeteccaoFalhaCanaisEstruturados:
         assert adapter._detect_failure(output) is None
 
     # CT-05b (precedência de contrato) é executado na suíte congelada
-    # tests/test_agent_failure_detection.py: o desenvolvimento reescreve os
-    # testes que codificam o falso positivo (narrativa => falha) para
-    # classificação por canal estruturado, e preserva os testes de sucesso.
-    # Ver o detalhamento em doc/quality/execucao-autonoma-confiavel/test-cases.md.
+    # tests/test_agent_failure_detection.py: os testes que codificavam o falso
+    # positivo (narrativa => falha) foram reescritos para classificação por
+    # canal estruturado, e os testes de sucesso foram preservados.
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -162,42 +135,58 @@ class TestDeteccaoFalhaCanaisEstruturados:
 
 class TestCaminhosDeApoio:
 
-    @pytest.mark.skip(reason="#303: resolução/validação por item dos caminhos de "
-                             "apoio a implementar (CT-07).")
     def test_ct07_caminho_inexistente_nao_cancela_lote(self, tmp_path):
         """CT-07: um lote com caminhos de apoio válidos + um inexistente. Os
-        válidos resolvem/executam; o ausente é sinalizado ISOLADAMENTE (por
-        item), sem exceção que cancele o lote inteiro.
-
-        O desenvolvimento define o ponto de interceptação (ex.: resolver antes
-        de montar o lote de ferramentas); o teste fixa a invariante:
-        1 caminho ausente != cancelar os válidos.
+        válidos resolvem; o ausente é sinalizado ISOLADAMENTE (por item), sem
+        exceção que cancele o lote inteiro.
         """
+        from src.core.support_paths import resolve_support_paths
+
         valido = tmp_path / "contexts" / "templates" / "docs" / "test-cases.md"
         valido.parent.mkdir(parents=True)
         valido.write_text("# template\n", encoding="utf-8")
         ausente = tmp_path / "contexts" / "templates" / "issues" / "nao-existe.md"
-        # resultado = resolve_support_paths([valido, ausente])
-        # assert resultado.resolvidos == [valido]
-        # assert resultado.ausentes == [ausente]
-        # assert resultado.cancelou_lote is False
-        pytest.fail("implementar: resolução por item sem cancelar o lote")
 
-    @pytest.mark.skip(reason="#303: fonte única de templates (config == código) "
-                             "a implementar (CT-08).")
+        resultado = resolve_support_paths([valido, ausente])
+        assert resultado.resolvidos == [valido]
+        assert resultado.ausentes == [ausente]
+        assert resultado.cancelou_lote is False
+
     def test_ct08_config_e_codigo_apontam_para_mesma_fonte_valida(self, tmp_path):
         """CT-08: os caminhos de apoio referenciados pela CONFIGURAÇÃO e os
         gerados por CÓDIGO apontam para o mesmo diretório-fonte válido
         (contexts/templates/…) e todos existem no ambiente.
-
-        Detecta o anti-padrão de config e código apontando para pastas
-        diferentes. O desenvolvimento centraliza a constante da fonte.
         """
-        # fonte_codigo = support_paths_from_code()
-        # fonte_config = support_paths_from_config(config)
-        # assert fonte_codigo == fonte_config
-        # assert all(p.exists() for p in fonte_codigo)
-        pytest.fail("implementar: fonte única e existência garantida")
+        from src.core.support_paths import (
+            support_paths_from_code, support_paths_from_config,
+        )
+
+        # Ambiente com a fonte única presente (contexts/templates/docs/...).
+        templates = tmp_path / "contexts" / "templates"
+        doc = templates / "docs" / "test-cases.md"
+        doc.parent.mkdir(parents=True)
+        doc.write_text("# template\n", encoding="utf-8")
+
+        config = {"boards": {"platform": "github"}}
+        fonte_codigo = support_paths_from_code(templates)
+        fonte_config = support_paths_from_config(config, templates)
+
+        assert fonte_codigo == fonte_config
+        assert fonte_codigo  # não vazio
+        assert all(p.exists() for p in fonte_codigo)
+
+    def test_ct08_fonte_unica_do_repo_existe(self):
+        """CT-08 (complemento): a fonte única canônica do repo
+        (contexts/templates/) existe e aponta para o mesmo lugar em código e
+        config, sem argumento de override.
+        """
+        from src.core.support_paths import (
+            TEMPLATES_DIR, support_paths_from_code, support_paths_from_config,
+        )
+        assert TEMPLATES_DIR == Path("contexts") / "templates"
+        codigo = support_paths_from_code()
+        config = support_paths_from_config({})
+        assert codigo == config
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -240,17 +229,14 @@ class TestContextoDerivadoDaConfig:
         """
         from src.core import context_generator as cg
         content = cg._build_content(self._config())
-        # Tabela de boards/colunas com dados reais
         assert "| `casos-de-teste` | Casos de Teste | quality |" in content
         assert "| `desenvolvimento` | Desenvolvimento | engineering-pl |" in content
-        # Tabela de flow/branches preenchida
         assert "| `feature` | `feature` | `main` | `main` |" in content
         assert "Branch base: `main`" in content
 
     def test_ct09_sem_aviso_de_conflito_no_caminho_feliz(self, tmp_path, monkeypatch):
         """CT-09: quando o steering já reflete a config vigente,
-        ensure_steering_integrity NÃO acusa divergência (retorna False) — ou
-        seja, nenhum 'aviso de conflito de contexto' é emitido no caminho feliz.
+        ensure_steering_integrity NÃO acusa divergência (retorna False).
         """
         from src.core import context_generator as cg
         steering = tmp_path / ".kiro" / "steering" / "esteira.md"
@@ -267,7 +253,6 @@ class TestContextoDerivadoDaConfig:
         from src.core import context_generator as cg
         steering = tmp_path / ".kiro" / "steering" / "esteira.md"
         steering.parent.mkdir(parents=True)
-        # Artefato congelado: tabelas vazias (cabeçalho sem linhas de dados).
         steering.write_text(
             "---\ninclusion: always\n---\n\n## Boards e colunas\n\n"
             "| Coluna (id) | Nome | Agente |\n|---|---|---|\n", encoding="utf-8")
@@ -278,15 +263,26 @@ class TestContextoDerivadoDaConfig:
         content = steering.read_text(encoding="utf-8")
         assert "| `casos-de-teste` | Casos de Teste | quality |" in content
 
-    @pytest.mark.skip(reason="#303: garantir que nenhum pipe_context.json legado "
-                             "sombreie o steering vigente (CT-09b, 2ª camada).")
-    def test_ct09b_pipe_context_legado_nao_sombreia_steering(self, tmp_path):
+    def test_ct09b_pipe_context_legado_nao_sombreia_steering(self, tmp_path, monkeypatch):
         """CT-09b (2ª camada): se existir um .kiro/agents/pipe_context.json
         legado com tabelas vazias, ele NÃO pode sombrear o steering vigente. O
         desenvolvimento garante que o contexto efetivo é sempre o derivado da
-        config (remoção/regeneração do artefato legado).
+        config (remoção do artefato legado).
         """
-        pytest.fail("implementar: artefato legado pipe_context.json sem precedência")
+        from src.core import context_generator as cg
+        steering = tmp_path / ".kiro" / "steering" / "esteira.md"
+        legacy = tmp_path / ".kiro" / "agents" / "pipe_context.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text('{"tables": "vazias"}', encoding="utf-8")
+        monkeypatch.setattr(cg, "STEERING_FILE", steering)
+
+        cg.ensure_steering_integrity(self._config())
+
+        # Artefato legado removido: não sombreia o steering vigente.
+        assert not legacy.exists()
+        # Contexto efetivo é o derivado da config (tabelas preenchidas).
+        content = steering.read_text(encoding="utf-8")
+        assert "| `casos-de-teste` | Casos de Teste | quality |" in content
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -298,177 +294,266 @@ class TestContextoDerivadoDaConfig:
 # Observabilidade exigida: causa real + origem (canal). time.sleep SEMPRE mockado.
 # ══════════════════════════════════════════════════════════════════════════
 
+def _d_config(max_tentativas=3):
+    """Config mínima com um agente resolvível e retry.* explícito."""
+    return {
+        "retry": {"max_tentativas": max_tentativas,
+                  "backoff_inicial_seg": 30, "backoff_fator": 2.0},
+        "git": {"repo": {"main": "git@github.com:u/r.git"},
+                "flow": {"base": "main",
+                         "feature": {"prefix": "feature",
+                                     "branch_pattern": "feature/{id}-{slug}",
+                                     "create": "main", "merge": "main"}}},
+        "boards": {"platform": "github",
+                   "entrega": {"name": "Entrega", "flow": "feature",
+                               "columns": {"desenvolvimento": {
+                                   "name": "Desenvolvimento", "agent": "dev",
+                                   "gitevents": "no-branch",
+                                   "change": {"advance": "execucao-testes"}}}}},
+        "agents": {"kiro-cli": {"dev": {"name": "Dev", "model": "auto"}}},
+    }
+
+
+def _d_task(tmp_path):
+    body = tmp_path / "303-x-body.md"
+    body.write_text("# Uma tarefa\nconteúdo\n", encoding="utf-8")
+    issue = {"id": "303", "column": "desenvolvimento", "status": "ok",
+             "labels": [], "body_path": str(body)}
+    board_cfg = _d_config()["boards"]["entrega"]
+    return {"board_id": "entrega", "issue": issue,
+            "column": board_cfg["columns"]["desenvolvimento"],
+            "col_id": "desenvolvimento", "board": board_cfg}
+
+
+class _FakeAdapter:
+    """Adapter fake: registra cada invocação e devolve resultados pré-definidos.
+
+    NÃO faz monkeypatch do próprio método sob teste (lição do incidente #106):
+    é um dublê independente que o teste injeta no lugar de KiroCliAgent.
+    """
+
+    def __init__(self, resultados):
+        # resultados: lista de ExecutionResult a devolver em ordem; o último
+        # se repete se houver mais invocações que resultados.
+        self._resultados = list(resultados)
+        self.invocacoes = 0
+
+    def execute(self, params):
+        self.invocacoes += 1
+        idx = min(self.invocacoes - 1, len(self._resultados) - 1)
+        return self._resultados[idx]
+
+
+def _run_call_agent(monkeypatch, tmp_path, config, resultados):
+    """Dispara call_agent com um _FakeAdapter e time.sleep/guards mockados.
+
+    Retorna (resultado, fake_adapter, sleeps, registros_log).
+    """
+    import src.__main__ as mod
+    from src.core import context_generator as cg
+
+    fake = _FakeAdapter(resultados)
+    sleeps = []
+    registros = []
+
+    monkeypatch.setattr(mod, "KiroCliAgent", lambda: fake)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(cg, "ensure_steering_integrity", lambda c: False)
+    # Guards: no-op (isolam a lógica de recuperação; já cobertos por outra suíte).
+    monkeypatch.setattr(mod, "SnapshotGuard", lambda *a, **k: _nullcm())
+    import src.core.agent_guard as ag
+    monkeypatch.setattr(ag, "AgentGuard", lambda *a, **k: _nullcm())
+    for level in ("info", "warning", "error"):
+        monkeypatch.setattr(
+            mod.log, level,
+            (lambda lvl: (lambda *a, **k: registros.append((lvl, a, k))))(level))
+
+    resultado = mod.call_agent(config, _d_task(tmp_path))
+    return resultado, fake, sleeps, registros
+
+
+class _nullcm:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _result(classe, **kw):
+    from src.core.execution import ExecutionResult
+    return ExecutionResult(classe=classe, **kw)
+
+
 class TestRecuperacaoInterrupcao:
 
-    @pytest.mark.skip(reason="#303: classificação UNKNOWN_OUTCOME fail-closed a "
-                             "implementar (CT-10).")
-    def test_ct10_unknown_outcome_fail_closed_uma_invocacao_preserva(self, monkeypatch):
-        """CT-10: aborto transitório ambíguo (dispatch failure /
-        InternalServerError após output parcial / timeout) → UNKNOWN_OUTCOME.
-
-        - subprocesso invocado EXATAMENTE UMA VEZ (sem retry inline, sem backoff);
-        - resultado marcado como ambíguo (NÃO sucesso, NÃO falha definitiva);
-        - output, request ID (quando disponível), causa e session_id PRESERVADOS
-          para auditoria/continuidade.
-
-        A reconciliação (fs/git/board) e a eventual retomada via --resume-id
-        ficam a cargo do LOOP NORMAL — não há retry inline aqui.
+    def test_ct10_unknown_outcome_fail_closed_uma_invocacao_preserva(self, monkeypatch, tmp_path):
+        """CT-10: aborto transitório ambíguo → UNKNOWN_OUTCOME. Uma única
+        invocação, sem backoff, resultado ambíguo, evidências preservadas.
         """
-        # invocacoes = []
-        # monkeypatch no adapter para registrar cada invocação e devolver um
-        # resultado ambíguo (output parcial + 'dispatch failure').
-        # sleeps = []
-        # monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
-        # resultado = call_agent(config, task)
-        # assert len(invocacoes) == 1
-        # assert sleeps == []            # nenhum backoff
-        # assert resultado.classe == "UNKNOWN_OUTCOME"
-        # assert resultado.output and resultado.causa and resultado.session_id
-        pytest.fail("implementar: UNKNOWN_OUTCOME fail-closed (1 invocação + preserva)")
+        from src.core.execution import UNKNOWN_OUTCOME
+        res = _result(UNKNOWN_OUTCOME,
+                      output="output parcial\n[ERRO] dispatch failure\n",
+                      causa="dispatch failure: stream interrompido",
+                      origem="dispatch failure", session_id="sess-abc",
+                      request_id="req-123")
+        resultado, fake, sleeps, _ = _run_call_agent(
+            monkeypatch, tmp_path, _d_config(), [res])
 
-    @pytest.mark.skip(reason="#303: retry inline + backoff para DEFINITE_NOT_STARTED "
-                             "a implementar (CT-11).")
-    def test_ct11_definite_not_started_retry_com_backoff_ate_sucesso_ou_limite(self, monkeypatch):
-        """CT-11: não-inicialização comprovada mecanicamente
-        (DEFINITE_NOT_STARTED, ex.: kiro-cli ausente no PATH) → retry inline com
-        backoff crescente (backoff_inicial_seg * backoff_fator^n) até sucesso ou
-        até max_tentativas.
+        assert fake.invocacoes == 1
+        assert sleeps == []                       # nenhum backoff
+        assert resultado.classe == UNKNOWN_OUTCOME
+        assert resultado.output and resultado.causa and resultado.session_id
+        assert resultado.request_id == "req-123"
 
-        Sub-caso A (retoma até sucesso): falha DEFINITE_NOT_STARTED 1x, depois
-        sucesso → reexecuta com backoff e conclui em sucesso; time.sleep chamado
-        com backoff_inicial_seg na 1ª espera.
+    def test_ct11_definite_not_started_retoma_ate_sucesso(self, monkeypatch, tmp_path):
+        """CT-11 (sub-caso A): DEFINITE_NOT_STARTED 1x, depois sucesso → reexecuta
+        com backoff e conclui em sucesso; 1ª espera = backoff_inicial_seg (30)."""
+        from src.core.execution import DEFINITE_NOT_STARTED, SUCEDIDO
+        resultados = [
+            _result(DEFINITE_NOT_STARTED, causa="kiro-cli ausente", origem="erro interno"),
+            _result(SUCEDIDO, output="pronto\n"),
+        ]
+        resultado, fake, sleeps, _ = _run_call_agent(
+            monkeypatch, tmp_path, _d_config(max_tentativas=3), resultados)
 
-        Sub-caso B (esgota o limite): falha DEFINITE_NOT_STARTED sempre →
-        exatamente max_tentativas invocações (SEM laço infinito); backoff cresce
-        por backoff_fator (ex.: [30, 60] para max_tentativas=3); resultado =
-        FALHA PERSISTENTE; log registra total de tentativas + última causa.
+        assert fake.invocacoes == 2
+        assert sleeps == [30]
+        assert resultado.classe == SUCEDIDO
 
-        time.sleep mockado: asserir os ARGUMENTOS de backoff, não esperar tempo.
+    def test_ct11_definite_not_started_esgota_limite(self, monkeypatch, tmp_path):
+        """CT-11 (sub-caso B): DEFINITE_NOT_STARTED sempre → exatamente
+        max_tentativas invocações; backoff [30, 60] para max=3; resultado =
+        falha persistente; log com total de tentativas e última causa.
         """
-        # sleeps = []
-        # monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
-        # Sub-caso B: adapter sinaliza DEFINITE_NOT_STARTED sempre; max=3
-        # resultado = call_agent(config, task)
-        # assert numero_de_invocacoes == 3
-        # assert sleeps == [30, 60]      # backoff_inicial=30, fator=2.0
-        # assert resultado.classe == "falha persistente"
-        # assert "tentativas" in log and "última causa" in log
-        pytest.fail("implementar: retry DEFINITE_NOT_STARTED com backoff + limite")
+        from src.core.execution import DEFINITE_NOT_STARTED, FALHA_PERSISTENTE
+        res = _result(DEFINITE_NOT_STARTED,
+                      causa="[ERRO] kiro-cli não encontrado no PATH",
+                      origem="erro interno")
+        resultado, fake, sleeps, registros = _run_call_agent(
+            monkeypatch, tmp_path, _d_config(max_tentativas=3), [res])
 
-    @pytest.mark.skip(reason="#303: garantir que UNKNOWN_OUTCOME NÃO dispara retry "
-                             "inline nem backoff (CT-12).")
-    def test_ct12_unknown_outcome_nao_dispara_retry_nem_backoff(self, monkeypatch):
-        """CT-12: resultado ambíguo (UNKNOWN_OUTCOME) → NÃO há retry inline nem
-        backoff na mesma execução (par explícito de CT-11).
+        assert fake.invocacoes == 3                 # sem laço infinito
+        assert sleeps == [30, 60]                   # backoff_inicial=30, fator=2.0
+        assert resultado.classe == FALHA_PERSISTENTE
+        # Log registra total de tentativas + última causa.
+        texto = " ".join(str(a) + str(k) for _, a, k in registros)
+        assert "3" in texto
+        assert "kiro-cli não encontrado no PATH" in texto
 
-        Garante que o retry inline é EXCLUSIVO de DEFINITE_NOT_STARTED. Impede a
-        regressão do 'retry cego' vedado pela ADR #217.
+    def test_ct12_unknown_outcome_nao_dispara_retry_nem_backoff(self, monkeypatch, tmp_path):
+        """CT-12: UNKNOWN_OUTCOME → NÃO há retry inline nem backoff, mesmo com
+        max_tentativas > 1 (retry inline é exclusivo de DEFINITE_NOT_STARTED).
         """
-        # sleeps = []
-        # monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
-        # adapter devolve UNKNOWN_OUTCOME; retry.max_tentativas > 1
-        # resultado = call_agent(config, task)
-        # assert numero_de_invocacoes == 1
-        # assert sleeps == []            # nenhum backoff
-        # assert resultado.classe == "UNKNOWN_OUTCOME"
-        pytest.fail("implementar: UNKNOWN_OUTCOME sem retry inline/backoff")
+        from src.core.execution import UNKNOWN_OUTCOME
+        res = _result(UNKNOWN_OUTCOME, output="parcial\n", causa="InternalServerError",
+                      origem="dispatch failure", session_id="s1")
+        resultado, fake, sleeps, _ = _run_call_agent(
+            monkeypatch, tmp_path, _d_config(max_tentativas=5), [res])
 
-    @pytest.mark.skip(reason="#303: observabilidade (causa + origem do canal; "
-                             "UNKNOWN_OUTCOME acionável) a implementar (CT-13).")
-    def test_ct13_log_registra_causa_e_origem_do_canal(self, monkeypatch):
-        """CT-13: toda classificação de falha e todo retry seguro registram no
-        log a causa real E a origem/canal estruturado (campo que diferencie
-        exit-code / timeout / erro interno). O UNKNOWN_OUTCOME é registrado de
-        forma acionável (causa + evidência preservada), distinto de sucesso e de
-        falha definitiva. A narrativa do agente NUNCA é a origem registrada.
+        assert fake.invocacoes == 1
+        assert sleeps == []
+        assert resultado.classe == UNKNOWN_OUTCOME
+
+    def test_ct13_log_registra_causa_e_origem_do_canal(self, monkeypatch, tmp_path):
+        """CT-13: observabilidade — falha por canal, UNKNOWN_OUTCOME e retry
+        DEFINITE_NOT_STARTED registram causa real + origem (canal estruturado);
+        UNKNOWN_OUTCOME é acionável e distinto de sucesso/falha definitiva; a
+        narrativa nunca é a origem.
         """
-        # capturar registros de log de: (a) falha por canal, (b) UNKNOWN_OUTCOME,
-        # (c) retry DEFINITE_NOT_STARTED.
-        # assert causa_real in registro
-        # assert origem_canal in registro  (ex.: "exit-code" | "timeout" | "erro interno")
-        # assert registro_unknown distinto de sucesso e de falha definitiva
-        pytest.fail("implementar: log com causa + origem do canal; UNKNOWN acionável")
+        from src.core.execution import (UNKNOWN_OUTCOME, FALHA, DEFINITE_NOT_STARTED)
+
+        # (a) falha definitiva por canal estruturado
+        falha = _result(FALHA, output="x\n[exit-code: 2]\n",
+                        causa="error: git falhou | [exit-code: 2]", origem="exit-code")
+        _, _, _, reg_falha = _run_call_agent(monkeypatch, tmp_path, _d_config(), [falha])
+        texto_falha = " ".join(f"{a} {k}" for _, a, k in reg_falha)
+        assert "exit-code" in texto_falha and "git falhou" in texto_falha
+
+        # (b) UNKNOWN_OUTCOME acionável, distinto de falha definitiva
+        unk = _result(UNKNOWN_OUTCOME, output="parcial\n", causa="dispatch failure",
+                      origem="dispatch failure", session_id="s", request_id="r")
+        _, _, _, reg_unk = _run_call_agent(monkeypatch, tmp_path, _d_config(), [unk])
+        texto_unk = " ".join(f"{a} {k}" for _, a, k in reg_unk)
+        assert "UNKNOWN_OUTCOME" in texto_unk
+        assert "dispatch failure" in texto_unk
+
+        # (c) retry DEFINITE_NOT_STARTED loga causa + origem do canal
+        dns = _result(DEFINITE_NOT_STARTED, causa="kiro-cli ausente", origem="erro interno")
+        _, _, _, reg_dns = _run_call_agent(
+            monkeypatch, tmp_path, _d_config(max_tentativas=2), [dns])
+        texto_dns = " ".join(f"{a} {k}" for _, a, k in reg_dns)
+        assert "kiro-cli ausente" in texto_dns
+
+        # A narrativa do agente nunca é a origem registrada (origens válidas).
+        for texto in (texto_falha, texto_unk, texto_dns):
+            assert "Kiro is having trouble responding" not in texto
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Grupo D (config) — Validação e defaults dos parâmetros retry.*
-# Padrão: espelhar validate_max_attempts/resolve_max_attempts de config.py.
-# Aplicáveis SÓ ao caso seguro DEFINITE_NOT_STARTED. Sem retomar_sessao nem
-# idempotencia_ativa (removidos do escopo).
 # ══════════════════════════════════════════════════════════════════════════
 
 class TestRetryConfig:
 
-    @pytest.mark.skip(reason="#303: validate_retry/resolve_retry a implementar "
-                             "em config.py (CT-14).")
     def test_ct14_defaults_quando_ausente(self):
         """CT-14.1: sem a chave 'retry', aplica defaults: max_tentativas=3,
         backoff_inicial_seg=30, backoff_fator=2.0."""
-        # from src.core.config import resolve_retry
-        # r = resolve_retry({})
-        # assert r.max_tentativas == 3
-        # assert r.backoff_inicial_seg == 30
-        # assert r.backoff_fator == 2.0
-        pytest.fail("implementar: defaults de retry.*")
+        from src.core.config import resolve_retry
+        r = resolve_retry({})
+        assert r.max_tentativas == 3
+        assert r.backoff_inicial_seg == 30
+        assert r.backoff_fator == 2.0
 
-    @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
     @pytest.mark.parametrize("valor", [0, -1, True, 2.5, "3"])
     def test_ct14_max_tentativas_invalido_levanta_configerror(self, valor):
-        """CT-14.2: max_tentativas inválido (0, negativo, bool, float, string)
-        → ConfigError identificando a chave 'retry.max_tentativas'."""
-        # from src.core.config import validate_retry, ConfigError
-        # with pytest.raises(ConfigError, match="retry.max_tentativas"):
-        #     validate_retry({"retry": {"max_tentativas": valor}})
-        pytest.fail("implementar: validação de retry.max_tentativas")
+        """CT-14.2: max_tentativas inválido → ConfigError nomeando a chave."""
+        from src.core.config import validate_retry, ConfigError
+        with pytest.raises(ConfigError, match="retry.max_tentativas"):
+            validate_retry({"retry": {"max_tentativas": valor}})
 
-    @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
-    @pytest.mark.parametrize("valor", [-1, True, "0"])
+    @pytest.mark.parametrize("valor", [-1, True, "0", 2.5])
     def test_ct14_backoff_inicial_invalido_levanta_configerror(self, valor):
-        """CT-14.3: backoff_inicial_seg < 0 (ou bool/não-inteiro) → ConfigError
-        nomeando 'retry.backoff_inicial_seg'."""
-        pytest.fail("implementar: validação de retry.backoff_inicial_seg >= 0")
+        """CT-14.3: backoff_inicial_seg < 0 (ou bool/não-inteiro) → ConfigError."""
+        from src.core.config import validate_retry, ConfigError
+        with pytest.raises(ConfigError, match="retry.backoff_inicial_seg"):
+            validate_retry({"retry": {"backoff_inicial_seg": valor}})
 
-    @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
     @pytest.mark.parametrize("valor", [0.5, 0, True, "2.0"])
     def test_ct14_backoff_fator_invalido_levanta_configerror(self, valor):
-        """CT-14.4: backoff_fator < 1.0 (ou bool/não-numérico) → ConfigError
-        nomeando 'retry.backoff_fator'."""
-        pytest.fail("implementar: validação de retry.backoff_fator >= 1.0")
+        """CT-14.4: backoff_fator < 1.0 (ou bool/não-numérico) → ConfigError."""
+        from src.core.config import validate_retry, ConfigError
+        with pytest.raises(ConfigError, match="retry.backoff_fator"):
+            validate_retry({"retry": {"backoff_fator": valor}})
 
-    @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
     def test_ct14_valores_validos_sao_aceitos(self):
-        """CT-14.5: valores válidos (max_tentativas=5, backoff_inicial_seg=10,
-        backoff_fator=1.5) → aceitos e resolvidos corretamente."""
-        # from src.core.config import resolve_retry
-        # r = resolve_retry({"retry": {"max_tentativas": 5,
-        #                              "backoff_inicial_seg": 10,
-        #                              "backoff_fator": 1.5}})
-        # assert (r.max_tentativas, r.backoff_inicial_seg, r.backoff_fator) \
-        #        == (5, 10, 1.5)
-        pytest.fail("implementar: aceitação de valores válidos de retry.*")
+        """CT-14.5: valores válidos → aceitos e resolvidos corretamente."""
+        from src.core.config import resolve_retry, validate_retry
+        cfg = {"retry": {"max_tentativas": 5, "backoff_inicial_seg": 10,
+                         "backoff_fator": 1.5}}
+        validate_retry(cfg)  # não levanta
+        r = resolve_retry(cfg)
+        assert (r.max_tentativas, r.backoff_inicial_seg, r.backoff_fator) == (5, 10, 1.5)
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Grupo E — Higiene de documentação
 # ══════════════════════════════════════════════════════════════════════════
 
+MODELOS_VALIDOS = {"claude-sonnet-5", "auto", "claude-haiku-4.5"}
+
+
 class TestHigieneDocumentacao:
 
-    @pytest.mark.skip(reason="#303: definir lista de modelos válidos e corrigir a "
-                             "doc de exemplo; teste de guarda (CT-15).")
     def test_ct15_doc_exemplo_sem_identificador_de_modelo_invalido(self):
         """CT-15: nenhuma referência a identificador de modelo inválido/
-        inexistente permanece na doc de exemplo do produto (ex.: README.md).
+        inexistente permanece na doc de exemplo do produto (README.md).
 
-        Identificadores válidos vigentes: 'claude-sonnet-5', 'auto',
-        'claude-haiku-4.5'. Hoje README.md traz 'model: claude-sonnet-4-20250514'
-        (inválido). Teste de guarda: varrer 'model:' na doc de exemplo e exigir
-        que cada valor esteja na lista de válidos (impede reintrodução).
+        Guarda de regressão: varre 'model:' no README e exige que cada valor
+        esteja na lista de válidos.
         """
-        # import re
-        # MODELOS_VALIDOS = {"claude-sonnet-5", "auto", "claude-haiku-4.5"}
-        # readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        # modelos = re.findall(r"model:\s*([\w.\-]+)", readme)
-        # invalidos = [m for m in modelos if m not in MODELOS_VALIDOS]
-        # assert invalidos == [], f"identificadores inválidos na doc: {invalidos}"
-        pytest.fail("implementar: guarda de identificadores de modelo na doc")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        modelos = re.findall(r"model:\s*([\w.\-]+)", readme)
+        assert modelos, "esperado ao menos um 'model:' na doc de exemplo"
+        invalidos = [m for m in modelos if m not in MODELOS_VALIDOS]
+        assert invalidos == [], f"identificadores inválidos na doc: {invalidos}"

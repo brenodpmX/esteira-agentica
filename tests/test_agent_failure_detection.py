@@ -90,21 +90,35 @@ class TestDetectFailureSucesso:
 # ─── _detect_failure: falha ───────────────────────────────────────────────────
 
 class TestDetectFailureFalha:
-    """Com marcador de falha, a causa real é extraída do output."""
+    """Com marcador ESTRUTURAL de falha, a causa real é extraída do output.
+
+    #303: a classificação considera APENAS canais estruturados
+    (`[exit-code: N!=0]`, `[TIMEOUT]`, `[ERRO]`, saída de erro estruturada). A
+    narrativa (texto livre) do agente NUNCA classifica — por isso os testes
+    abaixo foram reescritos para afirmar a falha por canal estruturado, não por
+    termo de erro citado na prosa (precedência de contrato #303 — ver CT-05b em
+    doc/quality/execucao-autonoma-confiavel/test-cases.md).
+    """
 
     @pytest.mark.parametrize("marker", [
         "[exit-code: 1]",
         "[TIMEOUT]",
         "[ERRO]",
-        "Kiro is having trouble responding",
     ])
     def test_cada_marcador_dispara_falha(self, adapter, marker):
         assert adapter._detect_failure(f"saida qualquer\n{marker}\n") is not None
 
     def test_extrai_erro_de_modelo_indisponivel(self, adapter):
+        """A causa real é extraída quando há sinal estruturado presente.
+
+        #303: a falha é afirmada pelo canal estruturado (`[ERRO]`), não pela
+        mera citação de 'Kiro is having trouble responding' na narrativa. Com o
+        sinal presente, a causa real continua sendo extraída (não apenas o
+        Request ID).
+        """
         output = (
             "Iniciando tarefa\n"
-            "Kiro is having trouble responding right now:\n"
+            "[ERRO] Kiro is having trouble responding right now:\n"
             "   0: The model you've selected is temporarily unavailable\n"
             "Request ID: abc-123\n"
         )
@@ -118,10 +132,11 @@ class TestDetectFailureFalha:
         """A causa real não pode ser ofuscada pela última linha do output.
 
         Era exatamente o bug: o log mostrava 'Request ID: ...' como se fosse o
-        resultado, sem dizer o que falhou.
+        resultado, sem dizer o que falhou. #303: a falha vem do canal
+        estruturado (`[ERRO]`); a causa real segue sendo extraída.
         """
         output = (
-            "Kiro is having trouble responding right now:\n"
+            "[ERRO] Kiro is having trouble responding right now:\n"
             "   0: InternalServerError\n"
             "Request ID: zzz-999\n"
         )
@@ -131,7 +146,7 @@ class TestDetectFailureFalha:
 
     def test_une_linhas_relevantes_com_pipe(self, adapter):
         output = (
-            "Kiro is having trouble responding right now:\n"
+            "[ERRO] Kiro is having trouble responding right now:\n"
             "InternalServerError\n"
             "Request ID: 1\n"
         )
@@ -197,8 +212,10 @@ class TestExecuteUsaDeteccao:
         assert "Pronto em 12s" in finais[0][1][1]
 
     def test_falha_loga_error_com_causa(self, monkeypatch, tmp_path):
+        """#303: a falha é classificada pelo canal estruturado (`[ERRO]`), e a
+        causa real é extraída e logada (não apenas o Request ID)."""
         output = (
-            "Kiro is having trouble responding right now:\n"
+            "[ERRO] Kiro is having trouble responding right now:\n"
             "   0: The model you've selected is temporarily unavailable\n"
             "Request ID: abc-123\n"
         )

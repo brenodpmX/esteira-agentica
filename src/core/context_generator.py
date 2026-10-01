@@ -20,6 +20,29 @@ from pathlib import Path
 PIPE_FILE: Path = Path("pipe.yml")
 STEERING_FILE: Path = Path(".kiro") / "steering" / "esteira.md"
 
+# Nome do artefato LEGADO do "Caminho A" (P1.1(a)): antes gerávamos um agente
+# kiro-cli em `<.kiro>/agents/pipe_context.json` e o injetávamos via `--agent
+# pipe_context`. No Caminho B (vigente) o contexto é o steering (default agent
+# via KIRO_HOME) e esse arquivo NÃO é mais gerado. Se um pipe_context.json
+# legado persistir no ambiente (ex.: imagem/volume antigo) com tabelas vazias,
+# ele poderia sombrear o steering vigente. #303: removemos o artefato legado
+# para garantir que o contexto efetivo seja SEMPRE o derivado da config vigente.
+#
+# O caminho é DERIVADO de STEERING_FILE (mesmo diretório `.kiro`), para que os
+# testes que apontam STEERING_FILE para um tmp redirecionem também o legado —
+# nunca tocando o `.kiro` real do repositório.
+_LEGACY_PIPE_CONTEXT_NAME = "pipe_context.json"
+
+
+def _legacy_pipe_context_path() -> Path:
+    """Resolve `<.kiro>/agents/pipe_context.json` a partir de STEERING_FILE.
+
+    STEERING_FILE é `<.kiro>/steering/esteira.md`; subimos dois níveis até o
+    `.kiro` e descemos em `agents/pipe_context.json`.
+    """
+    kiro_dir = STEERING_FILE.parent.parent  # <.kiro>
+    return kiro_dir / "agents" / _LEGACY_PIPE_CONTEXT_NAME
+
 # Frontmatter do steering. `inclusion: always` é portável (IDE/Web); no CLI todos
 # os arquivos de steering entram sempre (no-op), mas mantemos por portabilidade.
 _FRONTMATTER = "---\ninclusion: always\n---"
@@ -261,14 +284,40 @@ def _build_content(config: dict) -> str:
     return "\n".join(sections)
 
 
+def _remove_legacy_pipe_context() -> bool:
+    """Remove o artefato legado `.kiro/agents/pipe_context.json`, se existir.
+
+    No Caminho B (vigente) o contexto é o steering (default agent via
+    KIRO_HOME); o `pipe_context.json` não é mais gerado nem usado. Um artefato
+    legado remanescente (ex.: de uma imagem/volume antigo) com tabelas vazias
+    poderia sombrear o steering vigente. Removê-lo garante que o contexto
+    efetivo seja sempre o derivado da config vigente (CT-09b, 2ª camada).
+
+    Retorna True se removeu um artefato legado; False se não havia nada a
+    remover. Falhas de remoção são toleradas (não devem derrubar o startup).
+    """
+    try:
+        legacy = _legacy_pipe_context_path()
+        if legacy.exists():
+            legacy.unlink()
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def generate_context(config: dict) -> Path:
     """Gera `.kiro/steering/esteira.md` a partir do config.
 
     Cria o arquivo se não existir. Regenera se pipe.yml foi modificado após o
     steering. Não sobrescreve se o steering já estiver atualizado.
 
+    Também remove o artefato legado `pipe_context.json` (Caminho A), que não
+    tem mais precedência sobre o steering (CT-09b, 2ª camada).
+
     Retorna o Path do steering gerado.
     """
+    _remove_legacy_pipe_context()
     if not _needs_regeneration():
         return STEERING_FILE
 
@@ -286,9 +335,15 @@ def ensure_steering_integrity(config: dict) -> bool:
     agente o alterou), REESCREVE com o conteúdo autoritativo e retorna True
     (divergiu). Retorna False se já estava íntegro.
 
+    Também remove o artefato legado `pipe_context.json` (Caminho A) antes de
+    comparar: ele não pode sombrear o steering vigente (CT-09b, 2ª camada). A
+    remoção do legado, por si só, NÃO conta como divergência do steering (o
+    retorno reflete apenas a integridade do steering).
+
     Chamada antes de despachar cada agente para garantir que o steering nunca é
     corrompido silenciosamente entre execuções.
     """
+    _remove_legacy_pipe_context()
     expected = _build_content(config)
     try:
         current = STEERING_FILE.read_text(encoding="utf-8")
