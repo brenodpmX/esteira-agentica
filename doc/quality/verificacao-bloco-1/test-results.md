@@ -225,3 +225,53 @@ Nenhum veredito "não atendido" pendente.
 - **Não** há caso de teste inadequado (`revisar-caso-de-teste`) — os casos
   CT-01..CT-05 são coerentes com os critérios e com a suíte; CT-04 exercita o
   código real e passa.
+
+---
+
+## 8. Documentação — coerência de versão, CHANGELOG e doc pública (etapa `documentacao`)
+
+- **Etapa:** Documentação
+- **Autora:** Isabela Gomes — Tech Lead
+- **Data:** 2026-10-01
+- **Branch:** `feature/314-verificacao-bloco-1`
+
+Esta seção registra a verificação de coerência entre a versão publicada, o
+`CHANGELOG.md` e a documentação pública frente ao que foi efetivamente entregue
+pela verificação do bloco 1 — e documenta a decisão de **não** incrementar
+versão, por ser o desfecho correto (não uma omissão).
+
+### Prova objetiva do diff da entrega
+
+`git diff --name-status origin/main...HEAD`:
+
+```
+A  doc/quality/verificacao-bloco-1/test-cases.md
+A  doc/quality/verificacao-bloco-1/test-results.md
+A  tests/test_convergencia_bloco1_loop.py
+```
+
+`git diff --name-only origin/main...HEAD -- src/` → **vazio** (nenhum arquivo de
+`src/` alterado). `VERSION` permanece `1.16.0`.
+
+### Verdito de versão (regra do motor + CA-3)
+
+| Item | Verdito | Fundamento |
+|------|---------|-----------|
+| Bump em `src/core/version.py` | **Não aplicável — sem bump** | A regra do motor dispara o bump **apenas quando o código-fonte muda**. O diff desta entrega não toca `src/` (prova acima). CA-3 e os "Riscos e pontos de atenção" do corpo exigem, no desfecho "sem divergência", **sem alteração de código-fonte e sem incremento de versão**. Incrementar aqui violaria CA-3 e inventaria mudança para justificar a entrega (vedado). |
+| Entrada nova no `CHANGELOG.md` | **Não aplicável — sem entrada** | Sem bump e sem mudança de comportamento no produto, não há seção de versão nova a abrir. Documentar algo aqui seria "documentar o que não foi feito" (vedado ao papel). |
+| README e documentação pública de comportamento | **Sem alteração** | A verificação **não** altera comportamento observável para quem opera/usa a esteira. Não há mudança de uso, configuração ou operação a comunicar. |
+
+### Coerência confirmada do que já está publicado
+
+- `VERSION = "1.16.0"` é coerente com o que está na linha principal: #303
+  registrada na seção **1.16.0** do `CHANGELOG.md` e #304 em versão anterior
+  (**1.15.0**), ambas verificadas como efetivas (seções 3–6). A verificação
+  **não** introduz entrega de produto, logo não há versão a somar.
+- O artefato público desta entrega é **este relatório de verificação**
+  (`doc/quality/verificacao-bloco-1/`), que consolida o veredito por critério e a
+  evidência — o único entregável, conforme CA-3 e os "Riscos e pontos de atenção".
+
+**Conclusão da etapa de Documentação:** versão, CHANGELOG e documentação pública
+estão **coerentes com o entregue**. Não há bump nem entrada de CHANGELOG a
+produzir — o desfecho "sem divergência" torna o relatório o único artefato.
+Pré-requisito de envio à main satisfeito do ponto de vista de documentação.
