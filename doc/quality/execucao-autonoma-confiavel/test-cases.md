@@ -13,6 +13,95 @@
 
 ---
 
+## 🔁 Reconciliação QA (revisar-caso-de-teste → revisar-escopo) — 2026-10-01
+
+O desenvolvimento (Sofia Carvalho, PL) devolveu a #303 a esta coluna
+(`revisar-caso-de-teste`) com **dois conflitos de contrato confirmados por
+código**. A QA, ao reconciliar, confirmou ambos e decidiu encaminhar a issue ao
+**planejamento (`revisar-escopo`)**, por serem contradições do **escopo em si**
+contra artefatos que a QA não pode alterar (uma ADR aceita e uma suíte de
+regressão congelada de outra entrega) — não dúvidas que a QA resolve com os
+critérios de aceitação e a suíte existente.
+
+### Conflito 1 — Grupo D (retry idempotente, CT-10..CT-13) × ADR #217 (aceita)
+
+A ADR `doc/architecture/retry-kiro-cli/idempotencia.md` (**aceita**) rejeita
+retry inline para `dispatch failure` / `InternalServerError` / timeout
+(`UNKNOWN_OUTCOME`, *fail-closed*) e só o admite após a **fronteira idempotente
+da seção 4**, cujo item 4.3 exige **interposição real** de commit/push/movimento
+("não podem contornar a fronteira por shell ou CLI arbitrários; observar texto
+de saída não satisfaz"). A arquitetura vigente **não** interpõe esses efeitos: o
+adapter roda `kiro-cli` com `--trust-all-tools`
+(`src/adapters/kiro_cli_agent.py`) e o core apenas **instrui em prosa** o agente
+a rodar git e mover arquivos (`src/core/agent.py`). Logo, satisfazer CT-11 ("não
+repetir operações já efetivadas" + journal/outbox + verificação de pós-condição)
+exige **redefinir o modelo de execução e o mecanismo de auto-aprovação** —
+ambos **fora de escopo** de #303. Esse é exatamente o cenário que esta QA
+pré-declarou abaixo: fronteira idempotente fora do orçamento ⇒ o escopo da
+recuperação torna-se contraditório com a ADR ⇒ **revisar-escopo**.
+
+### Conflito 2 — Grupo A (CT-06: ausência de resumo ⇒ falha) × suíte congelada
+
+A regra central ("classificar só por canais estruturados, ignorando a
+narrativa") é **correta e implementável** (CT-01/CT-05 viram XPASS). O problema é
+só o canal **"ausência do bloco final de resumo normal ⇒ falha"** (CT-06): ele
+contradiz diretamente a suíte de regressão congelada
+`tests/test_agent_failure_detection.py` (restaurada em `c27f813`), que afirma o
+oposto — `test_output_vazio_nao_e_falha`, `test_output_normal_nao_e_falha`,
+`test_palavra_error_sem_marcador_nao_e_falha`,
+`TestExecuteUsaDeteccao::test_sucesso_loga_info_com_resumo` tratam output sem
+bloco de resumo como **sucesso**. Não há interpretação em que "ausência de
+resumo ⇒ falha" e "output vazio/curto ⇒ sucesso" sejam ambos verdadeiros.
+
+**Por que isto também é `revisar-escopo` e não decisão QA isolada:** reconciliar
+exige **precedência entre duas entregas** — ou #303 prevalece (e a suíte
+congelada de uma entrega anterior é reescrita/invalidada, mudando os critérios
+de aceite daquela entrega), ou a suíte prevalece (e o canal CT-06 de #303 é
+afrouxado/removido, mudando o critério de aceite de #303). Qualquer das saídas
+**altera requisitos** — vedado à QA. A QA não reescreve a suíte de regressão de
+outra entrega nem enfraquece o critério de #303 sem decisão de escopo.
+
+**Questões que o planejamento deve resolver (revisar-escopo):**
+
+1. **Grupo D:** reconciliar o eixo "Recuperação de interrupção transitória" de
+   #303 com a ADR #217. Opções: (a) incluir no escopo de #303 a fronteira
+   idempotente da seção 4 (chave estável, journal/outbox, interposição real,
+   pós-condição, operações declarativas) — reconhecendo que isso implica tocar o
+   modelo de execução/auto-aprovação hoje fora de escopo; (b) reduzir #303 ao que
+   a ADR permite sem a fronteira (`UNKNOWN_OUTCOME` *fail-closed* + preservação
+   de sessão + observabilidade, retry inline **apenas** para
+   `DEFINITE_NOT_STARTED` comprovado mecanicamente) e reescrever CT-10..CT-13
+   conforme; ou (c) abrir uma entrega dedicada para a fronteira idempotente e
+   deixar #303 só com os eixos A/B/C/E + a parte segura de recuperação.
+2. **Grupo A/CT-06:** decidir a **precedência de contrato** entre #303 e a suíte
+   congelada `test_agent_failure_detection.py`, e **fixar o formato real do
+   "bloco final de resumo normal" do kiro-cli** (o reconhecedor estrutural). Sem
+   esse formato, CT-06 não é implementável sem ambiguidade. Decidido isso, a QA
+   atualiza CT-06 e a suíte afetada de forma consistente.
+
+**O que permanece válido e pronto (sem conflito), para quando o escopo voltar:**
+
+- **A (parte não-conflitante):** classificação só-por-canais ignorando a
+  narrativa — CT-01/CT-05 (XPASS sinaliza entrega), CT-02/CT-03/CT-04 (já fixam a
+  fronteira sobre o código atual).
+- **B — Caminhos de apoio:** CT-07 (resolução por item, não cancelar o lote) +
+  CT-08 (fonte única `contexts/templates/`).
+- **C — Contexto:** CT-09/CT-09b (tabelas preenchidas; congelado sem precedência;
+  `pipe_context.json` legado não sombreia o steering).
+- **E — Documentação:** CT-15 (`README.md` ainda traz `model:
+  claude-sonnet-4-20250514`; corrigir para identificador válido + guarda
+  `MODELOS_VALIDOS`).
+- **D (config):** CT-14 (validação/defaults de `retry.*`) é implementável
+  independentemente da fronteira — a decisão do planejamento sobre o Grupo D pode
+  mantê-la ou ajustá-la.
+
+> Esta reconciliação **não altera** nenhum critério de aceitação nem a
+> arquitetura: apenas registra os dois conflitos verificados e os encaminha ao
+> fórum competente (planejamento). O esqueleto de testes e a rastreabilidade
+> abaixo permanecem como especificados.
+
+---
+
 ## ⚠️ Conflito de arquitetura a resolver antes/durante o desenvolvimento
 
 A issue #303 pede, no eixo "Recuperação de interrupção transitória", **retry
