@@ -371,6 +371,12 @@ def check_config() -> dict:
     validate_max_attempts(config)
     validate_retry(config)
 
+    # agent_circuit_break (#306): bloco opcional de RAIZ (fora de `boards`, que
+    # enumera todo dict como board). Validado antes de qualquer alteração de
+    # estado (check_config roda antes de InstanceLock.acquire em main()).
+    from src.core.agent_circuit_break import validate_agent_circuit_break
+    validate_agent_circuit_break(config)
+
     project = _require(config, "project", "pipe.yml")
     _validate_project(project)
 

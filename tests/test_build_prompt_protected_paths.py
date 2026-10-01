@@ -196,6 +196,30 @@ class TestAssertNoProtected:
         with pytest.raises(ValueError, match="pipe.lock"):
             _assert_no_protected(prompt)
 
+    def test_guard_levanta_para_agent_circuit_break(self):
+        """CT-20 (#306): o arquivo de estado do limitador é protegido no prompt."""
+        if _assert_no_protected is None:
+            pytest.skip("_assert_no_protected não implementada ainda")
+        prompt = "Leia .pipe/agentCircuitBreak.json para ver a contagem."
+        with pytest.raises(ValueError, match="agentCircuitBreak.json"):
+            _assert_no_protected(prompt)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Extensão #306 — arquivo de estado do limitador em PROTECTED_PATHS (CT-20)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCircuitBreakStateProtegido:
+    """O arquivo de estado do limitador de reexecuções (#306) é estado interno
+    e deve constar em PROTECTED_PATHS (RNF-10)."""
+
+    def test_arquivo_de_estado_em_protected_paths(self):
+        from src.core.agent_circuit_break import STATE_FILE
+        assert str(STATE_FILE) in PROTECTED_PATHS
+
+    def test_padrao_declarado(self):
+        assert ".pipe/agentCircuitBreak.json" in PROTECTED_PATHS
+
     def test_guard_levanta_com_path_absoluto_pipe_lock(self):
         if _assert_no_protected is None:
             pytest.skip("_assert_no_protected não implementada ainda")

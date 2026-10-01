@@ -305,6 +305,43 @@ libera todas as issues imediatamente.
 > 1.9.0). Se o seu `pipe.yml` já a declara, o comportamento muda ao atualizar.
 > Para manter o comportamento anterior, remova a chave ou defina `0`.
 
+### Limitador de reexecuções por contexto (`agent_circuit_break`)
+
+Mecanismo **opt-in e distinto do cooldown**: enquanto o cooldown apenas **espaça**
+reexecuções (sem teto), o limitador impõe um **teto** de execuções por janela de
+tempo. Conta toda entrega ao agente por contexto `(board, coluna, issue)` no
+instante da entrega (independe do resultado) e, com a política configurada,
+**bloqueia a execução excedente antes de iniciar**, marca a issue com
+`need_human`, publica um comentário acionável idempotente e **zera a franquia**
+do contexto (a remoção de `need_human` concede uma nova franquia completa de `N`).
+
+```yaml
+agent_circuit_break:    # opcional, na RAIZ (fora de 'boards'); ausente = inativo
+  executions: 5         # N: máximo de execuções no contexto (inteiro >= 1)
+  window: 3600          # T: janela em segundos (inteiro >= 1)
+```
+
+- **Opt-in estrito:** sem o bloco, nada é bloqueado e o comportamento atual é
+  preservado — a contagem interna continua ocorrendo.
+- **Identidade do contexto:** `(board, coluna, issue)`. Mudar de coluna reinicia
+  a contagem (contexto novo, sem herança), inclusive ao revisitar coluna já usada.
+- **Janela (bordas):** contam só ocorrências com idade **estritamente menor que
+  `T`** (idade igual a `T` já expira).
+- **Isolamento:** uma issue bloqueada **não trava a fila** — é pulada por
+  `keep_task` (via `need_human`) e as demais seguem sendo processadas.
+- **Persistente:** o estado sobrevive a reinício (ao contrário do cooldown, que é
+  por processo). O arquivo `.pipe/agentCircuitBreak.json` é estado interno
+  protegido (nunca exposto a agente/comentário/log), gravado atomicamente.
+- **Validação na inicialização:** configuração parcial/inválida falha na
+  verificação de configuração, antes de qualquer alteração de estado, citando o
+  caminho do campo. Com a política ativa, o adaptador de board precisa ter
+  capacidade real de aplicar label (`need_human`); caso contrário, a esteira
+  falha na inicialização.
+
+> **Cooldown × Limitador:** o cooldown **desacelera**; o limitador **contém e
+> pede ajuda humana**. Os dois coexistem sem interferência. Runbook completo:
+> [`doc/runbook/limitador-reexecucoes-agente.md`](doc/runbook/limitador-reexecucoes-agente.md).
+
 ### Resolução automática de bloqueios
 
 Uma issue com `/blocked_by`/`/blocks` no body não avança. Como o GitHub mantém
@@ -566,6 +603,7 @@ Padrões protegidos (`PROTECTED_PATHS`):
 | `.pipe/changeQueue.json` | Fila persistente de sincronismo |
 | `.pipe/throttle.json` | Estado do throttle de rate limit |
 | `.pipe/throttle-*.json` | Estado do throttle por escopo |
+| `.pipe/agentCircuitBreak.json` | Estado do limitador de reexecuções por contexto (#306) |
 
 ## Anotações no body (comandos `@---`)
 

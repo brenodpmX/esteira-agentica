@@ -714,7 +714,52 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
         )
         return None
 
+    # ── Limitador de reexecuções por contexto (#306) ──────────────────────────
+    # Fonte única da contagem: conta a entrega no instante da entrega (independe
+    # do resultado) e bloqueia ANTES do dispatch quando o contexto excede o
+    # limite. Fail-closed: falha de persistência/integridade NEGA a admissão.
+    # Sem política configurada, a contagem interna ocorre e nada é bloqueado.
+    if not _admit_circuit_break(config, board_id, col_id, issue):
+        return None
+
     return _dispatch_with_recovery(config, adapter, params, board_id, col_id)
+
+
+def _admit_circuit_break(config: dict, board_id: str, col_id: str, issue: dict) -> bool:
+    """Avalia a admissão da entrega no limitador (#306).
+
+    Retorna True se o agente pode ser despachado; False se bloqueado (teto
+    atingido) ou negado por falha fechada (persistência/integridade). O estado
+    de contagem/bloqueio é persistido de forma atômica e protegida.
+
+    O sinal de retomada humana (`need_human` ainda presente no body) é derivado
+    de `_is_blocked`: `keep_task` não seleciona issues com `need_human`, logo
+    quando a admissão é alcançada com um `trip` persistido, a label já foi
+    removida — retomada humana que concede franquia nova.
+    """
+    from src.core.agent_circuit_break import (
+        CircuitBreaker, CircuitBreakStateError, resolve_policy,
+    )
+
+    policy = resolve_policy(config)
+    issue_id = issue["id"]
+    need_human = _is_blocked(issue)
+    try:
+        decision = CircuitBreaker(policy, board).admit(
+            board_id, col_id, issue_id, need_human_present=need_human
+        )
+    except CircuitBreakStateError as exc:
+        # Fail-closed: erro de integridade/persistência nega a admissão desta
+        # issue, sem assumir contagem vazia e sem iniciar o agente.
+        log.error(
+            "CircuitBreak",
+            f"[{board_id}] #{issue_id} admissão negada - erro de integridade do "
+            f"limitador: {exc}",
+            event="agent_circuit_break_admission_error",
+            board_id=board_id, issue_id=str(issue_id),
+        )
+        return False
+    return decision.admitted
 
 
 def compose_execution_record(adapter, prompt: str, continuation_prompt: str | None,
@@ -932,6 +977,19 @@ def main():
             board.check_access(config)
         except BoardAccessError as e:
             log.error("Startup", f"Permissões insuficientes - esteira não iniciada: {e}")
+            raise SystemExit(1)
+
+        # Gate de capacidade do limitador (#306): com a política ativa, o
+        # adaptador PRECISA ter capacidade real de aplicar label (need_human).
+        # Um adaptador que herda o default no-op de BoardPort faria a sinalização
+        # de bloqueio parecer aplicada sem efeito — falha fechada na init.
+        from src.core.agent_circuit_break import (
+            check_label_capability, CircuitBreakStateError,
+        )
+        try:
+            check_label_capability(config, adapter)
+        except CircuitBreakStateError as e:
+            log.error("Startup", f"Capacidade ausente - esteira não iniciada: {e}")
             raise SystemExit(1)
 
         board_startup_sync(config)
