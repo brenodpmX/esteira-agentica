@@ -222,6 +222,35 @@ class BoardPort(ABC):
         """Remove um item de um project (via deleteProjectV2Item)."""
         log.warning("Board", "remove_from_board não implementado neste adapter")
 
+    # ── Operações estruturais de retirada segura de coluna (#305) ─────────────
+    #
+    # A reconciliação estrutural de retirada de coluna separa DUAS operações
+    # distintas sobre o board remoto, para que a política de decisão
+    # (validar/drenar/confirmar) controle QUANDO uma opção pode ser removida:
+    #
+    #   prepare_structure(boards) — aditiva/não destrutiva: cria boards/campo
+    #       Status/colunas ausentes preservando TODAS as opções remotas
+    #       existentes (inclusive as em vias de retirada). NUNCA remove opção.
+    #   contract_column(board_id, final_columns) — substitui a lista exata de
+    #       opções do Status pela lista informada, preservando os identificadores
+    #       das opções que permanecem. Única operação que remove opção; só é
+    #       chamada pelo núcleo de decisão após confirmação de origem vazia.
+    #   remote_columns(board_id) — lista ordenada dos nomes das opções de Status
+    #       publicadas no board remoto (fonte para detectar colunas retiradas).
+
+    def prepare_structure(self, boards: list[dict]) -> None:
+        """Prepara a estrutura remota de forma não destrutiva (nunca remove opção)."""
+        log.warning("Board", "prepare_structure não implementado neste adapter")
+
+    def contract_column(self, board_id: str, final_columns: list[str]) -> None:
+        """Contrai o Status do board para a lista final de colunas informada."""
+        log.warning("Board", "contract_column não implementado neste adapter")
+
+    def remote_columns(self, board_id: str) -> list[str]:
+        """Nomes das opções de Status publicadas no board remoto (ordenadas)."""
+        log.warning("Board", "remote_columns não implementado neste adapter")
+        return []
+
 
 class Board:
     """Core de boards - usa port para operações."""
@@ -241,21 +270,7 @@ class Board:
 
     def sync_boards(self, config: dict):
         """Extrai boards do config e sincroniza via port."""
-        boards = []
-        for board_id, board_cfg in config.get("boards", {}).items():
-            if board_id == "platform":
-                continue
-            if not isinstance(board_cfg, dict):
-                continue
-            columns = list(board_cfg.get("columns", {}).keys())
-            boards.append({
-                "id": board_id,
-                "name": board_cfg.get("name"),
-                "columns": columns
-            })
-        # Ordena por prioridade
-        boards.sort(key=lambda b: config["boards"][b["id"]].get("priority", 999))
-        self._port.sync_boards(boards)
+        self._port.sync_boards(self._boards_from_config(config))
 
     def list_issues(self, board_id: str) -> list[Issue]:
         return self._port.list_issues(board_id)
@@ -315,6 +330,44 @@ class Board:
     def remove_from_board(self, board_id: str, issue_id: str):
         """Remove um item de um project (via deleteProjectV2Item)."""
         self._port.remove_from_board(board_id, issue_id)
+
+    # ── Operações estruturais de retirada segura de coluna (#305) ─────────────
+
+    def prepare_boards(self, config: dict):
+        """Preparação não destrutiva da estrutura remota a partir do config.
+
+        Extrai boards do config (como `sync_boards`) e delega ao port a
+        preparação aditiva: cria boards/campo Status/colunas ausentes e preserva
+        TODAS as opções remotas existentes, inclusive as em vias de retirada.
+        """
+        boards = self._boards_from_config(config)
+        self._port.prepare_structure(boards)
+
+    def contract_column(self, board_id: str, final_columns: list[str]):
+        """Contrai o Status do board para a lista final informada (remove opções)."""
+        self._port.contract_column(board_id, final_columns)
+
+    def remote_columns(self, board_id: str) -> list[str]:
+        """Nomes das opções de Status publicadas no board remoto (ordenadas)."""
+        return self._port.remote_columns(board_id)
+
+    @staticmethod
+    def _boards_from_config(config: dict) -> list[dict]:
+        """Extrai [{id, name, columns}] dos boards do config, ordenado por priority."""
+        boards = []
+        for board_id, board_cfg in config.get("boards", {}).items():
+            if board_id == "platform":
+                continue
+            if not isinstance(board_cfg, dict):
+                continue
+            columns = list(board_cfg.get("columns", {}).keys())
+            boards.append({
+                "id": board_id,
+                "name": board_cfg.get("name"),
+                "columns": columns,
+            })
+        boards.sort(key=lambda b: config["boards"][b["id"]].get("priority", 999))
+        return boards
 
     def apply_commands(self, board_id: str, issue_id: str, cmds, known: dict = None) -> dict:
         """Aplica os comandos anotados (IssueCommands) como atributos no board.

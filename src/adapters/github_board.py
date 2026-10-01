@@ -710,6 +710,127 @@ class GitHubBoardAdapter(BoardPort):
 
         log.info("GitHub", "Boards sincronizados")
 
+    # ── Operações estruturais de retirada segura de coluna (#305) ─────────────
+
+    def prepare_structure(self, boards: list[dict]) -> None:
+        """Preparação NÃO destrutiva da estrutura remota.
+
+        Cria boards/campo Status/colunas ausentes preservando TODAS as opções
+        remotas existentes (inclusive opções em vias de retirada que não estão
+        na config desejada). NUNCA remove uma opção — essa é a diferença para
+        `sync_boards`: a contração (remoção de opção) é responsabilidade
+        exclusiva do núcleo de decisão via `contract_column`, após drenar e
+        confirmar a origem vazia.
+
+        A lista efetiva publicada passa a ser: opções existentes (na ordem
+        remota, com ids preservados) seguida das colunas desejadas ainda ausentes.
+        """
+        self._penalty_check()
+
+        if not self._repo:
+            log.warning("GitHub", "Repositório não configurado")
+            return
+
+        if self._projects is None:
+            self._projects = {}
+
+        owner = self._repo.split("/")[0]
+        owner_id, owner_type = self._resolve_owner(owner)
+        projects = self._list_projects(owner, owner_type)
+        projects_by_title = {p["title"]: p for p in projects}
+
+        for board in boards:
+            board_id = board["id"]
+            board_name = board["name"]
+            columns = board["columns"]
+
+            project = projects_by_title.get(board_name)
+            if not project:
+                log.info("GitHub", f"Criando board '{board_name}'")
+                project = self._create_project(owner_id, board_name)
+                projects_by_title[board_name] = project
+
+            status_field = self._get_status_field(project["id"], board_name)
+            if not status_field:
+                log.info("GitHub", f"Criando campo Status para '{board_name}': {columns}")
+                self._create_status_field(project["id"], columns, board_name)
+                status_field = self._get_status_field(project["id"], board_name)
+            else:
+                existing = {o["name"]: o["id"] for o in status_field.get("options", [])}
+                current_order = [o["name"] for o in status_field.get("options", [])]
+                # União aditiva: preserva TODAS as opções remotas (ordem/ids) e
+                # acrescenta ao final apenas as colunas desejadas ainda ausentes.
+                missing = [c for c in columns if c not in existing]
+                if missing:
+                    effective = current_order + missing
+                    log.info("GitHub",
+                             f"Preparando colunas de '{board_name}' | criadas: {missing} "
+                             f"| preservadas: {current_order}")
+                    self._update_status_options(
+                        status_field["id"], effective, existing, board_name)
+                    status_field = self._get_status_field(project["id"], board_name)
+
+            self._projects[board_id] = {
+                "project_id": project["id"],
+                "status_field_id": status_field["id"] if status_field else None,
+                "options": {
+                    o["name"]: o["id"]
+                    for o in (status_field.get("options", []) if status_field else [])
+                },
+            }
+
+        log.info("GitHub", "Estrutura de boards preparada (não destrutiva)")
+
+    def contract_column(self, board_id: str, final_columns: list[str]) -> None:
+        """Contrai o Status do board para `final_columns`, removendo as demais.
+
+        Substitui exatamente a lista de opções do Status pela lista informada,
+        preservando os identificadores das opções que permanecem. É a ÚNICA
+        operação que remove opção; o núcleo de decisão só a aciona após confirmar
+        a origem vazia por leitura imediatamente anterior.
+
+        Verificação remota logo após contrair (RNF-11): relê o campo Status e
+        atualiza o cache de opções; registra um aviso se a estrutura publicada
+        divergir do esperado (janela residual contra escritor externo).
+        """
+        self._penalty_check()
+        meta = self._board_meta(board_id)
+        project_id = meta["project_id"]
+        status_field = self._get_status_field(project_id)
+        if not status_field:
+            log.warning("GitHub", f"[{board_id}] campo Status ausente — contração ignorada")
+            return
+        existing = {o["name"]: o["id"] for o in status_field.get("options", [])}
+        log.info("GitHub", f"[{board_id}] Contraindo Status para {final_columns}",
+                 operation="contract_column", board_id=board_id, columns=final_columns)
+        self._update_status_options(status_field["id"], final_columns, existing, board_id)
+
+        # Verificação remota pós-contração.
+        status_field = self._get_status_field(project_id)
+        published = [o["name"] for o in (status_field.get("options", []) if status_field else [])]
+        if published != final_columns:
+            log.warning("GitHub",
+                        f"[{board_id}] pós-contração: estrutura publicada {published} "
+                        f"difere do esperado {final_columns}",
+                        operation="contract_column", board_id=board_id)
+        self._projects[board_id] = {
+            "project_id": project_id,
+            "status_field_id": status_field["id"] if status_field else None,
+            "options": {
+                o["name"]: o["id"]
+                for o in (status_field.get("options", []) if status_field else [])
+            },
+        }
+
+    def remote_columns(self, board_id: str) -> list[str]:
+        """Nomes das opções de Status publicadas no board remoto (ordenadas)."""
+        self._penalty_check()
+        meta = self._board_meta(board_id)
+        status_field = self._get_status_field(meta["project_id"])
+        if not status_field:
+            return []
+        return [o["name"] for o in status_field.get("options", [])]
+
     def list_issues(self, board_id: str) -> list[Issue]:
         self._penalty_check()
         meta = self._board_meta(board_id)

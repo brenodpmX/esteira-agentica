@@ -638,6 +638,90 @@ eventos no bloco `@---` (sem tocar no snapshot); como o arquivo fica mais novo
 que o `body_mtime` salvo, o ciclo seguinte gera um `change-up` que sobe os
 status/labels resultantes — mantendo tudo sincronizado.
 
+## Retirada segura de colunas (`column-migrations`)
+
+Retirar uma coluna da configuração de um board nunca pode deixar issues sem
+classificação. A reconciliação estrutural (no startup / full sync) trata a
+retirada de coluna como uma operação protegida: detecta colunas publicadas no
+board remoto ausentes da configuração e, para cada uma, decide por
+**validar → drenar → confirmar vazio → contrair**.
+
+- Uma coluna **vazia** é retirada diretamente, após uma leitura remota
+  imediatamente anterior confirmar zero issues (não exige destino).
+- Uma coluna **ocupada** só é retirada depois que todas as suas issues forem
+  migradas para um único destino explícito **do mesmo board** e uma leitura
+  remota confirmar a origem vazia.
+- Destino **ausente ou inválido bloqueia** a retirada sem mover nenhuma issue nem
+  remover a opção — a classificação atual é preservada.
+- Qualquer falha no meio (indisponibilidade, rate limit, encerramento) preserva o
+  estado parcial (issues já movidas no destino, restantes na origem, origem ainda
+  publicada); a próxima execução retoma movendo apenas o que faltava, derivando o
+  trabalho **do estado remoto** (sem journal paralelo).
+
+> Esta é uma **proteção para mudança estrutural de board**, não uma regra geral
+> de movimentação de trabalho entre colunas.
+
+### Declaração do destino
+
+O destino de migração é declarado por board, no mapa opcional
+`boards.<board>.column-migrations`, associando cada coluna retirada a exatamente
+uma coluna de destino do mesmo board (chaves e valores são **ids** de coluna):
+
+```yaml
+boards:
+  entrega:
+    name: Entrega
+    columns:
+      backlog:
+        name: Backlog
+      done:
+        name: Done
+    column-migrations:
+      revisao: done        # issues da coluna 'revisao' (removida) vão para 'done'
+```
+
+A declaração é **opcional**: boards sem `column-migrations` mantêm o
+comportamento estrutural vigente. A validação de forma (em `pipe.yml`) exige um
+**mapa de strings não-vazias**; tipo diferente, chave/valor vazio, nulo ou
+não-string é rejeitado com `ConfigError` citando
+`boards.<board>.column-migrations` e a entrada que falhou. A validação
+**semântica** (destino existir no mesmo board, ser diferente da origem e não ser
+outra coluna também em retirada no mesmo ciclo) ocorre em tempo de reconciliação.
+
+### Ciclo de vida do mapa
+
+1. **Antes de remover a coluna da config:** declare a entrada
+   `<origem>: <destino>` em `column-migrations` e, no mesmo commit, remova a
+   coluna de origem da lista `columns`. A coluna de destino deve existir em
+   `columns`.
+2. **Enquanto a origem tem issues:** a origem permanece publicada no board
+   remoto; a esteira migra as issues ao destino a cada ciclo até a origem
+   esvaziar e então contrai a opção.
+3. **Depois de concluída:** a entrada em `column-migrations` pode ser removida —
+   a origem já não existe remotamente, então não há mais o que migrar. Deixá-la
+   declarada é inofensivo (sem origem publicada, nada é acionado).
+
+> **Atenção:** remover a entrada de destino **antes** de uma origem ocupada
+> concluir faz a próxima tentativa **bloquear** (`destino_ausente`), sem alterar
+> nenhuma issue; os logs apontam a correção necessária na configuração.
+
+### Evidência (observabilidade)
+
+Cada tentativa (por origem) emite exatamente um evento
+`column_migration_attempt` no log diário da esteira (`logs/<data>.json`), com os
+campos `board`, `source`, `destination`, `initial_count`, `moved_count`,
+`remaining_count`, `result` e `reason`. `completed` é registrado em nível
+**INFO**; `blocked`/`interrupted` em **WARNING**, com mensagem auto-contida
+(board, origem e motivo). A evidência é consultável **sem** abrir arquivos
+internos protegidos (`.pipe/...`) e não contém corpo de issue, credenciais nem
+estado protegido.
+
+Motivos padronizados: bloqueio — `destino_ausente`, `destino_inexistente`,
+`destino_mesmo_board_invalido`, `destino_e_origem`, `destino_tambem_retirado`;
+interrupção — `sem_progresso`.
+
+Runbook detalhado: [`doc/runbook/retirada-colunas.md`](doc/runbook/retirada-colunas.md).
+
 ## Otimização de Sincronização
 
 Para reduzir o número de requisições ao board por issue, o sync combina duas
@@ -814,3 +898,4 @@ penalty indevidamente.
 - [Changelog](CHANGELOG.md)
 - [Runbook de operação Docker](doc/runbook/docker.md)
 - [Runbook de homologação — Branches não mergeadas (#73)](doc/runbook/homologacao-branches-nao-mergeadas.md)
+- [Runbook — Retirada segura de colunas (#305)](doc/runbook/retirada-colunas.md)

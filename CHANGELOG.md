@@ -2,6 +2,91 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.17.0] - 2026-10-01
+
+### Adicionado
+
+- **Retirada segura de colunas de board com migração, bloqueio, retomada e
+  evidência** (issue #305). A reconciliação estrutural (startup / full sync)
+  passa a tratar a retirada de uma coluna da configuração como operação
+  protegida, pelo ciclo **validar → drenar → confirmar vazio → contrair**, para
+  nunca deixar issues sem classificação:
+  - Novo **núcleo de decisão** `src/core/column_withdrawal.py`: detecta colunas
+    publicadas no board remoto ausentes da configuração (candidatas à retirada),
+    classifica a origem por leitura remota, valida o destino, drena todas as
+    issues ao destino relendo até confirmar origem vazia e só então contrai.
+    Coluna vazia é retirada direta (sem destino), confirmada por leitura remota
+    imediatamente anterior. A política fica no núcleo, não na camada de acesso
+    ao provedor.
+  - **Falha e retomada:** indisponibilidade, penalidade de rate limit ou
+    encerramento preservam o estado parcial (issues já movidas no destino,
+    restantes na origem, origem ainda publicada); a próxima execução deriva o
+    trabalho restante **do estado remoto**, sem journal nem estado persistente
+    paralelo. Ausência de progresso encerra a tentativa como `interrupted` /
+    `sem_progresso`, sem laço infinito.
+  - **Isolamento:** cada coluna retirada e cada board é tratado de forma
+    independente; bloqueio ou interrupção de uma origem não impede a
+    reconciliação das demais.
+- **Mapa opcional de destinos por board** `boards.<board>.column-migrations`
+  (`src/core/config.py`: `validate_column_migrations`). Associa cada coluna
+  retirada a exatamente uma coluna de destino do mesmo board. A validação de
+  **forma** exige um mapa de strings não-vazias (origem → destino); tipo
+  diferente, chave/valor vazio, nulo ou não-string é rejeitado com `ConfigError`
+  citando `boards.<board>.column-migrations` e a entrada que falhou. A ausência
+  do mapa é válida (compatibilidade: boards sem retirada de coluna mantêm o
+  comportamento estrutural vigente). A validação **semântica** (destino existir
+  no mesmo board, ser diferente da origem e não ser outra coluna também em
+  retirada no ciclo) ocorre em tempo de reconciliação.
+- **Evidência estruturada por tentativa:** cada origem avaliada emite
+  exatamente um evento `column_migration_attempt` no log diário
+  (`logs/<data>.json`), com os campos `board`, `source`, `destination`,
+  `initial_count`, `moved_count`, `remaining_count`, `result` e `reason`.
+  `completed` em nível **INFO**; `blocked` e `interrupted` em **WARNING**, com
+  mensagem auto-contida (board, origem e motivo). A evidência é consultável
+  **sem** abrir arquivos internos protegidos (`.pipe/...`) e não vaza corpo de
+  issue, credenciais nem estado protegido. Motivos padronizados de bloqueio:
+  `destino_ausente`, `destino_inexistente`, `destino_mesmo_board_invalido`,
+  `destino_e_origem`, `destino_tambem_retirado`; de interrupção: `sem_progresso`.
+- **Primitivas estruturais no `BoardPort` / `Board`** (`src/core/board.py`):
+  `prepare_structure`, `contract_column` e `remote_columns` (com defaults no-op
+  no port para não quebrar adapters/fakes existentes); `Board` expõe
+  `prepare_boards`, `contract_column`, `remote_columns` e o helper
+  `_boards_from_config` (reaproveitado por `sync_boards`).
+
+### Alterado
+
+- **Preparação de estrutura remota agora é estritamente aditiva**
+  (`src/adapters/github_board.py`): `prepare_structure` cria boards/campo
+  `Status`/colunas ausentes preservando **todas** as opções remotas existentes
+  e seus ids (inclusive as em vias de retirada) e **nunca** remove opção. A
+  remoção de opção passa a ser uma operação distinta — `contract_column` —, que
+  substitui a lista exata preservando os ids que permanecem e faz verificação
+  remota logo após a contração (janela residual, RNF-11). `remote_columns` lê as
+  opções publicadas do campo `Status`.
+- **Ordem do full sync** (`src/__main__.py::board_startup_sync`): a estrutura
+  remota passa a ser **reconciliada antes** de o snapshot ser gravado. O
+  snapshot reflete a estrutura **efetiva** (inclui origens retidas ainda
+  publicadas) e os diretórios locais dessas origens são preservados; uma falha
+  genérica de reconciliação **não** sobrescreve o snapshot anterior
+  (`PenaltyException` é tratada com `sleep`).
+
+### Detalhes
+
+- **Fora de escopo desta entrega:** migração de issues entre boards diferentes,
+  destino diferente por issue, arquivamento/fechamento como destino, limite de
+  WIP por coluna, fluxo de autorização/aprovação para retirar coluna, SLA de
+  conclusão, rollback dos itens já movidos após falha parcial e limpeza
+  automática de issues que já estavam sem `Status` antes da tentativa.
+- **Limitação documentada (RNF-11):** o provedor não oferece remoção condicional
+  atômica de opção nem trava contra escritor externo; a janela residual entre a
+  confirmação de vazio e a contração é mínima e verificada logo após contrair,
+  mas não é eliminável apenas pela aplicação. Um item que apareça sem `Status`
+  nessa janela é reconciliado para o destino explícito quando inequívoco.
+- Documentação pública: nova seção "Retirada segura de colunas
+  (`column-migrations`)" no `README.md` e novo runbook
+  `doc/runbook/retirada-colunas.md` (declaração do destino, ciclo de vida do
+  mapa, evidência nos logs, diagnóstico e garantias/limites).
+
 ## [1.16.0] - 2026-10-01
 
 ### Adicionado
