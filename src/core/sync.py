@@ -628,58 +628,79 @@ def _deps_deltas_from_snapshot(issue, issue_data: dict) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# sync_remote - busca mudanças do board remoto desde last_board_update
+# sync_remote - sincronização única de um board (down)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
-    """Busca mudanças remotas desde last_board_update e enfileira eventos.
+    """Sincroniza um board contra o estado local, reconciliando o board inteiro.
 
-    Fluxo incremental por-ciclo, sobre o fetch completo do board atual:
-      - create-down / change-down: issues com `updated_at > since`;
-      - delete-down: issues presentes no snapshot mas AUSENTES do fetch atual —
-        arquivadas (o ProjectV2 remove itens arquivados da connection `items`,
-        eles NÃO voltam com isArchived=true) ou deletadas no board.
+    Caminho único de descoberta remota (down): a cada acionamento reconcilia o
+    board completo contra o snapshot, sem corte por data da última atualização
+    e sem bifurcação por modo. Em uma única passada enfileira:
+      - create-down (fullsync): issue presente no board e ausente do snapshot —
+        o body é montado com as dependências (from_issue) e não há baseline
+        local para preservá-las;
+      - change-down (fullsync): issue cujas propriedades divergem do snapshot
+        (updated_at mais recente ou coluna diferente). O fullsync reconcilia
+        também as dependências de bloqueio (blocked_by/blocks), não só as
+        propriedades simples;
+      - delete-down: issue presente no snapshot (com id definido) e AUSENTE do
+        board — arquivada (o ProjectV2 remove itens arquivados da connection
+        `items`) ou deletada no board.
 
-    A detecção de ausência antes só existia na varredura completa
-    (`detect_board_changes`, startup/diária); por isso uma issue arquivada
-    ficava no snapshot até o full sync do dia seguinte, congelando boards
-    `parallel:false`. Aqui ela passa a ocorrer a cada ciclo, sem custo extra de
-    API: o fetch completo (`list_issues`) já era feito por dentro de
-    `list_issues_since`. O fetch é atômico (rate limit levanta PenaltyException
-    em vez de devolver página parcial), então uma leitura truncada não gera
-    falso-positivo de deleção.
+    O fetch do board é atômico: o adapter levanta PenaltyException em vez de
+    devolver página parcial, então uma leitura truncada por limite de
+    requisições propaga a exceção ANTES de qualquer decisão de poda — nunca é
+    interpretada como ausência de itens. A poda só se aplica a itens que o
+    snapshot já conhecia com identidade definida no board (id não nulo).
+
+    Emite ao final um log de observabilidade no contrato mínimo:
+      sincronizacao board=<id> criados=<n> atualizados=<n> removidos=<n> resultado=<ok|limite|erro>
     """
     snap = Snapshot(board_id).load()
-    since = snap.last_board_update
 
-    if not since:
-        # Sem data anterior, usa detect_board_changes (full)
-        board_obj.detect_board_changes(board_id, snap, queue)
-        return
+    # Fetch atômico primeiro: se o board sinalizar limite, a exceção propaga
+    # aqui, antes de qualquer avaliação de ausência/poda (RN-02 / atomicidade).
+    try:
+        remote_issues = board_obj.list_issues(board_id)
+    except PenaltyException:
+        log.info("Sync",
+                 f"sincronizacao board={board_id} criados=0 atualizados=0 "
+                 f"removidos=0 resultado=limite",
+                 board_id=board_id, resultado="limite")
+        raise
 
-    remote_issues = board_obj.list_issues(board_id)
     remote_by_id = {str(i.id): i for i in remote_issues}
     snapshot_by_id = {str(i["id"]): i for i in snap.issues if i.get("id")}
-    max_updated = since
 
-    # Criadas/modificadas desde `since` (incremental leve).
+    created = 0
+    updated = 0
+    removed = 0
+
+    # Criadas/modificadas: reconcilia o board inteiro contra o snapshot, sem
+    # corte por data — toda divergência (nova, updated_at maior ou coluna
+    # diferente) gera evento nesta mesma passada.
     for issue in remote_issues:
-        if not (issue.updated_at and issue.updated_at > since):
-            continue
         issue_id = str(issue.id)
-        if issue.updated_at > max_updated:
-            max_updated = issue.updated_at
-
         known = snapshot_by_id.get(issue_id)
+
         if known is None:
-            # Create precisa de fullsync: monta o body com deps (from_issue) e
-            # não há baseline no snapshot para preservá-las.
             if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,
                                        board=board_id, fullsync=True)):
+                created += 1
                 log.trace("Sync", f"[{board_id}] #{issue_id} create-down")
-        else:
-            if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id, board=board_id)):
+            continue
+
+        remote_at = issue.updated_at or ""
+        snap_at = known.get("updated_at") or ""
+        diverged = (remote_at and snap_at and remote_at > snap_at) or \
+                   (issue.column != known.get("column"))
+        if diverged:
+            # fullsync sempre: reconcilia propriedades + dependências de bloqueio.
+            if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id,
+                                       board=board_id, fullsync=True)):
                 known["status"] = SyncEvent.CHANGE_DOWN.value
+                updated += 1
                 log.trace("Sync", f"[{board_id}] #{issue_id} change-down")
 
     # Ausentes do fetch atual -> delete-down (arquivadas ou deletadas no board).
@@ -687,11 +708,16 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
         if issue_id not in remote_by_id:
             if queue.add(ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)):
                 known["status"] = SyncEvent.DELETE_DOWN.value
+                removed += 1
                 log.trace("Sync", f"[{board_id}] #{issue_id} delete-down (ausente do fetch)")
 
-    if max_updated != since:
-        snap.last_board_update = max_updated
     snap.save()
+
+    log.info("Sync",
+             f"sincronizacao board={board_id} criados={created} "
+             f"atualizados={updated} removidos={removed} resultado=ok",
+             board_id=board_id, criados=created, atualizados=updated,
+             removidos=removed, resultado="ok")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1255,8 +1281,8 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     # no BOARD a coluna conhecida do snapshot. Feito antes de qualquer decisão
     # sobre arquivos locais porque a reconciliação é do board — se dependesse de
     # movimentação local, o caso comum (arquivo já na coluna certa) deixaria o
-    # item remoto sem Status e `detect_board_changes` acusaria a mesma divergência
-    # em todo full sync, indefinidamente.
+    # item remoto sem Status e a sincronização acusaria a mesma divergência
+    # a cada ciclo, indefinidamente.
     if not remote_col and old_col:
         log.info("Sync", f"[{board_id}] #{item.id} - coluna vazia no board, "
                  f"reaplicando '{old_col}' do snapshot")

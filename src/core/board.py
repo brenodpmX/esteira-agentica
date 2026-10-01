@@ -126,11 +126,6 @@ class BoardPort(ABC):
         pass
 
     @abstractmethod
-    def list_issues_since(self, board_id: str, since: str) -> list[Issue]:
-        """Lista issues modificadas desde a data informada (ISO 8601)."""
-        pass
-
-    @abstractmethod
     def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
         """Busca uma issue específica.
 
@@ -264,9 +259,6 @@ class Board:
 
     def list_issues(self, board_id: str) -> list[Issue]:
         return self._port.list_issues(board_id)
-
-    def list_issues_since(self, board_id: str, since: str) -> list[Issue]:
-        return self._port.list_issues_since(board_id, since)
 
     def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
         return self._port.get_issue(board_id, issue_id, fullsync)
@@ -468,65 +460,3 @@ class Board:
             if bid != "platform" and isinstance(cfg, dict)
         ]
 
-    def detect_board_changes(self, board_id: str, snapshot, queue) -> int:
-        """Detecta mudanças de um board comparando com o snapshot e registra na fila.
-
-          - issue no board sem correspondência no snapshot  -> create-down
-          - issue no snapshot (com id) ausente no board      -> delete-down
-          - issue com updated_at no board > snapshot         -> change-down
-
-        Atualiza snapshot.last_board_update com a data mais recente.
-        Atualiza status das issues no snapshot conforme o evento detectado.
-        Retorna a quantidade de itens efetivamente adicionados à fila.
-        """
-        remote_issues = self._port.list_issues(board_id)
-        remote_by_id = {str(i.id): i for i in remote_issues}
-
-        snapshot_issues = snapshot.issues
-        snapshot_by_id = {
-            str(i["id"]): i for i in snapshot_issues if i.get("id") is not None
-        }
-
-        added = 0
-        max_updated = snapshot.last_board_update or ""
-
-        # Criadas ou modificadas no board
-        for issue in remote_issues:
-            issue_id = str(issue.id)
-            known = snapshot_by_id.get(issue_id)
-
-            if issue.updated_at and issue.updated_at > max_updated:
-                max_updated = issue.updated_at
-
-            if known is None:
-                if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,
-                                           board=board_id, fullsync=True)):
-                    added += 1
-                continue
-
-            remote_at = issue.updated_at or ""
-            snap_at = known.get("updated_at") or ""
-            # Coluna vazia é divergência (propagação automática sem Status).
-            # Trata-se como change-down para que _apply_change_down possa
-            # reaplicar a coluna do snapshot local ou remover o item se for inválido.
-            changed = (remote_at and snap_at and remote_at > snap_at) or \
-                      (issue.column != known.get("column"))
-            if changed:
-                # Full sync diário: reconcilia todas as propriedades + deps.
-                if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id,
-                                           board=board_id, fullsync=True)):
-                    known["status"] = SyncEvent.CHANGE_DOWN.value
-                    added += 1
-
-        # Deletadas no board (existiam no snapshot com id, sumiram do board)
-        for issue_id in snapshot_by_id:
-            if issue_id not in remote_by_id:
-                if queue.add(ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)):
-                    snapshot_by_id[issue_id]["status"] = SyncEvent.DELETE_DOWN.value
-                    added += 1
-
-        if max_updated:
-            snapshot.last_board_update = max_updated
-        snapshot.save()
-
-        return added

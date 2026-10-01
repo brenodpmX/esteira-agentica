@@ -592,12 +592,13 @@ def test_guard_e_fallback_nao_reintroduzem_item_removido(monkeypatch, tmp_path):
     assert Snapshot("b").load().issue("5") is None
 
 
-# ── detect_board_changes com coluna vazia (matriz 15) ─────────────────────────
+# ── sincronização única com coluna vazia (matriz 15) ──────────────────────────
 
 def test_detect_board_changes_coluna_vazia_detecta_diferenca(monkeypatch, tmp_path):
     """(15) Coluna vazia no remote != coluna no snapshot -> change-down."""
     monkeypatch.chdir(tmp_path)
     from src.core.snapshot import Snapshot
+    from src.core.sync import sync_remote
 
     port = FakePort()
     board = Board(port)
@@ -615,7 +616,7 @@ def test_detect_board_changes_coluna_vazia_detecta_diferenca(monkeypatch, tmp_pa
     snap.save()
 
     queue = ChangeQueue()
-    board.detect_board_changes("b", snap, queue)
+    sync_remote("b", board, queue)
 
     item = queue.getNext()
     assert item is not None

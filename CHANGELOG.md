@@ -2,6 +2,48 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.15.0] - 2026-10-01
+
+### Alterado
+
+- **Sincronização única (#304):** a descoberta remota (down) passa a ter um
+  único caminho (`sync_remote`) que, a cada acionamento, reconcilia o board
+  inteiro contra o estado local — criações (`create-down`), modificações
+  (`change-down`), poda por ausência (`delete-down`) e dependências de bloqueio
+  —, sem corte por data da última atualização e sem um acionamento diário
+  separado. Toda reconciliação vinda do board inclui as dependências
+  (`change-down` é sempre `fullsync=True`): deixa de existir reconciliação "só
+  propriedades".
+- Um item novo no board passa a existir localmente na sincronização seguinte,
+  sem esperar o antigo evento diário; dependências alteradas no board são
+  reconciliadas em toda sincronização.
+
+### Removido
+
+- Caminho de sincronização reduzida/incremental: eliminado o corte por
+  `last_board_update` como critério do que reconciliar.
+- `Board.detect_board_changes` (o antigo caminho "completo") e o acionamento
+  diário em `__main__` (`last_full_sync`). A função de setup de estrutura +
+  primeira sincronização foi renomeada de `board_full_sync` para
+  `board_startup_sync`.
+- `list_issues_since` do `BoardPort`, do `Board` e do adapter `github_board`.
+- O campo `last_board_update` do snapshot: descontinuado. Snapshots legados que
+  ainda o contenham carregam sem erro (campo ignorado e removido na reescrita).
+
+### Observabilidade
+
+- Toda sincronização de board emite um log no contrato mínimo:
+  `sincronizacao board=<id> criados=<n> atualizados=<n> removidos=<n> resultado=<ok|limite|erro>`,
+  sem qualificador de modo e sem vazar corpo de issue, caminho protegido ou
+  credencial.
+
+### Robustez
+
+- O fetch do board é atômico: uma leitura interrompida por limite de requisições
+  (`PenaltyException`) propaga antes de qualquer decisão de poda — nunca é
+  interpretada como ausência de itens (log `resultado=limite`, nenhum
+  `delete-down`).
+
 ## [1.14.1] - 2026-09-24
 
 ### Corrigido

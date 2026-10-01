@@ -379,7 +379,7 @@ class TestRegressaoCompostaInstanciaUnica:
 
         monkeypatch.setattr(m, "check_config", lambda: self._minimal_config())
         monkeypatch.setattr(m, "startup", MagicMock())
-        monkeypatch.setattr(m, "board_full_sync", MagicMock())
+        monkeypatch.setattr(m, "board_startup_sync", MagicMock())
         monkeypatch.setattr(m, "get_board_ids", lambda cfg: ["b1"])
 
         def _stop(*_a, **_k):
@@ -440,7 +440,7 @@ class TestRegressaoCompostaInstanciaUnica:
             )
 
             m.startup.assert_not_called()
-            m.board_full_sync.assert_not_called()
+            m.board_startup_sync.assert_not_called()
             connect_spy.assert_not_called()
             check_access_spy.assert_not_called()
 

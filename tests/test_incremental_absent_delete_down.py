@@ -1,11 +1,10 @@
-"""Testes do delete-down por ausência no sync incremental (`sync_remote`).
+"""Testes de poda por ausência no caminho único de sincronização (`sync_remote`).
 
-Comportamento (v1.14.0): o sync incremental por-ciclo, além de create/change-down
-por `updated_at > since`, passa a podar (delete-down) issues presentes no snapshot
-mas AUSENTES do fetch atual — arquivadas (o ProjectV2 remove itens arquivados da
-connection `items`) ou deletadas no board. Antes só a varredura completa
-(`detect_board_changes`, startup/diária) fazia isso, o que congelava boards
-`parallel:false` com uma issue terminal arquivada até o full sync do dia seguinte.
+Migrado do antigo caminho incremental: o invariante preservado é a poda
+(delete-down) de issues presentes no snapshot (com id) mas AUSENTES do fetch
+atual — arquivadas (o ProjectV2 remove itens arquivados da connection `items`)
+ou deletadas no board. A sincronização única reconcilia o board inteiro a cada
+execução, sem corte por data da última atualização.
 """
 
 import sys
@@ -37,8 +36,6 @@ class FakePort(BoardPort):
     def connect(self, config): pass
     def sync_boards(self, boards): pass
     def list_issues(self, board_id): return list(self._listed)
-    def list_issues_since(self, board_id, since):
-        return [i for i in self._listed if i.updated_at and i.updated_at > since]
     def get_issue(self, board_id, issue_id, fullsync=False):
         return Issue(id=issue_id, title="", body="", column="")
     def create_issue(self, board_id, title, body, column):
@@ -60,11 +57,10 @@ class FakePort(BoardPort):
     def unarchive_issue(self, board_id, issue_id): pass
 
 
-def _seed_snapshot(board_id, issues, last_update):
+def _seed_snapshot(board_id, issues):
     snap = Snapshot(board_id).load()
     for i in issues:
         snap.issues.append(i)
-    snap.last_board_update = last_update
     snap.save()
 
 
@@ -79,21 +75,19 @@ def _drain(queue):
     return out
 
 
-SINCE = "2026-09-24T00:00:00Z"
+SNAP_AT = "2026-09-22T00:00:00Z"
 
 
 def test_absent_from_fetch_triggers_delete_down():
     """Issue no snapshot ausente do fetch -> delete-down; a presente não some."""
     board = Board(FakePort(listed=[
         # #69 (arquivada no board) NÃO vem no fetch; #70 sim.
-        Issue(id="70", title="", body="", column="backlog",
-              updated_at="2026-09-22T00:00:00Z"),
+        Issue(id="70", title="", body="", column="backlog", updated_at=SNAP_AT),
     ]))
     _seed_snapshot("story", [
-        {"id": "69", "column": "encerrado", "status": "ok", "updated_at": SINCE},
-        {"id": "70", "column": "backlog", "status": "ok",
-         "updated_at": "2026-09-22T00:00:00Z"},
-    ], last_update=SINCE)
+        {"id": "69", "column": "encerrado", "status": "ok", "updated_at": SNAP_AT},
+        {"id": "70", "column": "backlog", "status": "ok", "updated_at": SNAP_AT},
+    ])
     q = ChangeQueue()
 
     sync_remote("story", board, q)
@@ -103,13 +97,11 @@ def test_absent_from_fetch_triggers_delete_down():
 
 def test_present_issue_not_deleted():
     board = Board(FakePort(listed=[
-        Issue(id="70", title="", body="", column="backlog",
-              updated_at="2026-09-22T00:00:00Z"),
+        Issue(id="70", title="", body="", column="backlog", updated_at=SNAP_AT),
     ]))
     _seed_snapshot("story", [
-        {"id": "70", "column": "backlog", "status": "ok",
-         "updated_at": "2026-09-22T00:00:00Z"},
-    ], last_update=SINCE)
+        {"id": "70", "column": "backlog", "status": "ok", "updated_at": SNAP_AT},
+    ])
     q = ChangeQueue()
 
     sync_remote("story", board, q)
@@ -117,14 +109,14 @@ def test_present_issue_not_deleted():
     assert _drain(q) == []  # presente e não modificada -> nenhum evento
 
 
-def test_modified_since_change_down():
+def test_modified_change_down():
     board = Board(FakePort(listed=[
         Issue(id="71", title="", body="", column="planejamento-tecnico",
-              updated_at="2026-09-24T12:00:00Z"),  # > since
+              updated_at="2026-09-24T12:00:00Z"),  # mais recente que o snapshot
     ]))
     _seed_snapshot("story", [
-        {"id": "71", "column": "backlog", "status": "ok", "updated_at": SINCE},
-    ], last_update=SINCE)
+        {"id": "71", "column": "backlog", "status": "ok", "updated_at": SNAP_AT},
+    ])
     q = ChangeQueue()
 
     sync_remote("story", board, q)
@@ -132,12 +124,12 @@ def test_modified_since_change_down():
     assert _drain(q) == [(SyncEvent.CHANGE_DOWN.value, "71")]
 
 
-def test_unknown_since_create_down():
+def test_new_issue_create_down():
     board = Board(FakePort(listed=[
         Issue(id="82", title="", body="", column="backlog",
-              updated_at="2026-09-24T12:00:00Z"),  # > since, não está no snapshot
+              updated_at="2026-09-24T12:00:00Z"),  # não está no snapshot
     ]))
-    _seed_snapshot("story", [], last_update=SINCE)
+    _seed_snapshot("story", [])
     q = ChangeQueue()
 
     sync_remote("story", board, q)
@@ -153,9 +145,9 @@ def test_delete_and_change_together():
         # #69 ausente -> delete
     ]))
     _seed_snapshot("story", [
-        {"id": "69", "column": "encerrado", "status": "ok", "updated_at": SINCE},
-        {"id": "71", "column": "backlog", "status": "ok", "updated_at": SINCE},
-    ], last_update=SINCE)
+        {"id": "69", "column": "encerrado", "status": "ok", "updated_at": SNAP_AT},
+        {"id": "71", "column": "backlog", "status": "ok", "updated_at": SNAP_AT},
+    ])
     q = ChangeQueue()
 
     sync_remote("story", board, q)

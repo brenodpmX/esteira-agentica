@@ -779,12 +779,6 @@ class GitHubBoardAdapter(BoardPort):
 
         return issues
 
-    def list_issues_since(self, board_id: str, since: str) -> list[Issue]:
-        """Lista issues modificadas desde `since` usando list_issues + filtro client-side."""
-        self._penalty_check()
-        all_issues = self.list_issues(board_id)
-        return [i for i in all_issues if i.updated_at and i.updated_at > since]
-
     def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
         self._penalty_check()
         log.info("GitHub", f"{self._tp}#{issue_id} - Buscando issue"

@@ -89,7 +89,7 @@ def _patch_main_collaborators(monkeypatch, *, startup_side_effect=None,
         MagicMock(side_effect=startup_side_effect) if startup_side_effect
         else MagicMock(),
     )
-    monkeypatch.setattr(m, "board_full_sync", MagicMock())
+    monkeypatch.setattr(m, "board_startup_sync", MagicMock())
     monkeypatch.setattr(m, "get_board_ids", lambda cfg: ["b1"])
 
     def _stop(*_a, **_k):
