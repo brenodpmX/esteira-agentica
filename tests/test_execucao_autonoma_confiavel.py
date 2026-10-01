@@ -1,27 +1,39 @@
 """Casos de teste — Execução autônoma confiável (issue #303).
 
-ESPECIFICAÇÃO (etapa "Casos de Teste"). Este arquivo é o esqueleto que o
-desenvolvimento deve implementar na issue #303. Cada teste está vinculado a um
+ESPECIFICAÇÃO (etapa "Casos de Teste"), já reconciliada com o escopo fechado
+pelo planejamento em revisar-escopo (2026-10-01). Este arquivo é o esqueleto que
+o desenvolvimento deve implementar na issue #303. Cada teste está vinculado a um
 critério de aceitação (CA) via o caso de teste CT-NN documentado em
 `doc/quality/execucao-autonoma-confiavel/test-cases.md`.
+
+Decisões de escopo incorporadas (ver cabeçalho do test-cases.md):
+
+- Grupo A: a classificação de sucesso/falha considera APENAS canais estruturados
+  (exit-code != 0, [TIMEOUT], [ERRO], saída de erro estruturada). A narrativa
+  (texto livre) NUNCA classifica. Ausência de sinal estruturado = SUCESSO. O
+  canal "ausência de resumo normal => falha" foi REMOVIDO do escopo (não há mais
+  CT-06). A suíte congelada que codifica o falso positivo (narrativa => falha)
+  é reescrita nesta entrega — #303 prevalece (ver CT-05b no test-cases.md;
+  reescrita feita em tests/test_agent_failure_detection.py pelo desenvolvimento).
+- Grupo D: recuperação alinhada à ADR retry-kiro-cli SEM a fronteira idempotente
+  da seção 4 (fora de escopo). UNKNOWN_OUTCOME é fail-closed (uma única
+  invocação, sem retry inline, preserva evidências); retry inline com backoff
+  SOMENTE para DEFINITE_NOT_STARTED (não-inicialização comprovada). Removidos os
+  parâmetros retry.retomar_sessao e retry.idempotencia_ativa.
 
 Convenção (mesmo padrão test-first de `tests/test_error_classification.py` e
 `tests/test_sanitize_relations.py`):
 
-- Testes marcados com `@pytest.mark.skip(reason="#303 ...")` descrevem
-  comportamento AINDA NÃO implementado no repositório (retry, resolução de
-  caminhos de apoio, validação `retry.*`). O desenvolvimento deve: (1) implementar
-  o comportamento, (2) remover o `skip` e (3) completar o corpo do teste conforme
-  o docstring. O docstring é contrato — não enfraquecer a asserção.
-- Testes SEM `skip` exercitam código já existente
-  (`KiroCliAgent._detect_failure`) e fixam a fronteira correta
-  (canais estruturados × narrativa). Esses devem passar; se a detecção ainda
-  escaneia texto livre, falham de propósito até a correção.
-
-ATENÇÃO (conflito arquitetural): o Grupo D (retry) depende da fronteira
-idempotente da ADR `doc/architecture/retry-kiro-cli/idempotencia.md` (seção 4).
-Ver o aviso no topo do documento de casos de teste. A idempotência é invariante,
-não opção.
+- Testes com `@pytest.mark.skip(reason="#303 ...")` descrevem comportamento AINDA
+  NÃO implementado (retry/classificação UNKNOWN_OUTCOME/DEFINITE_NOT_STARTED,
+  resolução de caminhos de apoio, validação `retry.*`, guarda de doc). O
+  desenvolvimento deve: (1) implementar, (2) remover o `skip`, (3) completar o
+  corpo conforme o docstring (contrato — não enfraquecer a asserção).
+- Testes `xfail(strict=True)` (CT-01, CT-05) são o coração da correção: hoje
+  `_detect_failure` escaneia a narrativa; viram XPASS com a classificação
+  só-por-canais, sinalizando a entrega.
+- Testes SEM marca exercitam código já existente e fixam a fronteira correta;
+  devem passar hoje.
 """
 
 import sys
@@ -43,31 +55,32 @@ def adapter():
 # ══════════════════════════════════════════════════════════════════════════
 # Grupo A — Detecção de falha por canais estruturados
 # Alvo: KiroCliAgent._detect_failure. Regra: só canais estruturados classificam
-# (exit-code, timeout, erro interno, ausência de resumo final normal, saída de
-# erro estruturada). A narrativa (texto livre) do agente NUNCA classifica.
+# (exit-code != 0, [TIMEOUT], [ERRO], saída de erro estruturada). A narrativa
+# (texto livre) do agente NUNCA classifica. Ausência de sinal = SUCESSO.
 # ══════════════════════════════════════════════════════════════════════════
 
 class TestDeteccaoFalhaCanaisEstruturados:
 
     @pytest.mark.xfail(strict=True, reason="#303: hoje _detect_failure escaneia "
-                       "a narrativa (texto livre). Deve passar após a correção "
-                       "(só canais estruturados). XPASS sinaliza a entrega (CT-01).")
-    def test_ct01_narrativa_cita_erro_com_resumo_normal_e_sucesso(self, adapter):
-        """CT-01: narrativa cita frase de erro conhecida mas o resumo final é
-        normal e exit-code 0 → _detect_failure retorna None (sucesso).
+                       "a narrativa (texto livre: 'Kiro is having trouble "
+                       "responding' em _FAILURE_MARKERS). Deve passar após a "
+                       "correção (só canais estruturados). XPASS sinaliza a "
+                       "entrega (CT-01).")
+    def test_ct01_narrativa_cita_erro_sem_sinal_estruturado_e_sucesso(self, adapter):
+        """CT-01: narrativa cita frase(s) de erro conhecida(s) mas NÃO há sinal
+        estruturado (sem [exit-code: N!=0], sem [TIMEOUT], sem [ERRO]) →
+        _detect_failure retorna None (sucesso).
 
-        É o coração da correção: hoje "Kiro is having trouble responding" em
-        _FAILURE_MARKERS dispara falso positivo mesmo citado pela narrativa.
-        O desenvolvimento deve parar de escanear texto livre e considerar apenas
-        canais estruturados (incl. presença do bloco final de resumo normal).
+        É o coração da correção: hoje 'Kiro is having trouble responding' consta
+        em _FAILURE_MARKERS e dispara falso positivo mesmo citado pela narrativa.
+        O desenvolvimento deve parar de escanear texto livre e remover termos de
+        prosa dos marcadores de classificação.
         """
         output = (
             "Analisei a issue e implementei o tratamento para quando o modelo "
             "responde 'Kiro is having trouble responding right now'.\n"
             "Também cobri 'InternalServerError' e mensagens 'error:' do servidor.\n"
-            # Bloco final de resumo NORMAL (crédito/tempo) — formato real a ser
-            # fixado pelo desenvolvimento. Exit-code 0 (ausência de [exit-code: N]).
-            "<<RESUMO_FINAL_NORMAL: crédito/tempo>>\n"
+            "Pronto. 2 arquivos alterados.\n"
         )
         assert adapter._detect_failure(output) is None
 
@@ -92,9 +105,8 @@ class TestDeteccaoFalhaCanaisEstruturados:
         """CT-04: erro de transporte reportado em canal estruturado → falha,
         com a causa real extraída do canal.
 
-        Diferente do CT-01: aqui o sinal é ESTRUTURADO (marcador/seção de erro
-        de dispatch), não texto livre do agente. O desenvolvimento define quais
-        marcadores constituem 'canal estruturado' de transporte.
+        Diferente do CT-01: aqui o sinal é ESTRUTURADO (marcador [ERRO] / seção
+        de erro de dispatch), não texto livre do agente.
         """
         output = (
             "iniciando\n"
@@ -104,37 +116,42 @@ class TestDeteccaoFalhaCanaisEstruturados:
         assert error is not None
         assert "dispatch failure" in error or "ERRO" in error
 
+    def test_ct04b_output_vazio_ou_normal_sem_marcador_e_sucesso(self, adapter):
+        """CT-04b: output vazio ou normal, SEM qualquer marcador estruturado →
+        sucesso. A ausência de sinal estruturado NUNCA é falha.
+
+        Fixa a decisão de escopo: o canal 'ausência de resumo normal => falha'
+        foi removido. Coerente com os testes de sucesso da suíte congelada
+        (test_output_vazio_nao_e_falha / test_output_normal_nao_e_falha), que
+        permanecem válidos.
+        """
+        assert adapter._detect_failure("") is None
+        assert adapter._detect_failure("  \n \n") is None
+        assert adapter._detect_failure("Pronto. 3 arquivos alterados.\n") is None
+
     @pytest.mark.xfail(strict=True, reason="#303: regressão do falso positivo "
-                       "histórico. Falha com a detecção antiga (escaneia texto); "
-                       "deve passar após a correção. XPASS sinaliza a entrega (CT-05).")
+                       "histórico. Falha com a detecção antiga (escaneia a "
+                       "narrativa); deve passar após a correção. XPASS sinaliza "
+                       "a entrega (CT-05).")
     def test_ct05_regressao_falso_positivo_narrativa_nao_recorre(self, adapter):
         """CT-05 (regressão): reproduz o falso positivo histórico — execução
-        bem-sucedida cuja narrativa contém o termo de erro — e comprova que NÃO
-        recorre. Falha na implementação antiga (escaneava texto); passa na nova.
+        bem-sucedida cuja narrativa contém o termo de erro, SEM sinal estruturado
+        — e comprova que NÃO recorre. Falha na implementação antiga (escaneava
+        texto); passa na nova (só canais estruturados).
         """
         output = (
             "Resumo do que fiz: tratei o caso em que a API devolve "
             "'Kiro is having trouble responding right now' e 'temporarily "
             "unavailable'. Nenhum erro ocorreu nesta execução.\n"
-            "<<RESUMO_FINAL_NORMAL: crédito/tempo>>\n"
+            "Concluído em 12s.\n"
         )
         assert adapter._detect_failure(output) is None
 
-    @pytest.mark.skip(reason="#303: reconhecedor do 'bloco final de resumo "
-                             "normal' a implementar (CT-06).")
-    def test_ct06_ausencia_de_resumo_final_normal_e_falha(self, adapter):
-        """CT-06: output sem o bloco final de resumo normal (execução cortada no
-        meio, sem exit-code) → falha. A ausência do resumo é canal estruturado.
-
-        Par com CT-01: narrativa+resumo normal = sucesso; sem resumo = falha.
-        O desenvolvimento define o reconhecedor estrutural do resumo final.
-        """
-        output = (
-            "iniciando a tarefa\n"
-            "editando arquivos...\n"
-            # Sem bloco final de resumo normal, sem exit-code, sem marcador.
-        )
-        assert adapter._detect_failure(output) is not None
+    # CT-05b (precedência de contrato) é executado na suíte congelada
+    # tests/test_agent_failure_detection.py: o desenvolvimento reescreve os
+    # testes que codificam o falso positivo (narrativa => falha) para
+    # classificação por canal estruturado, e preserva os testes de sucesso.
+    # Ver o detalhamento em doc/quality/execucao-autonoma-confiavel/test-cases.md.
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -273,88 +290,111 @@ class TestContextoDerivadoDaConfig:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Grupo D — Recuperação de interrupção transitória com retry idempotente
-# PRÉ-REQUISITO: fronteira idempotente da ADR retry-kiro-cli (seção 4).
-# Observabilidade exigida em todos: causa real + origem (canal) + operações
-# puladas por já estarem aplicadas. time.sleep SEMPRE mockado.
+# Grupo D — Tratamento seguro de interrupção transitória (ADR #217)
+# SEM a fronteira idempotente da seção 4 (fora de escopo).
+# - UNKNOWN_OUTCOME: fail-closed (1 invocação, sem retry inline, preserva
+#   output/request ID/causa/session_id; reconciliação pelo loop normal).
+# - DEFINITE_NOT_STARTED: retry inline com backoff e limite.
+# Observabilidade exigida: causa real + origem (canal). time.sleep SEMPRE mockado.
 # ══════════════════════════════════════════════════════════════════════════
 
 class TestRecuperacaoInterrupcao:
 
-    @pytest.mark.skip(reason="#303: retry inline + backoff + retomada de sessão "
-                             "a implementar (CT-10). Depende da fronteira "
-                             "idempotente da ADR seção 4.")
-    def test_ct10_sem_efeito_aplicado_retoma_com_backoff_ate_sucesso(self, monkeypatch):
-        """CT-10: interrupção transitória sem efeito colateral já aplicado →
-        a execução é retomada automaticamente (sem intervenção humana) com
-        backoff crescente (backoff_inicial_seg * backoff_fator^n) e retomada de
-        sessão (--resume-id), até sucesso dentro de max_tentativas.
+    @pytest.mark.skip(reason="#303: classificação UNKNOWN_OUTCOME fail-closed a "
+                             "implementar (CT-10).")
+    def test_ct10_unknown_outcome_fail_closed_uma_invocacao_preserva(self, monkeypatch):
+        """CT-10: aborto transitório ambíguo (dispatch failure /
+        InternalServerError após output parcial / timeout) → UNKNOWN_OUTCOME.
+
+        - subprocesso invocado EXATAMENTE UMA VEZ (sem retry inline, sem backoff);
+        - resultado marcado como ambíguo (NÃO sucesso, NÃO falha definitiva);
+        - output, request ID (quando disponível), causa e session_id PRESERVADOS
+          para auditoria/continuidade.
+
+        A reconciliação (fs/git/board) e a eventual retomada via --resume-id
+        ficam a cargo do LOOP NORMAL — não há retry inline aqui.
+        """
+        # invocacoes = []
+        # monkeypatch no adapter para registrar cada invocação e devolver um
+        # resultado ambíguo (output parcial + 'dispatch failure').
+        # sleeps = []
+        # monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
+        # resultado = call_agent(config, task)
+        # assert len(invocacoes) == 1
+        # assert sleeps == []            # nenhum backoff
+        # assert resultado.classe == "UNKNOWN_OUTCOME"
+        # assert resultado.output and resultado.causa and resultado.session_id
+        pytest.fail("implementar: UNKNOWN_OUTCOME fail-closed (1 invocação + preserva)")
+
+    @pytest.mark.skip(reason="#303: retry inline + backoff para DEFINITE_NOT_STARTED "
+                             "a implementar (CT-11).")
+    def test_ct11_definite_not_started_retry_com_backoff_ate_sucesso_ou_limite(self, monkeypatch):
+        """CT-11: não-inicialização comprovada mecanicamente
+        (DEFINITE_NOT_STARTED, ex.: kiro-cli ausente no PATH) → retry inline com
+        backoff crescente (backoff_inicial_seg * backoff_fator^n) até sucesso ou
+        até max_tentativas.
+
+        Sub-caso A (retoma até sucesso): falha DEFINITE_NOT_STARTED 1x, depois
+        sucesso → reexecuta com backoff e conclui em sucesso; time.sleep chamado
+        com backoff_inicial_seg na 1ª espera.
+
+        Sub-caso B (esgota o limite): falha DEFINITE_NOT_STARTED sempre →
+        exatamente max_tentativas invocações (SEM laço infinito); backoff cresce
+        por backoff_fator (ex.: [30, 60] para max_tentativas=3); resultado =
+        FALHA PERSISTENTE; log registra total de tentativas + última causa.
 
         time.sleep mockado: asserir os ARGUMENTOS de backoff, não esperar tempo.
-        Fronteira idempotente registra 0 operações de escrita efetivadas.
         """
         # sleeps = []
         # monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
-        # adapter falha transitório 1x, depois sucesso.
-        # chamar call_agent(config, task) com retry habilitado.
-        # assert sleeps == [30]  (backoff_inicial; 1 retry)
-        # assert sessao_retomada is True
-        # assert resultado == "sucesso"
-        pytest.fail("implementar: retry com backoff + resume até sucesso")
-
-    @pytest.mark.skip(reason="#303: idempotência (não repetir efeitos aplicados) "
-                             "a implementar (CT-11). ADR seção 4.")
-    def test_ct11_apos_efeito_aplicado_nao_repete_e_loga_puladas(self, monkeypatch):
-        """CT-11: interrupção após commit/push/movimento de coluna já EFETIVADOS
-        → nenhuma dessas operações é repetida no retry; o log lista
-        explicitamente quais foram PULADAS por já estarem aplicadas.
-
-        Testar as TRÊS operações (commit, push, movimento de coluna). A
-        verificação de pós-condição confirma o estado desejado (operações
-        declarativas: reaplicar = no-op).
-        """
-        # journal marca commit/push/move como applied/verified
-        # disparar interrupção + retry
-        # assert nenhuma reexecução de commit/push/move
-        # assert "puladas" / "já aplicadas" presente no log, nomeando as ops
-        pytest.fail("implementar: idempotência + log de operações puladas")
-
-    @pytest.mark.skip(reason="#303: limite de tentativas e falha persistente a "
-                             "implementar (CT-12).")
-    def test_ct12_interrupcao_persistente_encerra_em_max_tentativas(self, monkeypatch):
-        """CT-12: interrupção que persiste → ao atingir retry.max_tentativas a
-        recuperação encerra, a execução é classificada como FALHA PERSISTENTE e
-        o reprocessamento para (sem laço infinito). O log registra o total de
-        tentativas e a última causa.
-
-        Confirmar com o desenvolvimento a semântica de 'tentativas' (ver CT-14):
-        o teste deve travar a semântica escolhida (ex.: max_tentativas=3 ⇒ 3
-        invocações do subprocesso).
-        """
-        # adapter falha transitório sempre; max_tentativas=3; sleep mockado
-        # chamar call_agent com retry
+        # Sub-caso B: adapter sinaliza DEFINITE_NOT_STARTED sempre; max=3
+        # resultado = call_agent(config, task)
         # assert numero_de_invocacoes == 3
-        # assert classificacao == "falha persistente"
-        # assert log contém total de tentativas e última causa
-        pytest.fail("implementar: limite de tentativas sem laço infinito")
+        # assert sleeps == [30, 60]      # backoff_inicial=30, fator=2.0
+        # assert resultado.classe == "falha persistente"
+        # assert "tentativas" in log and "última causa" in log
+        pytest.fail("implementar: retry DEFINITE_NOT_STARTED com backoff + limite")
 
-    @pytest.mark.skip(reason="#303: observabilidade (causa + origem do canal) "
-                             "no retry a implementar (CT-13).")
-    def test_ct13_log_registra_causa_e_origem_do_canal(self, monkeypatch):
-        """CT-13: todo retry e toda classificação de falha registram no log a
-        causa real E a origem/canal estruturado (ex.: campo que diferencie
-        exit-code / timeout / transporte). A narrativa do agente nunca é a
-        origem registrada.
+    @pytest.mark.skip(reason="#303: garantir que UNKNOWN_OUTCOME NÃO dispara retry "
+                             "inline nem backoff (CT-12).")
+    def test_ct12_unknown_outcome_nao_dispara_retry_nem_backoff(self, monkeypatch):
+        """CT-12: resultado ambíguo (UNKNOWN_OUTCOME) → NÃO há retry inline nem
+        backoff na mesma execução (par explícito de CT-11).
+
+        Garante que o retry inline é EXCLUSIVO de DEFINITE_NOT_STARTED. Impede a
+        regressão do 'retry cego' vedado pela ADR #217.
         """
-        # capturar registros de log de um retry/classificação
+        # sleeps = []
+        # monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
+        # adapter devolve UNKNOWN_OUTCOME; retry.max_tentativas > 1
+        # resultado = call_agent(config, task)
+        # assert numero_de_invocacoes == 1
+        # assert sleeps == []            # nenhum backoff
+        # assert resultado.classe == "UNKNOWN_OUTCOME"
+        pytest.fail("implementar: UNKNOWN_OUTCOME sem retry inline/backoff")
+
+    @pytest.mark.skip(reason="#303: observabilidade (causa + origem do canal; "
+                             "UNKNOWN_OUTCOME acionável) a implementar (CT-13).")
+    def test_ct13_log_registra_causa_e_origem_do_canal(self, monkeypatch):
+        """CT-13: toda classificação de falha e todo retry seguro registram no
+        log a causa real E a origem/canal estruturado (campo que diferencie
+        exit-code / timeout / erro interno). O UNKNOWN_OUTCOME é registrado de
+        forma acionável (causa + evidência preservada), distinto de sucesso e de
+        falha definitiva. A narrativa do agente NUNCA é a origem registrada.
+        """
+        # capturar registros de log de: (a) falha por canal, (b) UNKNOWN_OUTCOME,
+        # (c) retry DEFINITE_NOT_STARTED.
         # assert causa_real in registro
-        # assert origem_canal in registro  (ex.: "exit-code" | "timeout" | "transporte")
-        pytest.fail("implementar: log com causa + origem do canal")
+        # assert origem_canal in registro  (ex.: "exit-code" | "timeout" | "erro interno")
+        # assert registro_unknown distinto de sucesso e de falha definitiva
+        pytest.fail("implementar: log com causa + origem do canal; UNKNOWN acionável")
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Grupo D (config) — Validação e defaults dos parâmetros retry.*
 # Padrão: espelhar validate_max_attempts/resolve_max_attempts de config.py.
+# Aplicáveis SÓ ao caso seguro DEFINITE_NOT_STARTED. Sem retomar_sessao nem
+# idempotencia_ativa (removidos do escopo).
 # ══════════════════════════════════════════════════════════════════════════
 
 class TestRetryConfig:
@@ -363,41 +403,49 @@ class TestRetryConfig:
                              "em config.py (CT-14).")
     def test_ct14_defaults_quando_ausente(self):
         """CT-14.1: sem a chave 'retry', aplica defaults: max_tentativas=3,
-        backoff_inicial_seg=30, backoff_fator=2.0, retomar_sessao=True,
-        idempotencia_ativa=True."""
+        backoff_inicial_seg=30, backoff_fator=2.0."""
         # from src.core.config import resolve_retry
         # r = resolve_retry({})
-        # assert r.max_tentativas == 3 and r.backoff_inicial_seg == 30
-        # assert r.backoff_fator == 2.0 and r.retomar_sessao is True
-        # assert r.idempotencia_ativa is True
+        # assert r.max_tentativas == 3
+        # assert r.backoff_inicial_seg == 30
+        # assert r.backoff_fator == 2.0
         pytest.fail("implementar: defaults de retry.*")
 
     @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
     @pytest.mark.parametrize("valor", [0, -1, True, 2.5, "3"])
     def test_ct14_max_tentativas_invalido_levanta_configerror(self, valor):
         """CT-14.2: max_tentativas inválido (0, negativo, bool, float, string)
-        → ConfigError identificando a chave."""
+        → ConfigError identificando a chave 'retry.max_tentativas'."""
         # from src.core.config import validate_retry, ConfigError
         # with pytest.raises(ConfigError, match="retry.max_tentativas"):
         #     validate_retry({"retry": {"max_tentativas": valor}})
         pytest.fail("implementar: validação de retry.max_tentativas")
 
     @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
-    def test_ct14_backoff_inicial_negativo_levanta_configerror(self):
-        """CT-14.3: backoff_inicial_seg < 0 → ConfigError."""
+    @pytest.mark.parametrize("valor", [-1, True, "0"])
+    def test_ct14_backoff_inicial_invalido_levanta_configerror(self, valor):
+        """CT-14.3: backoff_inicial_seg < 0 (ou bool/não-inteiro) → ConfigError
+        nomeando 'retry.backoff_inicial_seg'."""
         pytest.fail("implementar: validação de retry.backoff_inicial_seg >= 0")
 
     @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
-    def test_ct14_backoff_fator_menor_que_um_levanta_configerror(self):
-        """CT-14.4: backoff_fator < 1.0 → ConfigError."""
+    @pytest.mark.parametrize("valor", [0.5, 0, True, "2.0"])
+    def test_ct14_backoff_fator_invalido_levanta_configerror(self, valor):
+        """CT-14.4: backoff_fator < 1.0 (ou bool/não-numérico) → ConfigError
+        nomeando 'retry.backoff_fator'."""
         pytest.fail("implementar: validação de retry.backoff_fator >= 1.0")
 
     @pytest.mark.skip(reason="#303: validate_retry a implementar (CT-14).")
-    @pytest.mark.parametrize("campo", ["retomar_sessao", "idempotencia_ativa"])
-    def test_ct14_booleanos_invalidos_levantam_configerror(self, campo):
-        """CT-14.5: retomar_sessao / idempotencia_ativa não-booleanos →
-        ConfigError."""
-        pytest.fail("implementar: validação dos booleanos de retry.*")
+    def test_ct14_valores_validos_sao_aceitos(self):
+        """CT-14.5: valores válidos (max_tentativas=5, backoff_inicial_seg=10,
+        backoff_fator=1.5) → aceitos e resolvidos corretamente."""
+        # from src.core.config import resolve_retry
+        # r = resolve_retry({"retry": {"max_tentativas": 5,
+        #                              "backoff_inicial_seg": 10,
+        #                              "backoff_fator": 1.5}})
+        # assert (r.max_tentativas, r.backoff_inicial_seg, r.backoff_fator) \
+        #        == (5, 10, 1.5)
+        pytest.fail("implementar: aceitação de valores válidos de retry.*")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -407,17 +455,18 @@ class TestRetryConfig:
 class TestHigieneDocumentacao:
 
     @pytest.mark.skip(reason="#303: definir lista de modelos válidos e corrigir a "
-                             "doc de exemplo; teste de guarda opcional (CT-15).")
+                             "doc de exemplo; teste de guarda (CT-15).")
     def test_ct15_doc_exemplo_sem_identificador_de_modelo_invalido(self):
         """CT-15: nenhuma referência a identificador de modelo inválido/
         inexistente permanece na doc de exemplo do produto (ex.: README.md).
 
-        O desenvolvimento define MODELOS_VALIDOS (ex.: 'claude-sonnet-5',
-        'auto', 'claude-haiku-4.5') e corrige as referências. Teste de guarda:
-        varrer 'model:' na doc de exemplo e exigir que cada valor esteja na
-        lista de válidos (impede reintrodução).
+        Identificadores válidos vigentes: 'claude-sonnet-5', 'auto',
+        'claude-haiku-4.5'. Hoje README.md traz 'model: claude-sonnet-4-20250514'
+        (inválido). Teste de guarda: varrer 'model:' na doc de exemplo e exigir
+        que cada valor esteja na lista de válidos (impede reintrodução).
         """
         # import re
+        # MODELOS_VALIDOS = {"claude-sonnet-5", "auto", "claude-haiku-4.5"}
         # readme = (ROOT / "README.md").read_text(encoding="utf-8")
         # modelos = re.findall(r"model:\s*([\w.\-]+)", readme)
         # invalidos = [m for m in modelos if m not in MODELOS_VALIDOS]
