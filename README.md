@@ -216,6 +216,7 @@ src/
 │   ├── log.py              # Logging dual (terminal + arquivo)
 │   ├── config.py           # Validação do pipe.yml
 │   ├── agent.py            # AgentPort + build_prompt + PROTECTED_PATHS
+│   ├── composition.py      # Camadas do prompt/contexto + medição por execução
 │   ├── context_generator.py # Gera CONTEXT.md + agente pipe_context no startup
 │   ├── board.py            # Board core + BoardPort + ChangeItem
 │   ├── commands.py         # Comandos @--- no body (parse/serialize)
@@ -320,6 +321,54 @@ automaticamente em três situações:
    reconciliando as dependências.
 
 ## Execução de Agentes
+
+### Composição em camadas do prompt e do contexto
+
+O conteúdo entregue ao agente é separado em quatro camadas por
+responsabilidade, cada uma com **origem única**. Cada execução recebe apenas o
+que é relevante à tarefa, sem repetir material invariável e sem remover nenhum
+guardrail:
+
+| Camada | Conteúdo | Origem | Sempre carregada? |
+|--------|----------|--------|-------------------|
+| Política invariável | Guardrails, manual `@---`, estrutura do `-body.md`, criação de issues, git flow | steering `.kiro/steering/esteira.md` | sim |
+| Contexto do projeto | Metadados do projeto e papéis humanos | steering | sim |
+| Workflow da etapa | Objetivo/passos/git da coluna + transição | prompt dinâmico (`build_prompt`) | não |
+| Dados da tarefa | Título, caminhos dos arquivos, branch resolvido | prompt dinâmico | não |
+
+O que muda no comportamento para quem opera:
+
+- **Prompt dinâmico enxuto:** o manual completo dos comandos `@---` deixou de
+  ser embutido em toda execução; agora vive **só** no steering. No prompt entra,
+  no máximo, um ponteiro curto **sob demanda** — e apenas quando a etapa permite
+  um comando de anotação (gate derivado da chave `allowed-commands` da coluna;
+  ausente ⇒ conjunto completo, comportamento anterior).
+- **Contrato de carregamento (fail-closed):** antes de acionar o agente, a
+  esteira verifica que o contexto obrigatório (steering) está carregado e emite
+  um **registro de medição por execução** no log (`composicao_medicao`), com
+  caracteres/palavras/linhas por camada, `total_sempre_carregado`, referências
+  sob demanda incluídas, `tokens_entrada` e
+  `instrucoes_obrigatorias_carregadas`. Sem o contexto obrigatório, o agente
+  **não** é acionado (`instrucoes_obrigatorias_carregadas: false` + motivo;
+  evento `composicao_fail_closed`).
+- **Adapter sem tokens:** o `kiro-cli` não expõe contagem de tokens de entrada;
+  o registro usa `tokens_entrada: null`, sem falhar.
+- **Nome de branch único:** o nome é resolvido **uma única vez** por execução a
+  partir do `branch_pattern` do flow e reutilizado idêntico em todos os blocos
+  (criação e merge/PR). Marcador não resolvível com os dados da tarefa é um erro
+  de configuração sinalizado (`ConfigError`), sem gerar nome parcial.
+
+Chave opcional por coluna para o gate do manual `@---`:
+
+```yaml
+columns:
+  desenvolvimento:
+    agent: engineering
+    allowed-commands: [labels, blocked_by, need_human]  # ausente ⇒ todos
+```
+
+Contrato técnico completo e tabela de chaves:
+[`doc/architecture/composicao-camadas-prompt-contexto/contrato.md`](doc/architecture/composicao-camadas-prompt-contexto/contrato.md).
 
 ### gitevents (controle de branches)
 

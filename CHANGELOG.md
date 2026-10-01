@@ -2,6 +2,87 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.18.0] - 2026-10-01
+
+### Adicionado
+
+- **Composição em camadas do prompt e do contexto entregues ao agente**
+  (issue #308). O conteúdo entregue ao agente passa a ser separado em quatro
+  camadas por responsabilidade, cada uma com **origem única** (RN-04), e cada
+  execução recebe apenas o que é relevante à tarefa corrente — sem repetir
+  material invariável e **sem remover nenhum guardrail de segurança nem
+  comportamento de workflow**:
+  - Novo módulo `src/core/composition.py` com o inventário auditável das regras
+    por camada (`layer_inventory`), a prova de ausência de duplicidade entre as
+    camadas sempre carregadas (`find_duplicated_rules`), o gate de referência
+    sob demanda (`on_demand_references` / `allowed_commands`), a resolução única
+    do nome da branch (`resolve_branch_name`), a verificação das instruções
+    obrigatórias (`check_required_instructions`) e a medição por execução
+    (`compose_measurement`).
+  - **Camadas:** política invariável (guardrails, manual `@---`, estrutura do
+    `-body.md`, criação de issues, git flow) e contexto do projeto (metadados e
+    papéis humanos) vivem **só** no steering `.kiro/steering/esteira.md`
+    (sempre carregado); workflow da etapa (objetivo/passos/git/transição) e
+    dados da tarefa (título, caminhos, branch resolvido) compõem o **prompt
+    dinâmico** enxuto e específico da execução.
+- **Referência sob demanda do manual de comandos `@---`.** O manual deixou de
+  ser embutido no prompt dinâmico (antes sempre incluído por `annotations_doc()`)
+  e passa a entrar na composição **apenas** quando a etapa permite ao menos um
+  comando de anotação. O gate é derivado da nova chave opcional
+  `allowed-commands` por coluna (ausente ⇒ conjunto completo de comandos,
+  comportamento anterior).
+- **Contrato observável de carregamento das instruções obrigatórias
+  (fail-closed).** Antes de acionar o agente, `call_agent`
+  (`src/__main__.py`) verifica o steering obrigatório e emite um **registro de
+  medição por execução** (`composicao_medicao`, INFO) com `caracteres`,
+  `palavras`, `linhas` por camada, `total_sempre_carregado`,
+  `referencias_sob_demanda_incluidas`, `tokens_entrada` e
+  `instrucoes_obrigatorias_carregadas`. Sem o contexto obrigatório, o agente
+  **não** é acionado (`instrucoes_obrigatorias_carregadas: false` + motivo;
+  evento `composicao_fail_closed`). O adapter `kiro-cli` não expõe tokens de
+  entrada: `tokens_entrada` é `null`, sem falhar.
+- **Resolução única do nome da branch por execução.**
+  `composition.resolve_branch_name(branch_pattern, data)` resolve o nome **uma
+  única vez** e o reutiliza idêntico em todos os blocos que o citam (criação e
+  merge/PR). Marcador não resolvível com os dados da tarefa levanta
+  `ConfigError` nomeando o marcador — **nenhum** nome parcialmente resolvido é
+  emitido.
+
+### Alterado
+
+- **`build_prompt` (`src/core/agent.py`)** deixou de embutir o manual `@---`
+  completo e condensou a prosa invariável do bloco de diretório; a política
+  completa fica no steering. A medição determinística na fixture canônica
+  (`create-merge`, caminhos normalizados) comprova **redução real** (RN-08): o
+  conteúdo estático do prompt dinâmico fica ≥ 40% menor e o total sempre
+  carregado (prompt + steering) ≥ 20% menor — não é transferência de texto
+  entre camadas.
+- **Steering (`src/core/context_generator.py`)** perdeu o exemplo redundante de
+  nome de branch (o nome agora é resolvido pelo motor a partir do
+  `branch_pattern`), mantendo o manual `@---` e a estrutura do `-body.md` com
+  **origem única** no steering.
+- **Validação do `pipe.yml` (`src/core/config.py`)** passa a aceitar a chave
+  opcional `allowed-commands` por coluna (lista de nomes de comando de
+  anotação).
+
+### Detalhes
+
+- **Capacidades consolidadas, não reinventadas:** `target-prompt`/`step-prompt`
+  separados, `branch_pattern` por flow, metadados de `project` no steering e o
+  prompt de continuidade já existiam parcialmente; a entrega os **formaliza**
+  sob o contrato de camadas e medição, sem alterar seu comportamento observável.
+- **Contexto persistente protegido:** o steering `.kiro/steering/esteira.md`
+  permanece em `PROTECTED_PATHS` e é reescrito em divergência por
+  `ensure_steering_integrity` — nunca gravável pelo agente (RN-02/CA-14).
+- **Fora de escopo desta entrega:** definição do conteúdo dos contextos de
+  responsabilidade do operador, escolha de tecnologia/arquitetura interna ou de
+  um arquivo canônico único de instruções, suporte a adapters além do atual,
+  múltiplos repositórios por agente, conversão de palavras/tokens em valor
+  financeiro e baseline operacional de falhas/tempo (toda meta é de redução
+  **estrutural**).
+- Contrato técnico e tabela completa de chaves em
+  `doc/architecture/composicao-camadas-prompt-contexto/contrato.md`.
+
 ## [1.17.0] - 2026-10-01
 
 ### Adicionado

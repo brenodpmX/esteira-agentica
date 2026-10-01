@@ -166,6 +166,20 @@ def _validate_boards(boards: dict, known_agents: set[str] | None = None):
                         f"boards.{board_id}.columns.{col_id}.{ev}: deve ser uma lista"
                     )
 
+            # allowed-commands (#308): lista opcional de comandos de anotação
+            # `@---` permitidos na etapa. Deriva o gate de referência sob demanda
+            # (manual @---). Quando ausente, assume o conjunto completo. Quando
+            # presente, deve ser uma lista de strings.
+            if "allowed-commands" in col:
+                ac = col["allowed-commands"]
+                if not isinstance(ac, list) or not all(
+                    isinstance(x, str) for x in ac
+                ):
+                    raise ConfigError(
+                        f"boards.{board_id}.columns.{col_id}.allowed-commands: "
+                        f"deve ser uma lista de strings (nomes de comando)"
+                    )
+
             ctx = f"boards.{board_id}.columns.{col_id}"
 
             # Agente default da coluna deve existir

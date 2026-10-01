@@ -6,8 +6,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.commands import annotations_doc, parse_body, AGENT_HUB_PREFIX
+from src.core.commands import parse_body, AGENT_HUB_PREFIX
 from src.core.snapshot import BOARDS_DIR
+from src.core import composition
 
 REPO_DIR = Path("repo")
 
@@ -253,6 +254,19 @@ def build_prompt(config: dict, task: dict) -> str:
     # Template legível do nome da branch (E1 — obrigatório por flow no pipe.yml).
     branch_pattern = flow_cfg.get("branch_pattern", "")
 
+    # ── Resolução ÚNICA do nome da branch de trabalho (#308 / RN-05) ──
+    # Resolvemos o nome UMA vez por execução e reutilizamos idêntico em todos os
+    # blocos que o citam (criação e merge/PR). Precedência: a anotação `branch:`
+    # já gravada (branch de trabalho existente) vence; caso contrário, resolvemos
+    # a partir do `branch_pattern` do flow. Marcador não resolvível levanta
+    # ConfigError (CA-11) e NÃO emite nome parcial (a composição não prossegue).
+    can_create = gitevents in ("create", "create-merge")
+    resolved_branch = annot.branch
+    if not resolved_branch and can_create and branch_pattern:
+        resolved_branch = composition.resolve_branch_name(
+            branch_pattern, composition.branch_data_from_task(task)
+        )
+
     # Transições
     change = col.get("change", {})
 
@@ -272,15 +286,18 @@ def build_prompt(config: dict, task: dict) -> str:
     lines.append("")
 
     # ── Sandbox / regras de operação ──
+    # O prompt dinâmico carrega apenas o essencial e específico da tarefa; as
+    # regras invariáveis de operação (nunca tocar estado interno, estrutura dos
+    # arquivos, convenções) vivem no steering (contexto SEMPRE carregado), com
+    # ORIGEM ÚNICA (RN-04). Aqui citamos o diretório resolvido e a regra mínima.
     lines.append("## Diretório de trabalho (OBRIGATÓRIO)")
     lines.append("")
     lines.append(f"Seu diretório de trabalho é o repositório clonado em `{work_dir}`.")
-    lines.append("")
-    lines.append("Regras invioláveis:")
-    lines.append(f"- TODOS os comandos `git` e TODA alteração de código devem ocorrer DENTRO de `{work_dir}`.")
-    lines.append(f"- Comece executando `cd {work_dir}` e permaneça lá durante toda a tarefa.")
-    lines.append("- NUNCA execute `git checkout`, `git stash`, `git reset` ou qualquer comando git fora desse diretório.")
-    lines.append("- Os arquivos da issue (`-body.md`, `-history.md`, `-addcomment.md`) ficam em `.pipe/`, FORA do repositório, e são gerenciados pela esteira. Leia/escreva-os pelos caminhos absolutos indicados, mas NÃO os versione no git.")
+    lines.append(
+        f"Comece com `cd {work_dir}`, permaneça nele e NUNCA rode git fora dele. "
+        "Os arquivos da issue (em `.pipe/`, fora do repo) você edita pelos caminhos "
+        "absolutos abaixo, sem versionar."
+    )
     lines.append("")
 
     # ── Git — preparação da branch (E3: instruções DESCRITIVAS) ──
@@ -288,8 +305,6 @@ def build_prompt(config: dict, task: dict) -> str:
     # damos o objetivo e as proteções do bug #108 em prosa, guiados pelas
     # anotações do body.
     if gitevents in ("create", "use", "merge", "create-merge"):
-        can_create = gitevents in ("create", "create-merge")
-
         lines.append("## Git — preparação da branch")
         lines.append("")
         lines.append(
@@ -313,7 +328,8 @@ def build_prompt(config: dict, task: dict) -> str:
             )
             lines.append(
                 f"- Dê à branch um nome seguindo o `branch_pattern` do flow `{flow_type}`: "
-                f"`{branch_pattern}` (substitua os campos pelo id e slug reais desta issue). "
+                f"`{branch_pattern}`. O nome resolvido desta issue é `{resolved_branch}` — "
+                "use exatamente esse nome. "
                 "Depois de criá-la, grave o nome REAL na anotação `branch:` do `-body.md`."
             )
         else:
@@ -327,9 +343,7 @@ def build_prompt(config: dict, task: dict) -> str:
     # ── Executar tarefa ──
     lines.append("## Executar tarefa")
     lines.append("")
-    lines.append(f"Leia a issue em `{body_path}` e o histórico em `{history_file}` para contexto completo.")
-    lines.append("")
-    lines.append("Realize o objetivo descrito acima. Ao concluir ou se houver bloqueio:")
+    lines.append(f"Leia a issue em `{body_path}` e o histórico em `{history_file}`, realize o objetivo acima e, ao concluir ou bloquear:")
     lines.append("")
     lines.append(f"- Anote observações, dúvidas ou resumo em `{addcomment_file}` (assine com `— {agent_display_name}` no final)")
     lines.append("")
@@ -349,9 +363,13 @@ def build_prompt(config: dict, task: dict) -> str:
     if gitevents in ("merge", "create-merge"):
         lines.append("## Abrir merge/PR")
         lines.append("")
+        _branch_ref = (
+            f" A branch de trabalho desta issue é `{resolved_branch}`."
+            if resolved_branch else ""
+        )
         lines.append(
             f"Abra o PR da branch de trabalho para `{merge_branch}` (alvo de merge do flow "
-            f"`{flow_type}`). ANTES de abrir, garanta que a branch já CONTÉM A PONTA de "
+            f"`{flow_type}`).{_branch_ref} ANTES de abrir, garanta que a branch já CONTÉM A PONTA de "
             f"`origin/{merge_branch}`: atualize com `git fetch origin` e, se a base estiver "
             f"defasada, integre `origin/{merge_branch}` na branch (resolvendo conflitos) antes de "
             "abrir o PR. Um PR aberto de base defasada nasce com conflitos e diff poluído "
@@ -359,9 +377,21 @@ def build_prompt(config: dict, task: dict) -> str:
         )
         lines.append("")
 
-    # ── Anotações no body (comandos @---) ──
-    lines.append(annotations_doc())
-    lines.append("")
+    # ── Anotações no body (comandos @---) — REFERÊNCIA SOB DEMANDA (#308/CA-8) ──
+    # O manual COMPLETO dos comandos `@---` vive EXCLUSIVAMENTE no steering
+    # (contexto sempre carregado — origem única, RN-04). Aqui, quando a etapa
+    # permite ao menos um comando de anotação, incluímos apenas um PONTEIRO curto
+    # ao manual (gate derivado dos comandos permitidos). Etapa sem comando de
+    # anotação não carrega nem o ponteiro.
+    if composition.REF_MANUAL_ARROBA in composition.on_demand_references(col):
+        lines.append("## Anotações no body (comandos `@---`)")
+        lines.append("")
+        lines.append(
+            "Esta etapa pode anotar o `-body.md`. Siga o manual completo dos "
+            "comandos `@---` que está no contexto do sistema (steering); não o "
+            "reproduza aqui."
+        )
+        lines.append("")
 
     # ── Transição de coluna ──
     lines.append("## Transição de coluna")
