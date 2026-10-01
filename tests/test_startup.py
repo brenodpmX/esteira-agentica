@@ -312,8 +312,8 @@ class TestStartupPreflightFailGHToken:
                 return _kiro_whoami_ok()
             return _make_completed(0)
 
-        def fake_board_full_sync(*args, **kwargs):
-            loop_entered.append("board_full_sync")
+        def fake_board_startup_sync(*args, **kwargs):
+            loop_entered.append("board_startup_sync")
 
         with patch.dict("os.environ", env, clear=False):
             import os
@@ -321,8 +321,8 @@ class TestStartupPreflightFailGHToken:
             with patch("src.core.preflight.subprocess.run", side_effect=fake_run):
                 with patch("src.__main__._setup_ssh"):
                     with patch(
-                        "src.__main__.board_full_sync",
-                        side_effect=fake_board_full_sync,
+                        "src.__main__.board_startup_sync",
+                        side_effect=fake_board_startup_sync,
                     ):
                         with patch("src.core.context_generator.generate_context"):
                             with patch("src.__main__.QUEUE_FILE") as mock_qf:
@@ -332,7 +332,7 @@ class TestStartupPreflightFailGHToken:
                                     startup(config)
 
         assert len(loop_entered) == 0, (
-            "board_full_sync não deve ser chamado quando preflight aborta o boot. "
+            "board_startup_sync não deve ser chamado quando preflight aborta o boot. "
             f"Chamadas: {loop_entered}"
         )
 

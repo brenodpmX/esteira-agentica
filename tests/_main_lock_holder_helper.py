@@ -46,7 +46,7 @@ def main() -> None:
 
     m.check_config = lambda: {"sleep": 3600, "boards": {"platform": "github"}}
     m.startup = MagicMock()
-    m.board_full_sync = MagicMock()
+    m.board_startup_sync = MagicMock()
     m.get_board_ids = lambda cfg: ["b1"]
     m.ADAPTERS = {"github": lambda: object()}
 

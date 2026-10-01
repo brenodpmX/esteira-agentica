@@ -239,23 +239,23 @@ pipe.yml                    # Configuração
 main()
 ├── check_config()         # Valida pipe.yml, SSH, contexts
 ├── startup()              # Configura SSH, gera CONTEXT.md, clona repos
-├── board_full_sync()      # Sync completo (estrutura + mudanças remotas)
+├── board_startup_sync()   # Estrutura local + 1ª sincronização de cada board
 │
 └── while running:
-    ├── board_full_sync()   # Re-executa se mudou o dia (daily full sync)
     ├── detect_local_all()  # Descoberta local (up) em TODOS os boards → bool
-    ├── sync_remote_board() # Descoberta remota (down) no board atual → bool
+    ├── sync_remote_board() # Sincronização (down) do board atual → bool
     ├── process_queue()     # Aplica a fila global de mudanças
     ├── keep_task()         # Seleciona próxima tarefa → task | AUTO_ADVANCED | None
     ├── call_agent()        # Executa agente com prompt construído
     └── sleep_time()        # Intervalo entre ciclos (condicional)
 ```
 
-> **Descoberta desacoplada:** a detecção local (`up`) roda em **todos** os
-> boards a cada ciclo — barata (varredura de filesystem) e necessária porque um
-> agente atuando em um board pode criar artefatos (ex.: issue bloqueante) em
-> outro. Já o sync remoto (`down`) permanece **por board**, na rotação
-> priorizada, por consumir API do provider (sujeito a rate limit).
+> **Sincronização única:** a descoberta remota (`down`) tem um único caminho
+> (`sync_remote`) que, a cada acionamento, reconcilia o board inteiro contra o
+> estado local — criações, modificações, poda por ausência e dependências de
+> bloqueio —, sem corte por data da última atualização e sem um acionamento
+> diário separado. Não há mais distinção entre sincronização "completa" e
+> "reduzida/incremental".
 
 ### sleep_time (controle de ociosidade)
 
@@ -565,18 +565,21 @@ estratégias:
 
 - **Down (chamada única):** `get_issue` traz numa só query GraphQL título,
   body, estado, labels, parent, filhos, coluna e arquivamento. As dependências
-  (`blocked_by`/`blocks`) só existem via REST e são buscadas apenas quando o
-  item da fila está marcado como `fullsync`.
+  (`blocked_by`/`blocks`) só existem via REST e são buscadas junto, pois a
+  descoberta remota enfileira sempre itens `fullsync`.
 - **Up (comparar antes de escrever):** o estado desejado (comandos do arquivo)
   é comparado com o estado conhecido no snapshot; só a diferença gera chamada.
   Um `change-up` de "só body" cai de ~12 requisições para 1.
 
 ### fullsync
 
-Cada item da fila tem um booleano `fullsync`. É `True` em todo create e no
-full sync diário (reconcilia propriedades + dependências); `False` em
-mudanças incrementais. Se um item full e um parcial coincidem no mesmo alvo,
-a fila promove o existente para full (sem duplicar).
+Cada item da fila tem um booleano `fullsync`. A descoberta remota (down) sempre
+enfileira itens `fullsync=True` — toda reconciliação vinda do board inclui as
+dependências de bloqueio (não existe mais reconciliação "só propriedades"). O
+`fullsync` sobrevive apenas como atributo do item que indica que as dependências
+(`blocked_by`/`blocks`, só disponíveis via REST) devem ser buscadas; não é um
+seletor de escopo de sincronização. Se um item `fullsync` e um não-`fullsync`
+coincidem no mesmo alvo, a fila promove o existente (sem duplicar).
 
 ### Gatilho de par recíproco
 

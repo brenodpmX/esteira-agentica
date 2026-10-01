@@ -40,7 +40,11 @@ class Snapshot:
             self._data.setdefault("board", {})
             self._data.setdefault("issues", [])
             self._data.setdefault("last_sync", None)
-            self._data.setdefault("last_board_update", None)
+            # Retrocompat: snapshots antigos podem conter o campo do corte
+            # incremental (descontinuado). A leitura não falha — a chave é
+            # descartada aqui para não ser reescrita, concluindo a
+            # descontinuação sem quebrar arquivos legados (RN-05).
+            self._data.pop("last_board_update", None)
         return self
 
     def save(self) -> None:
@@ -74,14 +78,6 @@ class Snapshot:
     @last_sync.setter
     def last_sync(self, value: str):
         self._data["last_sync"] = value
-
-    @property
-    def last_board_update(self) -> str | None:
-        return self._data.get("last_board_update")
-
-    @last_board_update.setter
-    def last_board_update(self, value: str):
-        self._data["last_board_update"] = value
 
     def issue(self, issue_id: str) -> dict | None:
         """Busca uma issue pelo id."""

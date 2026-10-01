@@ -130,7 +130,7 @@ def startup(config: dict):
         shutil.rmtree(REPO_DIR / repo_id)
 
 
-def board_full_sync(config: dict):
+def board_startup_sync(config: dict):
     global board
     log.info("Board", "Sincronizando estrutura local")
 
@@ -185,22 +185,19 @@ def board_full_sync(config: dict):
 
     # Detectar mudanças remotas
     log.info("Board", "Detectando mudanças remotas")
-    total = 0
     for board_id in board.board_ids(config):
-        snap = Snapshot(board_id).load()
         attempt = 0
         while True:
             try:
                 attempt += 1
                 log.info("Board", f"Analisando board '{board_id}'"
                          + (f" - tentativa {attempt}" if attempt > 1 else ""))
-                total += board.detect_board_changes(board_id, snap, queue)
+                sync_remote(board_id, board, queue)
                 break
             except PenaltyException as e:
                 back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
                 log.warning("Board", f"Rate limit em '{board_id}' - retoma às {back_at}")
                 time.sleep(e.wait_seconds)
-    log.info("Board", f"{total} mudança(s) remota(s) adicionada(s) à fila")
 
 
 def get_board_ids(config: dict) -> list[str]:
@@ -733,8 +730,7 @@ def main():
             log.error("Startup", f"Permissões insuficientes - esteira não iniciada: {e}")
             raise SystemExit(1)
 
-        board_full_sync(config)
-        last_full_sync = datetime.now().date()
+        board_startup_sync(config)
 
         # Array fixo de boards ordenados por prioridade
         board_ids = get_board_ids(config)
@@ -751,11 +747,6 @@ def main():
         running = True
         while running:
             try:
-                today = datetime.now().date()
-                if today != last_full_sync:
-                    board_full_sync(config)
-                    last_full_sync = today
-
                 current_board = board_ids[index]
 
                 # Fase 1: Descoberta
