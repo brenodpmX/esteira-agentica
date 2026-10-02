@@ -28,8 +28,9 @@ uma camada sempre carregada (RN-04).
 ### Redução real (RN-08)
 
 - O manual completo dos comandos `@---` deixou de ser embutido no prompt
-  dinâmico (antes via `annotations_doc()`), passando a existir **só** no
-  steering. No prompt dinâmico entra, no máximo, um ponteiro curto sob demanda.
+  dinâmico (antes via `annotations_doc()`), passando a existir
+  **exclusivamente** no steering. O prompt dinâmico não contém mais nenhum
+  ponteiro ou menção ao manual `@---` — nem completo, nem sob demanda (#325).
 - As regras de operação invariáveis do bloco de diretório foram condensadas no
   prompt (a política completa está no steering).
 - O exemplo redundante de nome de branch foi removido do steering (o nome agora
@@ -43,12 +44,16 @@ Resultado medido (fixture canônica, `create-merge`, caminhos normalizados):
 A redução é líquida (o aumento de uma camada, se houver, é estritamente menor
 que a redução da outra — RN-08).
 
-## Referência sob demanda (CA-8)
+## Referência sob demanda do manual `@---` (removida — #325)
 
-O manual `@---` entra na composição **apenas** quando a etapa permite ao menos
-um comando de anotação. O gate é derivado do conjunto de comandos permitidos da
-coluna (`composition.on_demand_references(col)`), que lista
-`manual_comandos_arroba` quando aplicável.
+A entrega #308 introduzira um ponteiro curto sob demanda ao manual `@---` no
+prompt dinâmico (CA-8), com gate derivado do conjunto de comandos permitidos da
+coluna (`composition.on_demand_references(col)`, chave `allowed-commands`). A
+entrega #325 removeu esse ponteiro por completo: o prompt dinâmico não contém
+mais nenhuma menção ao manual `@---`, em nenhuma condição. A constante
+`REF_MANUAL_ARROBA` e as funções `allowed_commands`/`on_demand_references`
+foram removidas de `src/core/composition.py`. O manual completo permanece,
+inalterado, exclusivamente no steering (origem única).
 
 ## Resolução única do nome da branch (CA-10/CA-11/RN-05)
 
@@ -83,15 +88,19 @@ emite, por execução, antes do acionamento:
   "contexto_sempre_carregado": { "caracteres": 0, "palavras": 0, "linhas": 0 },
   "total_sempre_carregado": { "caracteres": 0, "palavras": 0 },
   "tokens_entrada": null,
-  "referencias_sob_demanda_incluidas": ["manual_comandos_arroba"],
+  "referencias_sob_demanda_incluidas": [],
   "instrucoes_obrigatorias_carregadas": true,
   "motivo": "<presente apenas em falha>"
 }
 ```
 
 O adapter `kiro-cli` não expõe contagem de tokens de entrada: `tokens_entrada`
-é `null` (CA-17), sem falhar. O evento é logado como `composicao_medicao`
-(INFO) e, em falha, `composicao_fail_closed` (ERROR).
+é `null` (CA-17), sem falhar. O campo `referencias_sob_demanda_incluidas`
+permanece no contrato por compatibilidade de tipo, mas desde #325 é **sempre**
+uma lista vazia — o manual `@---` nunca é reportado como incluído no prompt,
+pois deixou de existir qualquer referência a ele fora do steering. O evento é
+logado como `composicao_medicao` (INFO) e, em falha, `composicao_fail_closed`
+(ERROR).
 
 ## Novas chaves de configuração
 
@@ -102,11 +111,13 @@ O adapter `kiro-cli` não expõe contagem de tokens de entrada: `tokens_entrada`
 | `branch_pattern` (formato por fluxo) | `git.flow.<flow>` | texto com marcadores | obrigatória por flow | marcadores resolvíveis com os dados da tarefa |
 | `project.name` / `project.summary` | `project` | texto | obrigatórias | string não vazia |
 | `project.humans` | `project` | lista `{name, role}` | opcional | cada item com `name`/`role` não vazios |
-| `allowed-commands` | `boards.<b>.columns.<c>` | lista de strings | opcional | lista de nomes de comando; ausente ⇒ conjunto completo |
 
-A chave `allowed-commands` deriva o gate de referência sob demanda do manual
-`@---`: a referência entra **apenas** quando a etapa permite um comando de
-anotação. Ausente, assume-se o conjunto completo (comportamento anterior).
+> A chave `allowed-commands` (`boards.<b>.columns.<c>`) existiu entre #308 e
+> #325 para derivar o gate de referência sob demanda do manual `@---`. Foi
+> **removida** em #325 junto com o próprio ponteiro: não é mais reconhecida
+> pelo schema validado e não produz efeito algum sobre o prompt dinâmico. O
+> manual `@---` permanece exclusivamente no steering, sempre carregado,
+> independente de qualquer configuração de coluna.
 
 ## Comportamento em falha (resumo)
 

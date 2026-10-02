@@ -379,22 +379,6 @@ def build_prompt(config: dict, task: dict) -> str:
         )
         lines.append("")
 
-    # ── Anotações no body (comandos @---) — REFERÊNCIA SOB DEMANDA (#308/CA-8) ──
-    # O manual COMPLETO dos comandos `@---` vive EXCLUSIVAMENTE no steering
-    # (contexto sempre carregado — origem única, RN-04). Aqui, quando a etapa
-    # permite ao menos um comando de anotação, incluímos apenas um PONTEIRO curto
-    # ao manual (gate derivado dos comandos permitidos). Etapa sem comando de
-    # anotação não carrega nem o ponteiro.
-    if composition.REF_MANUAL_ARROBA in composition.on_demand_references(col):
-        lines.append("## Anotações no body (comandos `@---`)")
-        lines.append("")
-        lines.append(
-            "Esta etapa pode anotar o `-body.md`. Siga o manual completo dos "
-            "comandos `@---` que está no contexto do sistema (steering); não o "
-            "reproduza aqui."
-        )
-        lines.append("")
-
     # ── Transição de coluna ──
     lines.append("## Transição de coluna")
     lines.append("")

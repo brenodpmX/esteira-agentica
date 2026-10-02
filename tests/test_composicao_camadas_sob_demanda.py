@@ -1,56 +1,92 @@
-"""Gate de referência sob demanda do manual `@---` (CA-8).
+"""Remoção do ponteiro do manual `@---` do prompt dinâmico (#325).
 
-CT-15 — etapa SEM comando de anotação não carrega o manual
-CT-16 — etapa COM comando de anotação disponibiliza o manual
-CT-17 — a inclusão é derivada determinística dos comandos permitidos
+Esta entrega revoga a referência sob demanda que a #308 havia reintroduzido no
+prompt dinâmico. O manual completo dos comandos `@---` passa a existir
+exclusivamente no steering (origem única). O prompt dinâmico NÃO contém mais a
+seção "## Anotações no body (comandos `@---`)" nem qualquer ponteiro ao manual,
+em nenhuma coluna com agente e independentemente da chave `allowed-commands`.
+
+CT-01 — coluna com `allowed-commands` presente não carrega o ponteiro
+CT-02 — coluna sem `allowed-commands` (default) não carrega o ponteiro
+CT-03 — coluna com `allowed-commands: []` não carrega o ponteiro
+CT-05 — `allowed-commands` deixa de ser reconhecida pela validação
+CT-06 — `allowed-commands` declarada não produz efeito no prompt
 """
 
-from src.core import composition
+from src.core import config as config_module
 from tests._composicao_helpers import canonical_config, make_task, prompt_for
 
 
 _POINTER_HEADER = "## Anotações no body (comandos `@---`)"
 
 
-class TestManualArroba:
+def _assert_sem_manual(prompt: str) -> None:
+    """Garante ausência total de qualquer menção ao manual `@---` no prompt."""
+    assert _POINTER_HEADER not in prompt
+    assert "Anotações no body" not in prompt
+    assert "manual completo dos" not in prompt
+    assert "comandos `@---`" not in prompt
 
-    def test_etapa_sem_comando_nao_carrega(self, tmp_path):
+
+class TestManualArrobaRemovido:
+    """CA-1 / CA-5 — o prompt dinâmico nunca contém a seção/ponteiro do manual
+    `@---`, em qualquer coluna com agente."""
+
+    def test_etapa_com_allowed_commands_nao_carrega(self, tmp_path):
+        # CT-01: valor que, na versão anterior (#308), abriria o gate.
         config = canonical_config()
-        task = make_task(tmp_path, col_overrides={"allowed-commands": []})
+        task = make_task(
+            tmp_path,
+            col_overrides={"allowed-commands": ["labels", "blocked_by", "need_human"]},
+        )
         prompt = prompt_for(tmp_path, config, task)
-        assert _POINTER_HEADER not in prompt
-        refs = composition.on_demand_references(task["column"])
-        assert composition.REF_MANUAL_ARROBA not in refs
+        _assert_sem_manual(prompt)
 
-    def test_etapa_com_comando_carrega(self, tmp_path):
-        config = canonical_config()
-        task = make_task(tmp_path, col_overrides={"allowed-commands": ["labels"]})
-        prompt = prompt_for(tmp_path, config, task)
-        assert _POINTER_HEADER in prompt
-        refs = composition.on_demand_references(task["column"])
-        assert composition.REF_MANUAL_ARROBA in refs
-
-    def test_etapa_default_carrega_sob_demanda(self, tmp_path):
-        # Sem a chave allowed-commands, assume o conjunto completo → manual entra.
+    def test_etapa_sem_allowed_commands_nao_carrega(self, tmp_path):
+        # CT-02: default (sem a chave) — antes assumia o conjunto completo.
         config = canonical_config()
         task = make_task(tmp_path)
         prompt = prompt_for(tmp_path, config, task)
-        assert _POINTER_HEADER in prompt
+        _assert_sem_manual(prompt)
+
+    def test_etapa_allowed_commands_vazio_nao_carrega(self, tmp_path):
+        # CT-03: lista vazia — já não incluía antes; segue sem incluir.
+        config = canonical_config()
+        task = make_task(tmp_path, col_overrides={"allowed-commands": []})
+        prompt = prompt_for(tmp_path, config, task)
+        _assert_sem_manual(prompt)
 
 
-class TestGateDerivado:
+class TestAllowedCommandsRemovida:
+    """CA-3 — `allowed-commands` não é mais reconhecida pela validação e não
+    produz efeito algum sobre o prompt dinâmico."""
 
-    def test_inclusao_e_funcao_dos_comandos_permitidos(self):
-        com = composition.on_demand_references({"allowed-commands": ["archive"]})
-        sem = composition.on_demand_references({"allowed-commands": []})
-        assert composition.REF_MANUAL_ARROBA in com
-        assert composition.REF_MANUAL_ARROBA not in sem
+    def test_chave_nao_reconhecida(self):
+        # CT-05: validação não levanta o erro específico de forma antigo e não
+        # trata `allowed-commands` como chave especial.
+        config = canonical_config()
+        config["boards"]["entrega"]["columns"]["desenvolvimento"][
+            "allowed-commands"
+        ] = ["labels"]
+        # O schema de colunas aceita chaves desconhecidas: validar não deve
+        # levantar nenhum erro relativo a `allowed-commands`.
+        config_module._validate_boards(config["boards"], known_agents={"dev"})
+        # Garante que a função de validação específica antiga sumiu do schema.
+        assert not hasattr(config_module, "_validate_allowed_commands")
 
-    def test_subconjunto_sem_anotacao_nao_inclui(self):
-        # Um comando desconhecido/não-anotação não abre o gate.
-        refs = composition.on_demand_references({"allowed-commands": ["foo-bar"]})
-        assert composition.REF_MANUAL_ARROBA not in refs
-
-    def test_determinismo(self):
-        col = {"allowed-commands": ["blocked_by"]}
-        assert composition.on_demand_references(col) == composition.on_demand_references(col)
+    def test_chave_sem_efeito_no_prompt(self, tmp_path):
+        # CT-06: duas colunas idênticas exceto por `allowed-commands` produzem
+        # prompts idênticos — a chave não produz diferença observável.
+        config = canonical_config()
+        sem = make_task(tmp_path, slug="zzaaa")
+        com = make_task(
+            tmp_path, slug="zzbbb",
+            col_overrides={"allowed-commands": ["blocked_by", "need_human"]},
+        )
+        prompt_sem = prompt_for(tmp_path, config, sem)
+        prompt_com = prompt_for(tmp_path, config, com)
+        # Normaliza o slug (único token que legitimamente difere) para comparar
+        # o restante do prompt.
+        assert prompt_sem.replace("zzaaa", "SLUG") == prompt_com.replace("zzbbb", "SLUG")
+        _assert_sem_manual(prompt_sem)
+        _assert_sem_manual(prompt_com)

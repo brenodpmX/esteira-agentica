@@ -389,9 +389,11 @@ class TestBuildPromptRegressao:
         prompt = _build_prompt(tmp_path)
         assert "## Diretório de trabalho" in prompt
 
-    def test_prompt_contem_secao_anotacoes_body(self, tmp_path):
+    def test_prompt_nao_contem_secao_anotacoes_body(self, tmp_path):
+        # #325: o ponteiro/seção do manual `@---` foi removido do prompt
+        # dinâmico; o manual vive exclusivamente no steering.
         prompt = _build_prompt(tmp_path)
-        assert "Anotações no body" in prompt
+        assert "Anotações no body" not in prompt
 
     def test_prompt_contem_commit_e_push_para_create(self, tmp_path):
         prompt = _build_prompt(tmp_path, gitevents="create")

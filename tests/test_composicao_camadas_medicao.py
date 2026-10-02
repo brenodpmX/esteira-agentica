@@ -155,6 +155,47 @@ class TestInstrucoesObrigatorias:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CT-07 (#325) — referencias_sob_demanda_incluidas sempre vazia
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestReferenciasSobDemandaVazias:
+    """CA-4 (#325): o registro `composicao_medicao` nunca reporta o manual
+    `@---` como incluído — a lista é sempre vazia, independentemente de
+    `allowed-commands`."""
+
+    @pytest.mark.parametrize("overrides", [
+        None,
+        {"allowed-commands": []},
+        {"allowed-commands": ["labels"]},
+        {"allowed-commands": ["blocked_by", "need_human", "archive"]},
+    ])
+    def test_lista_sempre_vazia(self, tmp_path, overrides):
+        import src.__main__ as main
+        steering = _write_steering(tmp_path)
+        config = canonical_config()
+        task = make_task(tmp_path, col_overrides=overrides)
+        prompt = prompt_for(tmp_path, config, task)
+        with patch("src.__main__.STEERING_FILE", steering):
+            record = main.compose_execution_record(
+                FakeAdapterNoTokens(), prompt, None, task["column"], task["issue"]
+            )
+        assert record["referencias_sob_demanda_incluidas"] == []
+        # Nenhuma referência ao manual aparece no registro.
+        assert "manual_comandos_arroba" not in str(record)
+
+    def test_compose_measurement_default_vazio(self):
+        # Chamada direta sem o parâmetro: contrato preserva o campo como [].
+        record = composition.compose_measurement(
+            execucao="1",
+            adapter="kiro-cli",
+            prompt_dinamico="p",
+            contexto_sempre_carregado="c",
+            instrucoes_obrigatorias_carregadas=True,
+        )
+        assert record["referencias_sob_demanda_incluidas"] == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CT-32 — adapter sem tokens → tokens_entrada: null (sem falhar)
 # ══════════════════════════════════════════════════════════════════════════════
 
