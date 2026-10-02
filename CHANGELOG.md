@@ -2,6 +2,90 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.20.0] - 2026-10-02
+
+### Adicionado
+
+- **Registro de execução de agentes com consolidação por linhagem histórica**
+  (issue #307). Ao final de **cada** execução de agente e em **qualquer**
+  desfecho, o motor passa a gravar um **registro de negócio estruturado e
+  persistente**, independente do log detalhado em Markdown
+  (`logs/<issue_id>/<ts>.md`, sujeito a `log.ttl`). O registro é a base durável
+  para responder, em lote e **sem abrir nenhum log individual**: quantas
+  execuções uma issue exigiu, quanto tempo/consumo cada etapa demandou, quais
+  desfechos ocorreram, quanto esforço foi repetido sem a issue progredir e qual
+  o esforço agregado de uma issue principal somada a todos os seus descendentes
+  históricos conhecidos.
+  - Novo módulo `src/core/execution_record.py` com os campos do registro
+    (identidade, tempo, contexto, resultado, avanço, consumo com proveniência e
+    `log_ref`), a **taxonomia fechada e total** de `resultado` (`concluída` |
+    `falha terminal` | `timeout` | `interrompida` | `desconhecida`, nunca vazio),
+    o mapeamento determinístico `ExecutionResult` → `resultado` (`map_resultado`),
+    o cálculo de `repeticao_sem_avanco` e a consulta por issue raiz
+    (`consulta_linhagem`) com agregação, segmentação de consumo por
+    `{unidade, origem}` e sinalização de descendente sem registro.
+  - **Resultado técnico e avanço são dimensões independentes** (RN-01):
+    `avancou` é observado pela mudança de etapa, não derivado do `resultado`.
+    `repeticao_sem_avanco` marca nova execução da **mesma** issue na **mesma**
+    etapa após uma anterior que não a fez progredir (mudança de etapa
+    descaracteriza).
+  - **Consumo com proveniência** (RN-04/RN-05): preserva `valor`, `unidade`,
+    `origem` e `disponibilidade`. Consumo **não informado**
+    (`disponibilidade = indisponível`, sem valor) e **zero reportado**
+    (`disponibilidade = disponível`, `valor = 0`) são estados **distintos** e
+    nunca compartilham representação. "Tokens" é apenas o **rótulo geral**
+    (`ROTULO_CONSUMO`); cada plataforma preserva sua unidade nativa, sem
+    conversão. O adapter `kiro-cli` não expõe tokens ⇒ `indisponível` é o
+    comportamento **correto**, não falha.
+  - **Linhagem histórica resiliente à limpeza local** (RN-06/RN-07/RN-08): a
+    consulta por issue raiz é reconstruída **somente** dos registros próprios
+    (`issue_id` + `issue_parent` capturados por execução), nunca dos arquivos
+    locais nem dos logs. Arquivar a issue (que apaga `-body/-history/-addcomment`)
+    e expurgar logs por TTL **não** removem a existência, o parentesco nem as
+    métricas. A travessia neutraliza ciclos e múltiplos caminhos (cada
+    issue/execução conta exatamente uma vez) e descendente conhecido sem registro
+    aparece sinalizado (`sem_registro`), nunca omitido.
+  - **Retenção própria e desacoplada do `log.ttl`:** chave opcional
+    `registro.retencao_dias` (raiz do `pipe.yml`, inteiro `> 0`). Ausente ⇒
+    nenhum expurgo automático (estado seguro por padrão); presente ⇒ registro com
+    idade `>= retencao_dias` fica elegível a expurgo (`purge_expired`), acionado
+    pelo motor no startup após `log.cleanup()`. É o **único** caminho de remoção
+    — não há exclusão manual de registro por qualquer papel, e excluir uma issue
+    **não** remove seus registros.
+  - **Fonte única de contagem (CA-18):** a métrica "quantas execuções houve no
+    contexto `(board, coluna, issue)`" continua tendo origem única em
+    `src/core/agent_circuit_break.py`. Esta capacidade **adere** a essa fonte e
+    **não** cria contador paralelo; grava **um registro por execução** (artefato
+    de negócio por execução), que não é a métrica de contexto.
+  - **Persistência atômica e protegida** em `.pipe/executionRecords.json`
+    (temp + `fsync` + `os.replace`, com `version` para integridade); o arquivo
+    entra em `PROTECTED_PATHS` (`src/core/agent.py`) — seu conteúdo e caminho
+    nunca são expostos a agente/prompt/comentário/log.
+
+### Alterado
+
+- **`src/__main__.py::call_agent`** passa a gravar o registro ao fim do
+  dispatch, em qualquer desfecho, de forma **fail-safe** (falha de persistência
+  do registro não derruba a esteira — a execução já ocorreu). O `startup`
+  executa o expurgo por retenção (`purge_expired`) após `log.cleanup()`,
+  desligado por padrão.
+- **`src/core/config.py`** ganha `validate_registro`, chamada em `check_config`,
+  rejeitando bloco malformado, `retencao_dias` não inteiro/≤ 0 ou campo
+  desconhecido, com `ConfigError` citando o caminho, antes de qualquer alteração
+  de estado.
+
+### Documentação
+
+- Novo contrato técnico da capacidade
+  [`doc/architecture/registro-execucao-agentes-linhagem-historica/contrato.md`](doc/architecture/registro-execucao-agentes-linhagem-historica/contrato.md),
+  com os campos do registro, a taxonomia e o mapeamento concreto, a semântica de
+  consumo/unidade, a regra de repetição sem avanço, a linhagem resiliente a
+  arquivamento/expurgo e a configuração de retenção.
+- `README.md` ganhou a seção "Registro de execução de agentes
+  (`registro.retencao_dias`)" dentro de "Execução de Agentes", documentou a chave
+  opcional no exemplo de `pipe.yml` e registrou `.pipe/executionRecords.json` na
+  tabela de arquivos protegidos (`PROTECTED_PATHS`).
+
 ## [1.19.0] - 2026-10-01
 
 ### Adicionado
