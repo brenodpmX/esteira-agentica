@@ -381,33 +381,23 @@ guardrail:
 O que muda no comportamento para quem opera:
 
 - **Prompt dinâmico enxuto:** o manual completo dos comandos `@---` deixou de
-  ser embutido em toda execução; agora vive **só** no steering. No prompt entra,
-  no máximo, um ponteiro curto **sob demanda** — e apenas quando a etapa permite
-  um comando de anotação (gate derivado da chave `allowed-commands` da coluna;
-  ausente ⇒ conjunto completo, comportamento anterior).
+  ser embutido em toda execução; agora vive **exclusivamente** no steering. O
+  prompt dinâmico não contém mais nenhum ponteiro ou menção ao manual `@---` —
+  nem completo, nem sob demanda.
 - **Contrato de carregamento (fail-closed):** antes de acionar o agente, a
   esteira verifica que o contexto obrigatório (steering) está carregado e emite
   um **registro de medição por execução** no log (`composicao_medicao`), com
-  caracteres/palavras/linhas por camada, `total_sempre_carregado`, referências
-  sob demanda incluídas, `tokens_entrada` e
-  `instrucoes_obrigatorias_carregadas`. Sem o contexto obrigatório, o agente
-  **não** é acionado (`instrucoes_obrigatorias_carregadas: false` + motivo;
-  evento `composicao_fail_closed`).
+  caracteres/palavras/linhas por camada, `total_sempre_carregado`,
+  `tokens_entrada` e `instrucoes_obrigatorias_carregadas`. Sem o contexto
+  obrigatório, o agente **não** é acionado
+  (`instrucoes_obrigatorias_carregadas: false` + motivo; evento
+  `composicao_fail_closed`).
 - **Adapter sem tokens:** o `kiro-cli` não expõe contagem de tokens de entrada;
   o registro usa `tokens_entrada: null`, sem falhar.
 - **Nome de branch único:** o nome é resolvido **uma única vez** por execução a
   partir do `branch_pattern` do flow e reutilizado idêntico em todos os blocos
   (criação e merge/PR). Marcador não resolvível com os dados da tarefa é um erro
   de configuração sinalizado (`ConfigError`), sem gerar nome parcial.
-
-Chave opcional por coluna para o gate do manual `@---`:
-
-```yaml
-columns:
-  desenvolvimento:
-    agent: engineering
-    allowed-commands: [labels, blocked_by, need_human]  # ausente ⇒ todos
-```
 
 Contrato técnico completo e tabela de chaves:
 [`doc/architecture/composicao-camadas-prompt-contexto/contrato.md`](doc/architecture/composicao-camadas-prompt-contexto/contrato.md).
