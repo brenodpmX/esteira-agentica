@@ -349,6 +349,48 @@ def resolve_retry(config: dict) -> RetryConfig:
     )
 
 
+# ── registro.* (issue #307) ───────────────────────────────────────────────────
+# Retenção PRÓPRIA dos registros de execução, independente do TTL do log
+# detalhado (`log.ttl`). São dois controles distintos que coexistem.
+
+
+def validate_registro(config: dict) -> None:
+    """Valida a chave opcional `registro` do pipe.yml (issue #307).
+
+    Contrato (`registro.retencao_dias`):
+    - opcional; ausente ⇒ nenhum expurgo automático (estado seguro por padrão);
+    - quando presente, inteiro > 0 (rejeita 0, negativos, bool, float, str).
+
+    `bool` é rejeitado ANTES de int (True/False são instâncias de int em
+    Python), seguindo o padrão de `validate_retry`/`validate_agent_circuit_break`.
+    Campos desconhecidos sob `registro` são rejeitados citando o caminho.
+    """
+    if "registro" not in config:
+        return
+
+    block = config["registro"]
+    if not isinstance(block, dict):
+        raise ConfigError(
+            f"registro: deve ser um mapa com 'retencao_dias' "
+            f"(valor recebido: {block!r})"
+        )
+
+    known = {"retencao_dias"}
+    for key in block:
+        if key not in known:
+            raise ConfigError(
+                f"registro.{key}: campo desconhecido (permitidos: 'retencao_dias')"
+            )
+
+    if "retencao_dias" in block:
+        value = block["retencao_dias"]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ConfigError(
+                f"registro.retencao_dias: deve ser inteiro > 0 "
+                f"(valor recebido: {value!r})"
+            )
+
+
 def check_config() -> dict:
     """Valida e retorna configuração do pipe.yml."""
     _validate_env()
@@ -370,6 +412,7 @@ def check_config() -> dict:
 
     validate_max_attempts(config)
     validate_retry(config)
+    validate_registro(config)
 
     # agent_circuit_break (#306): bloco opcional de RAIZ (fora de `boards`, que
     # enumera todo dict como board). Validado antes de qualquer alteração de

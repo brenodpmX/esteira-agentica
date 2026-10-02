@@ -34,6 +34,7 @@ PROTECTED_PATHS: list[str] = [
     ".pipe/orphanFiles.json",
     ".pipe/pipe.lock",
     ".pipe/agentCircuitBreak.json",
+    ".pipe/executionRecords.json",
 ]
 
 

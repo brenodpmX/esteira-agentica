@@ -33,6 +33,11 @@ log:
   ttl: 10
   level: INFO
 
+registro:               # opcional: retenção PRÓPRIA dos registros de execução
+  retencao_dias: 30     # (issue #307), em dias, inteiro > 0. Independente de
+                        # log.ttl. Ausente = nenhum expurgo automático. Ver
+                        # "Execução de Agentes".
+
 retry:                  # opcional: retry inline SEGURO (só p/ DEFINITE_NOT_STARTED,
   max_tentativas: 3     # ex.: kiro-cli ausente no PATH). NÃO se aplica a resultado
   backoff_inicial_seg: 30  # ambíguo (UNKNOWN_OUTCOME), que é fail-closed. Ausente =
@@ -534,6 +539,71 @@ Cada execução gera um arquivo em `logs/<issue_id>/<timestamp>.md` com:
 - **Prompt**: prompt completo enviado ao agente
 - **Chat**: diálogo da execução (preenchido pelo adapter)
 
+### Registro de execução de agentes (`registro.retencao_dias`)
+
+Além do log detalhado em Markdown (acima, efêmero por `log.ttl`), ao final de
+**cada** execução de agente e em **qualquer** desfecho a esteira grava um
+**registro de negócio estruturado e persistente** (issue #307). Esse registro é
+a base durável para responder, em lote e **sem abrir nenhum log individual**:
+quantas execuções uma issue exigiu, quanto tempo e consumo cada etapa demandou,
+quais desfechos ocorreram, quanto esforço foi repetido sem a issue progredir e
+qual o esforço agregado de uma issue principal somada a todos os seus
+descendentes históricos conhecidos.
+
+O que muda para quem opera:
+
+- **Sempre existe um registro por execução**, mesmo depois que o log detalhado
+  correspondente tiver expirado por TTL. O armazenamento durável fica em
+  `.pipe/executionRecords.json` (estado interno protegido — ver tabela de
+  `PROTECTED_PATHS`), nunca exposto ao agente.
+- **Desfecho técnico e avanço da issue são coisas distintas.** O registro guarda
+  o `resultado` técnico — exatamente um de `concluída`, `falha terminal`,
+  `timeout`, `interrompida` ou `desconhecida` (nunca vazio) — e, em separado, se
+  a issue **avançou** de etapa. Uma falha recuperada e uma execução que não fez a
+  issue progredir ficam visíveis, não ocultas.
+- **Repetição sem avanço é identificada.** Reexecutar a mesma issue na mesma
+  etapa (mesmo board e mesma coluna) depois de uma execução que não a fez
+  progredir é marcado como repetição sem avanço; mudar de etapa descaracteriza.
+- **Consumo com proveniência.** Cada registro guarda `valor`, `unidade`,
+  `origem` e `disponibilidade`. **Consumo não informado** (a plataforma não
+  reportou) é distinto de **consumo zero reportado** — nunca se confundem.
+  "Tokens" é apenas o rótulo geral; cada plataforma preserva sua unidade nativa
+  (ex.: créditos), sem conversão. O `kiro-cli` não expõe contagem de tokens, logo
+  o consumo fica `indisponível` — comportamento correto, não falha.
+- **Linhagem histórica resiliente à limpeza local.** A consulta por issue raiz
+  consolida a raiz e todos os seus descendentes **conhecidos** (aqueles cuja
+  existência e parentesco foram capturados por algum registro de execução),
+  reconstruindo a árvore **só** dos registros próprios — nunca dos arquivos
+  locais nem dos logs. Mesmo depois que a esteira **arquiva** uma issue (apagando
+  seus `-body.md`/`-history.md`/`-addcomment.md`) e/ou **expurga** os logs por
+  TTL, o descendente continua aparecendo na linhagem com existência, parentesco e
+  métricas preservados. Descendente conhecido que nunca executou aparece
+  sinalizado como "sem registro", nunca omitido; ciclos e múltiplos caminhos não
+  geram dupla contagem.
+- **Retenção própria, desacoplada do log.** A chave **opcional**
+  `registro.retencao_dias` (na raiz do `pipe.yml`, inteiro `> 0`) controla por
+  quantos dias um registro vive. **Ausente ⇒ nenhum expurgo automático** (estado
+  seguro por padrão). Presente ⇒ registro com idade `>= retencao_dias` fica
+  elegível a expurgo, executado pela esteira no startup (após a limpeza dos
+  logs). É o **único** caminho de remoção: **não há exclusão manual** de registro
+  por nenhum papel, e **excluir uma issue não apaga** seus registros.
+
+```yaml
+registro:               # opcional, na RAIZ do pipe.yml
+  retencao_dias: 30     # dias (inteiro > 0); ausente = sem expurgo automático
+```
+
+Valores inválidos (`retencao_dias` não inteiro ou `<= 0`, campo desconhecido sob
+`registro`) são rejeitados na validação do `pipe.yml` (`ConfigError` citando o
+caminho), antes de qualquer alteração de estado.
+
+> A contagem de "quantas execuções houve no contexto `(board, coluna, issue)`"
+> continua tendo **fonte única** em `agent_circuit_break` (ver "Limitador de
+> reexecuções por contexto"): este registro **adere** a ela e **não** cria
+> contador paralelo — grava um artefato de negócio por execução. Contrato técnico
+> completo (campos, taxonomia, mapeamento e saída da consulta de linhagem):
+> [`doc/architecture/registro-execucao-agentes-linhagem-historica/contrato.md`](doc/architecture/registro-execucao-agentes-linhagem-historica/contrato.md).
+
 ### Continuidade de sessão
 
 A esteira mantém a continuidade do raciocínio do agente entre execuções da
@@ -604,6 +674,7 @@ Padrões protegidos (`PROTECTED_PATHS`):
 | `.pipe/throttle.json` | Estado do throttle de rate limit |
 | `.pipe/throttle-*.json` | Estado do throttle por escopo |
 | `.pipe/agentCircuitBreak.json` | Estado do limitador de reexecuções por contexto (#306) |
+| `.pipe/executionRecords.json` | Registros de execução de agentes + linhagem histórica (#307) |
 
 ## Anotações no body (comandos `@---`)
 
