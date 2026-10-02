@@ -846,8 +846,9 @@ def compose_execution_record(adapter, prompt: str, continuation_prompt: str | No
     """Monta o registro de medição por execução (contrato observável #308).
 
     Função de orquestração que mede o prompt dinâmico e o contexto SEMPRE
-    carregado (steering), deriva as referências sob demanda da etapa e verifica
-    o contrato de instruções obrigatórias. Não aciona o agente.
+    carregado (steering) e verifica o contrato de instruções obrigatórias. Não
+    aciona o agente. O manual `@---` vive exclusivamente no steering, logo
+    ``referencias_sob_demanda_incluidas`` é sempre uma lista vazia (#325).
 
     O adapter kiro-cli NÃO expõe contagem de tokens de entrada; logo
     ``tokens_entrada`` é ``None`` (CA-17), sem falhar.
@@ -859,7 +860,6 @@ def compose_execution_record(adapter, prompt: str, continuation_prompt: str | No
         steering_text = ""
 
     check = composition.check_required_instructions(STEERING_FILE)
-    refs = composition.on_demand_references(col)
 
     # Capacidade de tokens do adapter: hoje o kiro-cli não expõe tokens de
     # entrada antes de executar — degradação suave para None (CA-17).
@@ -875,7 +875,6 @@ def compose_execution_record(adapter, prompt: str, continuation_prompt: str | No
         adapter=getattr(adapter, "name", adapter.__class__.__name__),
         prompt_dinamico=prompt,
         contexto_sempre_carregado=steering_text,
-        referencias_sob_demanda_incluidas=refs,
         instrucoes_obrigatorias_carregadas=check.carregadas,
         tokens_entrada=tokens if isinstance(tokens, int) else None,
         motivo=check.motivo,

@@ -2,6 +2,29 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.21.0] - 2026-10-02
+
+### Alterado
+
+- **Ponteiro do manual `@---` removido do prompt dinâmico (#325).** Desde a
+  1.18.0 o manual completo dos comandos `@---` vive no steering (contexto sempre
+  carregado); a #308, porém, reintroduzira no prompt dinâmico um ponteiro curto
+  ao manual (seção "## Anotações no body (comandos `@---`)"), incluído sob
+  demanda e controlado pela chave de coluna `allowed-commands`. Agora o prompt
+  dinâmico não contém absolutamente nada sobre `@---` — nem o manual, nem o
+  ponteiro. O manual passa a existir exclusivamente no steering (origem única).
+  - `src/core/agent.py` (`build_prompt`): removido o bloco que injetava a seção
+    "## Anotações no body (comandos `@---`)".
+  - `src/core/composition.py`: removidos a constante `REF_MANUAL_ARROBA`, o
+    conjunto `_ANNOTATION_COMMANDS` e as funções `allowed_commands` e
+    `on_demand_references` (gate de referência sob demanda).
+  - `src/core/config.py`: removida a validação da chave de coluna
+    `allowed-commands`, cujo único propósito era controlar esse ponteiro. A
+    chave deixa de ser reconhecida pelo schema (ignorada, sem efeito).
+  - `src/__main__.py` (`compose_execution_record`): o campo
+    `referencias_sob_demanda_incluidas` do registro `composicao_medicao` passa a
+    ser sempre uma lista vazia (contrato de tipo preservado).
+
 ## [1.20.1] - 2026-10-02
 
 ### Corrigido

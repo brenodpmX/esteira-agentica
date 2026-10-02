@@ -137,53 +137,6 @@ def find_duplicated_rules() -> dict[str, list[str]]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Gate de referências sob demanda (CA-8)
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Nome estável da referência extensa do manual de comandos `@---`.
-REF_MANUAL_ARROBA = "manual_comandos_arroba"
-
-# Comandos de anotação `@---` que, quando PERMITIDOS na etapa, tornam o manual
-# necessário (gate derivado dos comandos permitidos — tabela de chaves de config).
-_ANNOTATION_COMMANDS = frozenset({
-    "parent", "children", "blocked_by", "blocks", "labels",
-    "agent-hub", "need_human", "archive",
-})
-
-
-def allowed_commands(col: dict) -> set[str]:
-    """Conjunto de comandos de anotação `@---` permitidos na etapa.
-
-    Derivado da configuração da coluna. A chave opcional ``allowed-commands``
-    (lista de nomes de comando, sem a barra) declara explicitamente o conjunto;
-    quando ausente, assume-se o conjunto completo de comandos de anotação (todas
-    as etapas de agente podem anotar o `-body.md`), preservando o comportamento
-    anterior de disponibilidade do manual.
-    """
-    declared = col.get("allowed-commands")
-    if declared is None:
-        return set(_ANNOTATION_COMMANDS)
-    if not isinstance(declared, (list, tuple, set)):
-        raise ConfigError(
-            "columns.<id>.allowed-commands: deve ser uma lista de nomes de comando"
-        )
-    return {str(c).strip().lstrip("/") for c in declared if str(c).strip()}
-
-
-def on_demand_references(col: dict) -> list[str]:
-    """Referências extensas incluídas SOB DEMANDA para a etapa (gate — CA-8).
-
-    O manual `@---` entra se, e somente se, a etapa permite ao menos um comando
-    de anotação que o torne necessário. A inclusão é função determinística do
-    conjunto de comandos permitidos (CA-8/CT-17).
-    """
-    refs: list[str] = []
-    if allowed_commands(col) & _ANNOTATION_COMMANDS:
-        refs.append(REF_MANUAL_ARROBA)
-    return refs
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # Resolução única do nome da branch (CA-10 / CA-11 / RN-05)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -315,8 +268,8 @@ def compose_measurement(
     adapter: str,
     prompt_dinamico: str,
     contexto_sempre_carregado: str,
-    referencias_sob_demanda_incluidas: list[str],
     instrucoes_obrigatorias_carregadas: bool,
+    referencias_sob_demanda_incluidas: list[str] | None = None,
     tokens_entrada: int | None = None,
     motivo: str = "",
 ) -> dict:
@@ -340,7 +293,7 @@ def compose_measurement(
             "palavras": total_words,
         },
         "tokens_entrada": tokens_entrada,
-        "referencias_sob_demanda_incluidas": list(referencias_sob_demanda_incluidas),
+        "referencias_sob_demanda_incluidas": list(referencias_sob_demanda_incluidas or []),
         "instrucoes_obrigatorias_carregadas": bool(instrucoes_obrigatorias_carregadas),
     }
     if motivo:
