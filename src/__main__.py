@@ -55,6 +55,13 @@ def check_config():
         config = validate_config()
         log.configure(config)
         log.cleanup()
+        # Expurgo próprio dos registros de execução (#307), independente do TTL
+        # do log detalhado. Sem `registro.retencao_dias` configurado, não remove
+        # nada (estado seguro por padrão — RN-09).
+        from src.core import execution_record
+        execution_record.purge_expired(
+            execution_record.resolve_retencao_dias(config)
+        )
         log.info("Config", "pipe.yml válido")
         return config
     except ConfigError as e:
@@ -722,7 +729,79 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
     if not _admit_circuit_break(config, board_id, col_id, issue):
         return None
 
-    return _dispatch_with_recovery(config, adapter, params, board_id, col_id)
+    # ── Execução + registro de negócio por execução (#307) ────────────────────
+    # Capturamos início/fim para a duração e observamos o avanço de etapa (RN-01:
+    # dimensão independente do resultado). O registro é gravado ao FINAL de
+    # qualquer desfecho (CA-1), SEM nunca derrubar a esteira por falha de
+    # persistência (fail-safe: a execução já ocorreu).
+    inicio = time.time()
+    result = _dispatch_with_recovery(config, adapter, params, board_id, col_id)
+    fim = time.time()
+
+    avancou = _issue_advanced(board_id, col_id, issue)
+    _write_execution_record(
+        config, result=result, params=params, issue=issue,
+        board_id=board_id, col_id=col_id, avancou=avancou,
+        inicio=inicio, fim=fim,
+    )
+    return result
+
+
+def _issue_advanced(board_id: str, col_id: str, issue: dict) -> bool:
+    """Observa se a issue AVANÇOU de etapa como consequência da execução (RN-01).
+
+    O agente move os 3 arquivos da issue para a coluna de destino ao concluir a
+    etapa (bloco "Transição de coluna" do prompt). Detectamos o avanço pela
+    AUSÊNCIA do `-body.md` na coluna de origem: se ele não está mais lá, a issue
+    saiu da etapa (avançou). Observação independente do resultado técnico.
+
+    Fallback seguro: se não há `body_path` conhecido, assume que não avançou.
+    """
+    body_path = issue.get("body_path")
+    if not body_path:
+        return False
+    return not Path(body_path).exists()
+
+
+def _write_execution_record(config, *, result, params, issue, board_id, col_id,
+                            avancou: bool, inicio: float, fim: float) -> None:
+    """Grava o registro de negócio da execução (#307), fail-safe.
+
+    O `issue_parent` capturado é o parentesco OBSERVADO no momento da execução
+    (campo `parent` do snapshot/issue). Nunca replica prompt/conversa (RN-13):
+    apenas uma referência lógica ao diretório de log detalhado da issue.
+    """
+    from src.core import execution_record
+
+    issue_id = issue.get("id")
+    issue_parent = issue.get("parent")
+    log_ref = f"logs/{issue_id}"
+
+    try:
+        execution_record.record_from_execution_result(
+            result=result,
+            issue_id=issue_id,
+            board=board_id,
+            etapa=col_id,
+            avancou=avancou,
+            issue_parent=issue_parent,
+            plataforma=params.platform,
+            agente=params.agent_id,
+            modelo=params.model,
+            inicio=inicio,
+            fim=fim,
+            consumo=execution_record.Consumo.indisponivel(origem=params.platform),
+            log_ref=log_ref,
+        )
+    except execution_record.ExecutionRecordStoreError as exc:
+        # Fail-safe: a execução já ocorreu; não derruba a esteira por falha de
+        # persistência do registro. Evidência acionável no log.
+        log.error(
+            "ExecutionRecord",
+            f"[{board_id}] #{issue_id} falha ao gravar registro de execução: {exc}",
+            event="execution_record_write_error",
+            board_id=board_id, issue_id=str(issue_id),
+        )
 
 
 def _admit_circuit_break(config: dict, board_id: str, col_id: str, issue: dict) -> bool:
