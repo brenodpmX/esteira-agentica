@@ -924,6 +924,13 @@ class GitHubBoardAdapter(BoardPort):
             number=int(issue_id),
         )
         issue = data["repository"]["issue"]
+        if issue is None:
+            # Node nulo => issue inexistente no repositório (deletada de fato).
+            # Sinaliza ausência REAL ao chamador (confirmação de delete-down),
+            # distinguindo-a de um fetch de board incompleto.
+            log.info("GitHub", f"{self._tp}#{issue_id} - inexistente no repo (deletada)",
+                     operation="get_issue", board_id=board_id, issue_id=issue_id)
+            return None
         labels = [l["name"] for l in (issue.get("labels", {}) or {}).get("nodes", [])]
         parent_node = issue.get("parent") or {}
         parent = str(parent_node["number"]) if parent_node.get("number") else None

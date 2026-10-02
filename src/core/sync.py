@@ -631,6 +631,41 @@ def _deps_deltas_from_snapshot(issue, issue_data: dict) -> dict:
 # sync_remote - sincronização única de um board (down)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _absence_confirmed(board_obj: Board, board_id: str, issue_id: str) -> bool:
+    """Confirma que uma issue ausente do fetch do board realmente saiu dele.
+
+    Protege contra fetch incompleto (paginação / consistência eventual do
+    ProjectV2): sem esta confirmação, um `list_issues` que por hiccup não
+    retorna uma issue ainda viva dispararia um delete-down — poda destrutiva e
+    IRREVERSÍVEL (remoção dos vínculos de bloqueio recíprocos no board).
+
+    Relê a issue diretamente (chamada única, sem dependências) e decide:
+      - não encontrada (node nulo => deletada de fato) -> ausência CONFIRMADA;
+      - arquivada -> CONFIRMADA (poda intencional de arquivadas);
+      - sem coluna neste board (fora do board / propagação automática) ->
+        CONFIRMADA;
+      - ainda viva, não arquivada e com coluna -> NÃO confirmada: a ausência
+        veio de um fetch incompleto, NÃO podar.
+
+    Em erro de releitura (API transitória), retorna False (conservador: não
+    destrói estado a partir de sinal duvidoso).
+    """
+    try:
+        probe = board_obj.get_issue(board_id, issue_id, fullsync=False)
+    except Exception as e:  # noqa: BLE001 - qualquer falha de leitura => não poda
+        log.warning("Sync", f"[{board_id}] #{issue_id} ausência não confirmável "
+                    f"(erro ao reconsultar: {e}); delete-down suprimido",
+                    board_id=board_id, issue_id=issue_id)
+        return False
+    if probe is None:
+        return True  # deletada de fato
+    if getattr(probe, "archived", False):
+        return True  # arquivada -> poda intencional
+    if not (getattr(probe, "column", "") or ""):
+        return True  # sem participação ativa neste board
+    return False     # viva e ativa -> fetch incompleto, não podar
+
+
 def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
     """Sincroniza um board contra o estado local, reconciliando o board inteiro.
 
@@ -703,13 +738,27 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
                 updated += 1
                 log.trace("Sync", f"[{board_id}] #{issue_id} change-down")
 
-    # Ausentes do fetch atual -> delete-down (arquivadas ou deletadas no board).
+    # Ausentes do fetch atual -> candidatas a delete-down (arquivadas/deletadas).
+    # GUARDA anti-fetch-incompleto: list_issues pode, por paginação ou
+    # consistência eventual do ProjectV2, devolver MENOS itens do que o real;
+    # issues ainda vivas pareceriam ausentes e disparariam uma poda DESTRUTIVA e
+    # IRREVERSÍVEL (delete-down remove os vínculos de bloqueio recíprocos no
+    # board). Antes de podar, CONFIRMA a ausência relendo a issue diretamente;
+    # só poda quando a ausência é real. Issue ainda viva e ativa => fetch
+    # incompleto => poda suprimida (ver _absence_confirmed).
     for issue_id, known in snapshot_by_id.items():
-        if issue_id not in remote_by_id:
-            if queue.add(ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)):
-                known["status"] = SyncEvent.DELETE_DOWN.value
-                removed += 1
-                log.trace("Sync", f"[{board_id}] #{issue_id} delete-down (ausente do fetch)")
+        if issue_id in remote_by_id:
+            continue
+        if not _absence_confirmed(board_obj, board_id, issue_id):
+            log.warning("Sync", f"[{board_id}] #{issue_id} ausente do fetch mas ainda "
+                        f"viva no board - fetch provavelmente incompleto; delete-down "
+                        f"suprimido",
+                        board_id=board_id, issue_id=issue_id)
+            continue
+        if queue.add(ChangeItem.of(SyncEvent.DELETE_DOWN, id=issue_id, board=board_id)):
+            known["status"] = SyncEvent.DELETE_DOWN.value
+            removed += 1
+            log.trace("Sync", f"[{board_id}] #{issue_id} delete-down (ausência confirmada)")
 
     snap.save()
 
@@ -1104,6 +1153,11 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     """Cria arquivos locais a partir do issue no board."""
     snap = Snapshot(board_id).load()
     issue = board_obj.get_issue(board_id, item.id, fullsync=item.fullsync)
+    if issue is None:
+        # Issue desapareceu do repositório entre o enfileiramento e a aplicação.
+        log.warning("Sync", f"[{board_id}] #{item.id} create-down ignorado - "
+                    f"issue inexistente no repositório")
+        return
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     column = issue.column or ""
 
@@ -1268,6 +1322,11 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
 
     old_col = issue_data.get("column")
     issue = board_obj.get_issue(board_id, item.id, fullsync=item.fullsync)
+    if issue is None:
+        # Issue desapareceu do repositório entre o enfileiramento e a aplicação.
+        log.warning("Sync", f"[{board_id}] #{item.id} change-down ignorado - "
+                    f"issue inexistente no repositório")
+        return
     # Sem fullsync, deps (blocked_by/blocks) não vêm na chamada única. Para não
     # apagar o bloco de deps ao reescrever o body, preserva o que o snapshot já
     # conhece sobre as dependências desta issue.

@@ -155,3 +155,83 @@ def test_delete_and_change_together():
     by_id = {i: e for e, i in _drain(q)}
     assert by_id["69"] == SyncEvent.DELETE_DOWN.value
     assert by_id["71"] == SyncEvent.CHANGE_DOWN.value
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GUARDA anti-fetch-incompleto (fix delete-down falso-positivo)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ProbePort(FakePort):
+    """FakePort cujo get_issue devolve um resultado configurável por id.
+
+    `probes` mapeia issue_id -> Issue | None (None => node nulo => deletada).
+    Ids ausentes do mapa caem no comportamento padrão do FakePort (coluna "").
+    """
+
+    def __init__(self, listed=None, probes=None):
+        super().__init__(listed=listed)
+        self._probes = probes or {}
+
+    def get_issue(self, board_id, issue_id, fullsync=False):
+        if issue_id in self._probes:
+            return self._probes[issue_id]
+        return super().get_issue(board_id, issue_id, fullsync=fullsync)
+
+
+def test_incomplete_fetch_suppresses_delete_down():
+    """Ausente do fetch mas AINDA VIVA no board (coluna definida, não arquivada)
+    => fetch incompleto => NÃO podar (delete-down suprimido)."""
+    board = Board(ProbePort(
+        listed=[  # #69 não veio no fetch (hiccup de paginação); #70 veio
+            Issue(id="70", title="", body="", column="backlog", updated_at=SNAP_AT),
+        ],
+        probes={  # releitura prova que #69 continua viva e ativa
+            "69": Issue(id="69", title="", body="", column="desenvolvimento",
+                        updated_at=SNAP_AT, archived=False),
+        },
+    ))
+    _seed_snapshot("story", [
+        {"id": "69", "column": "desenvolvimento", "status": "ok", "updated_at": SNAP_AT},
+        {"id": "70", "column": "backlog", "status": "ok", "updated_at": SNAP_AT},
+    ])
+    q = ChangeQueue()
+
+    sync_remote("story", board, q)
+
+    assert _drain(q) == []  # nenhuma poda: ausência era fetch incompleto
+
+
+def test_deleted_issue_confirmed_prunes():
+    """Releitura devolve None (node nulo => deletada de fato) => poda."""
+    board = Board(ProbePort(
+        listed=[Issue(id="70", title="", body="", column="backlog", updated_at=SNAP_AT)],
+        probes={"69": None},
+    ))
+    _seed_snapshot("story", [
+        {"id": "69", "column": "encerrado", "status": "ok", "updated_at": SNAP_AT},
+        {"id": "70", "column": "backlog", "status": "ok", "updated_at": SNAP_AT},
+    ])
+    q = ChangeQueue()
+
+    sync_remote("story", board, q)
+
+    assert _drain(q) == [(SyncEvent.DELETE_DOWN.value, "69")]
+
+
+def test_archived_issue_confirmed_prunes():
+    """Releitura devolve a issue arquivada => poda intencional de arquivadas."""
+    board = Board(ProbePort(
+        listed=[Issue(id="70", title="", body="", column="backlog", updated_at=SNAP_AT)],
+        probes={"69": Issue(id="69", title="", body="", column="encerrado",
+                            updated_at=SNAP_AT, archived=True)},
+    ))
+    _seed_snapshot("story", [
+        {"id": "69", "column": "encerrado", "status": "ok", "updated_at": SNAP_AT},
+        {"id": "70", "column": "backlog", "status": "ok", "updated_at": SNAP_AT},
+    ])
+    q = ChangeQueue()
+
+    sync_remote("story", board, q)
+
+    assert _drain(q) == [(SyncEvent.DELETE_DOWN.value, "69")]

@@ -2,6 +2,39 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.20.1] - 2026-10-02
+
+### Corrigido
+
+- **Falso-positivo de `delete-down` por fetch incompleto, com perda
+  irreversível de vínculos de bloqueio.** Em `sync_remote` a poda de issues
+  "ausentes do fetch" era disparada apenas por `issue_id not in remote_by_id`,
+  sem qualquer confirmação. Quando `list_issues` devolvia um resultado
+  **incompleto** (paginação ou consistência eventual do ProjectV2 retornando
+  menos itens do que o real), issues ainda vivas pareciam deletadas e geravam
+  `DELETE_DOWN`. O tratamento de delete remove, via `set_blocked_by`/
+  `set_blocks`, os **vínculos de bloqueio recíprocos** das issues apontadas —
+  uma operação **destrutiva e irreversível** no board. Num ciclo seguinte, um
+  fetch completo recriava as issues (`create-down`), mas as dependências já
+  haviam sido apagadas e não eram restauradas. Resultado observado: cadeia de
+  bloqueios inteira de um board apagada por um único fetch truncado.
+  - Correção: antes de podar, a ausência é **confirmada** relendo a issue
+    diretamente (`_absence_confirmed`). Só há `delete-down` quando a issue
+    realmente saiu do board: node nulo (deletada de fato), arquivada, ou sem
+    coluna/participação neste board. Issue ainda viva, não arquivada e com
+    coluna => ausência tratada como **fetch incompleto** e a poda é
+    **suprimida** (log de aviso), preservando o estado. Em erro de releitura o
+    comportamento é conservador (não poda).
+  - `GithubBoardAdapter.get_issue` passa a devolver `None` quando o node da
+    issue é nulo (deletada), distinguindo deleção real de fetch incompleto; os
+    aplicadores de `create-down`/`change-down` ignoram com segurança issues
+    inexistentes.
+  - Testes: `tests/test_incremental_absent_delete_down.py` ganha
+    `test_incomplete_fetch_suppresses_delete_down`,
+    `test_deleted_issue_confirmed_prunes` e
+    `test_archived_issue_confirmed_prunes`. Os invariantes de poda de
+    arquivadas/deletadas são preservados.
+
 ## [1.20.0] - 2026-10-02
 
 ### Adicionado
