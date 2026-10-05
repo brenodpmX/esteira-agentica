@@ -43,6 +43,13 @@ retry:                  # opcional: retry inline SEGURO (só p/ DEFINITE_NOT_STA
   backoff_inicial_seg: 30  # ambíguo (UNKNOWN_OUTCOME), que é fail-closed. Ausente =
   backoff_fator: 2.0    # defaults 3 / 30 / 2.0. Ver "Execução de Agentes".
 
+safety:                      # opcional: contingências reversíveis de segurança
+  cross_board_parent_links: enabled  # enabled (padrão) | suspended. Recusa
+                              # novos vínculos pai/filho ENTRE quadros distintos
+                              # quando 'suspended'; relida sem cache a cada
+                              # vínculo avaliado (issue #310). Ver "Integridade
+                              # de participação entre quadros".
+
 git:
   repo:
     main: git@github.com:user/repo.git
@@ -665,6 +672,7 @@ Padrões protegidos (`PROTECTED_PATHS`):
 | `.pipe/throttle-*.json` | Estado do throttle por escopo |
 | `.pipe/agentCircuitBreak.json` | Estado do limitador de reexecuções por contexto (#306) |
 | `.pipe/executionRecords.json` | Registros de execução de agentes + linhagem histórica (#307) |
+| `.pipe/participationPending.json` | Participações entre quadros pendentes de reconciliação e próxima tentativa (#310) |
 
 ## Anotações no body (comandos `@---`)
 
@@ -749,6 +757,101 @@ anteriores (#84/#85/#86), que exigem limpeza manual com a esteira parada.
 Documentação: [change #88](doc/changes/88-sub-issues-propagadas-entre-boards.md),
 [registro da tentativa cancelada #98](doc/changes/98-sub-issues-propagadas-entre-boards.md)
 e [post mortem #99](doc/incidente/sub-issues-propagadas/ticket.md).
+
+## Integridade de participação entre quadros (`participation_intent`)
+
+As proteções do incidente #88/#98/#99/#106 (seção anterior) cobrem a janela
+imediatamente após o vínculo pai/filho ser criado, mas uma presença automática
+pode chegar depois dessa consulta, ou já chegar com uma coluna preenchida — o
+que, até a issue #310, bastava para a esteira tratá-la como issue legítima do
+quadro e despachar um agente no fluxo errado (ex.: uma tarefa processada como
+história). A partir desta entrega, toda presença de uma issue em um quadro é
+classificada e só se torna elegível a despacho com intenção confirmada.
+
+### Classificação de intenção
+
+Cada participação (presença de uma issue em um quadro, com ou sem coluna) é
+classificada por uma função pura, sem chamadas de rede, em um dos quatro
+estados:
+
+| Estado | Significado | Elegível a despacho? |
+|--------|-------------|------------------------|
+| `origin` | presença original, intencional, do quadro | sim |
+| `authorized` | participação em quadro adicional, autorizada explicitamente | sim |
+| `propagated` | efeito colateral automático da plataforma (sem autorização) | não — é removida do quadro indevido |
+| `unresolved` | evidência ambígua ou falha transitória de consulta | não — fica pendente e é reavaliada depois |
+
+A coluna (Status) preenchida ou vazia **não** prova intenção — é exatamente
+isso que permitia a brecha anterior. A classificação é determinística: o
+mesmo estado de configuração, rótulos e presenças produz sempre o mesmo
+resultado, independente da ordem em que as issues são avaliadas.
+
+### Autorização de participação em mais de um quadro
+
+Para que uma issue participe legitimamente de mais de um quadro (sem ser
+tratada como propagação), aplique a ela o rótulo reservado:
+
+```
+board-intent-<id-do-quadro>
+```
+
+onde `<id-do-quadro>` deve corresponder exatamente ao id de um quadro
+configurado no `pipe.yml` (ex.: `board-intent-entrega`). O rótulo autoriza
+somente o quadro nomeado — não existe curinga, e ele não é necessário para o
+quadro de origem da issue. Um rótulo que nomeia um quadro inexistente na
+configuração é ignorado para fins de autorização e gera um aviso no log;
+nenhuma presença é removida nem autorizada por engano nesse caso.
+
+### Reconciliação automática
+
+A presença classificada como `propagated` é removida do quadro indevido sem
+intervenção manual, em dois momentos: imediatamente após a criação do vínculo
+pai/filho, e — como rede de segurança para o caso de a plataforma materializar
+a presença depois dessa primeira verificação — na descoberta remota seguinte.
+A relação pai/filho nativa nunca é alterada por essa reconciliação. Falhas de
+consulta ou remoção não são silenciadas: o item fica pendente para nova
+tentativa em um ciclo posterior, sem bloquear o processamento das demais
+issues da fila.
+
+### Barreira final na seleção de tarefas
+
+Mesmo que uma presença indevida escape das reconciliações acima, a seleção de
+tarefas (`keep_task`) nunca escolhe para execução ou avanço automático uma
+issue sem intenção confirmada (`origin`/`authorized`); issues `propagated` ou
+`unresolved` são ignoradas, e essa verificação não faz nenhuma chamada de
+rede. Issues já existentes antes desta entrega recebem o campo de intenção
+automaticamente no início do processo (presença em um único quadro vira
+`origin`; presença duplicada sem autorização vira `unresolved`).
+
+### Suspender novos vínculos entre quadros (`safety.cross_board_parent_links`)
+
+Em caso de incidente ou investigação, um operador pode recusar temporariamente
+a criação de **novos** vínculos pai/filho entre issues de quadros distintos,
+sem reiniciar a esteira:
+
+```yaml
+safety:
+  cross_board_parent_links: suspended   # enabled (padrão) | suspended
+```
+
+A chave é relida do `pipe.yml` a cada vínculo avaliado (sem cache em
+memória) — alterar o valor em disco tem efeito a partir da próxima tentativa
+de vínculo, sem reiniciar nem reimplantar o processo. Vínculos dentro do
+mesmo quadro e vínculos já existentes nunca são afetados pela suspensão.
+Qualquer valor diferente de `enabled`/`suspended` é rejeitado na validação do
+`pipe.yml`, citando a chave e o valor recebido.
+
+### Observabilidade
+
+Os eventos `participation_classified`, `participation_reconciled`,
+`participation_reconcile_failed`, `participation_removed_externally`,
+`dispatch_blocked_unconfirmed_intent` e `cross_board_link_blocked` são
+registrados no log diário da esteira (sem segredos, body de issue ou conteúdo
+protegido), permitindo apurar presenças propagadas, reconciliações e
+despachos bloqueados sem abrir arquivos internos. No início do processo, o
+evento `rollout_evidence` registra versão, commit, ambiente e instante de
+início — a prova de que a correção está de fato em execução no ambiente,
+pré-requisito para contabilizar qualquer janela de observação.
 
 ## Eventos de coluna (`on_in` / `on_out`)
 

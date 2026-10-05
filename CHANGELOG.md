@@ -2,6 +2,73 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.23.0] - 2026-10-05
+
+### Adicionado
+
+- **Integridade de participação de issues entre quadros de trabalho (#310).**
+  Quando uma relação pai/filho nativa (sub-issue) liga issues de quadros
+  (projects) distintos, o GitHub Projects V2 pode propagar automaticamente a
+  issue filha para o quadro do pai — presença que não representa uma decisão
+  de quem opera a esteira. Até aqui, essa presença automática (com ou sem
+  coluna preenchida) era tratada como issue legítima do quadro, tornando-se
+  elegível à seleção de tarefas e podendo disparar um agente no fluxo errado
+  (ex.: uma tarefa processada como história). A esteira agora classifica,
+  reconcilia e bloqueia essa presença antes que vire trabalho executável, sem
+  nunca desfazer a relação pai/filho e sem impedir a participação legítima em
+  mais de um quadro quando explicitamente autorizada.
+  - **Classificação de intenção** (`src/core/participation.py`): toda presença
+    de uma issue em um quadro é classificada, por uma função pura e sem rede,
+    em um dos quatro estados — `origin` (presença original), `authorized`
+    (participação multi-quadro autorizada pelo rótulo reservado
+    `board-intent-<id-do-quadro>`), `propagated` (efeito colateral automático
+    da plataforma — some do quadro indevido) ou `unresolved` (evidência
+    ambígua ou falha transitória — fica pendente, nunca é removida por
+    omissão). A coluna (Status) preenchida ou vazia não influencia o
+    resultado, e o mesmo estado de entrada produz sempre a mesma classificação
+    independente da ordem de avaliação.
+  - **Reconciliação automática** (`src/core/participation_reconcile.py`), em
+    dois gatilhos: imediatamente após a criação do vínculo pai/filho e,
+    como rede de segurança, na descoberta remota seguinte (para o caso de a
+    plataforma materializar a presença depois da primeira consulta). Falhas de
+    consulta/remoção são erros tipados — nunca silenciados — e o item fica
+    pendente para nova tentativa sem bloquear o restante da fila nem contar
+    como tentativa esgotada.
+  - **Barreira final na seleção de tarefas** (`keep_task`): nenhuma issue sem
+    intenção confirmada (`origin`/`authorized`) é escolhida para execução ou
+    avanço automático, mesmo que algo escape das reconciliações anteriores;
+    essa verificação não faz nenhuma chamada de rede.
+  - **Migração de issues já existentes**: no início do processo, antes da
+    primeira seleção de tarefas, toda issue sem o campo de intenção o recebe
+    automaticamente — presente em um único quadro vira `origin`; presente em
+    mais de um quadro sem autorização vira `unresolved` em todas as entradas;
+    um campo já preenchido nunca é sobrescrito.
+  - **Contingência operável sem reiniciar a esteira**: a chave opcional
+    `safety.cross_board_parent_links` no `pipe.yml` (valores `enabled` —
+    padrão — ou `suspended`) permite a um operador recusar temporariamente a
+    criação de novos vínculos entre quadros distintos. A chave é relida do
+    arquivo a cada vínculo avaliado (sem cache em memória), portanto
+    ativar/desativar tem efeito imediato, sem reiniciar o processo. Vínculos
+    dentro do mesmo quadro e vínculos já existentes nunca são afetados. Um
+    valor diferente de `enabled`/`suspended` é rejeitado na validação do
+    `pipe.yml` com mensagem citando a chave e o valor recebido.
+  - **Observabilidade**: novos eventos estruturados no log diário —
+    `participation_classified`, `participation_reconciled`,
+    `participation_reconcile_failed`, `participation_removed_externally`,
+    `dispatch_blocked_unconfirmed_intent` (deduplicado por quadro/coluna/issue)
+    e `cross_board_link_blocked` — sem segredos, body de issue ou conteúdo
+    protegido. No início do processo, a esteira também registra
+    `rollout_evidence` (versão, commit, ambiente, instante de início), com
+    qualquer campo ausente sinalizado explicitamente em vez de inferir
+    sucesso; essa evidência é o pré-requisito para comprovar que a correção
+    está de fato em execução no ambiente. O log de execução de agente passa a
+    incluir a intenção da participação e o quadro de origem da issue.
+  - Novo estado interno protegido (nunca acessível ao agente):
+    `.pipe/participationPending.json`, com os itens de participação
+    pendentes de reconciliação e seus próximos horários de nova tentativa.
+  - A cobertura vale para qualquer par de quadros com relação hierárquica,
+    presente ou futuro, sem lista de pares codificada no motor.
+
 ## [1.22.0] - 2026-10-05
 
 ### Adicionado
