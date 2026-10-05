@@ -532,7 +532,10 @@ ocorria quando um único caminho ausente invalidava o lote inteiro.
 ### Log de execução
 
 Cada execução gera um arquivo em `logs/<issue_id>/<timestamp>.md` com:
-- **Parâmetros**: plataforma, agente, model, agent_hub, board, coluna, issue
+- **Parâmetros**: plataforma, agente, model, agent_hub, board, coluna, issue e,
+  quando disponíveis, `participation_intent` e `origin_board` (ver "Integridade
+  de participação entre quadros") — correlacionam a execução à intenção de
+  participação da issue no momento do despacho
 - **Prompt**: prompt completo enviado ao agente
 - **Chat**: diálogo da execução (preenchido pelo adapter)
 
@@ -852,6 +855,11 @@ despachos bloqueados sem abrir arquivos internos. No início do processo, o
 evento `rollout_evidence` registra versão, commit, ambiente e instante de
 início — a prova de que a correção está de fato em execução no ambiente,
 pré-requisito para contabilizar qualquer janela de observação.
+
+Além do log diário, o log de execução de cada agente (ver "Log de execução")
+é enriquecido com `participation_intent` e `origin_board` quando disponíveis,
+correlacionando o despacho à intenção de participação vigente da issue no
+momento da execução.
 
 ## Eventos de coluna (`on_in` / `on_out`)
 
