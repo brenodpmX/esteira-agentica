@@ -24,6 +24,15 @@ Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
   construção do comando no engine (reprocessar não resolve). Erros de
   transporte/rede permanecem `transitorio`.
 
+### Alterado
+
+- **Resumo de sincronização por ciclo rebaixado para TRACE.** A linha
+  `sincronizacao board=<id> criados=<n> atualizados=<n> removidos=<n>
+  resultado=ok` (`sync_remote`) era emitida em INFO a cada ciclo de cada
+  board, poluindo o terminal com ruído de rotina. Agora sai em TRACE (vai só
+  para o arquivo, não para o terminal). Os casos `resultado=limite` e
+  `resultado=erro` seguem em INFO.
+
 ## [1.23.1] - 2026-10-05
 
 ### Corrigido

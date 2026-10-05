@@ -844,7 +844,7 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
 
     snap.save()
 
-    log.info("Sync",
+    log.trace("Sync",
              f"sincronizacao board={board_id} criados={created} "
              f"atualizados={updated} removidos={removed} resultado=ok",
              board_id=board_id, criados=created, atualizados=updated,
