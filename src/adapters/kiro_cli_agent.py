@@ -1,5 +1,6 @@
 """Adapter kiro-cli - execução de agentes via kiro-cli."""
 
+import json
 import os
 import re
 import subprocess
@@ -10,6 +11,7 @@ from src.core.agent import AgentPort, AgentParams
 from src.core.log import log
 from src.core.session import SessionIndex
 from src.core.context_generator import STEERING_FILE
+from src.core.execution_record import Consumo
 from src.core.execution import (
     ExecutionResult, SUCEDIDO, FALHA, UNKNOWN_OUTCOME, DEFINITE_NOT_STARTED,
 )
@@ -63,6 +65,9 @@ class KiroCliAgent(AgentPort):
         e o contrato de logging da suíte congelada.
         """
         log_path = self._create_log(params)
+        # Consumo medido nesta execução (preenchido por _run ao parsear o
+        # stream-json). Reset por execução para não vazar valor de uma anterior.
+        self._last_consumo = None
         title_part = f" {params.title}" if params.title else ""
         col_part = f" [{params.col_name}]" if params.col_name else ""
         log.info("Kiro", f"[{params.board_id}]{col_part} #{params.issue_id}{title_part}"
@@ -77,6 +82,7 @@ class KiroCliAgent(AgentPort):
             self._append_log(log_path, self._strip_ansi(output) + "\n")
 
             result = self._classify(params, output)
+            result.consumo = self._last_consumo
             self._log_outcome(params, result, log_path)
             return result
         except Exception as e:
@@ -218,6 +224,10 @@ class KiroCliAgent(AgentPort):
             "kiro-cli", "chat",
             "--no-interactive",
             "--trust-all-tools",
+            # Formato estruturado (JSON Lines / eventos ACP): única forma, desde
+            # o kiro-cli 2.27.x, de obter o consumo (meteringUsage) por execução.
+            # O modo texto deixou de imprimir a linha-resumo de créditos/tempo.
+            "--output-format", "stream-json",
         ]
         if params.model:
             cmd += ["--model", params.model]
@@ -251,8 +261,10 @@ class KiroCliAgent(AgentPort):
                 env=env,
             )
         except subprocess.TimeoutExpired:
+            self._last_consumo = Consumo.indisponivel(origem=params.platform)
             return f"[TIMEOUT] Agente excedeu {_TIMEOUT}s"
         except FileNotFoundError:
+            self._last_consumo = Consumo.indisponivel(origem=params.platform)
             return "[ERRO] kiro-cli não encontrado no PATH"
 
         # Captura o id da sessão recém-usada (mais recente do cwd) e persiste.
@@ -262,10 +274,147 @@ class KiroCliAgent(AgentPort):
         if current_id:
             index.set(params.issue_id, params.col_id, current_id)
 
-        output = (result.stdout or "") + (result.stderr or "")
+        # Reconstrói um transcript legível a partir dos eventos ACP (stdout) e
+        # extrai o consumo (meteringUsage). O stderr é anexado cru: pode conter
+        # diagnósticos/erros de transporte cujos trechos a classificação usa.
+        transcript, valor, unidade = self._parse_stream_json(result.stdout or "")
+        stderr = (result.stderr or "").strip()
+        if stderr:
+            transcript = f"{transcript}\n{stderr}" if transcript else stderr
+
+        if valor is not None:
+            self._last_consumo = Consumo.reportado(
+                valor, unidade or "credit", params.platform
+            )
+        else:
+            self._last_consumo = Consumo.indisponivel(origem=params.platform)
+
+        output = transcript
         if result.returncode != 0:
             output += f"\n[exit-code: {result.returncode}]"
         return output
+
+    def _parse_stream_json(self, raw: str) -> tuple[str, float | None, str | None]:
+        """Converte os eventos ACP (JSON Lines) em transcript + consumo.
+
+        Retorna ``(transcript, valor_consumo, unidade_consumo)``:
+        - ``transcript``: reconstrução legível (prosa do agente, linhas
+          ``[tool] ...``, erros de ``runFinished``), encerrada por uma linha-
+          resumo ``▸ Credits: X • Time: Ys`` quando há medição — restaurando o
+          resumo que o kiro-cli deixou de imprimir no modo texto.
+        - ``valor_consumo``/``unidade_consumo``: soma do ``meteringUsage`` do
+          metadata final do turno (``None`` quando a ferramenta não reportou).
+
+        Robustez: linhas não-JSON são preservadas cruas (nada é perdido); tipos
+        de evento desconhecidos (ex.: erro de transporte) são anexados crus para
+        que a classificação por canal estruturado continue enxergando os
+        trechos relevantes. Degrada para ``("", None, None)`` em entrada vazia.
+        """
+        valor: float | None = None
+        unidade: str | None = None
+        turn_ms: int | None = None
+        status: str | None = None
+        stop_reason: str | None = None
+        final_text: str | None = None
+
+        lines: list[str] = []
+        msg_buf: list[str] = []
+
+        def _flush_msg() -> None:
+            if msg_buf:
+                texto = "".join(msg_buf).strip()
+                if texto:
+                    lines.append(texto)
+                msg_buf.clear()
+
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                evt = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                _flush_msg()
+                lines.append(line)  # preserva saída não estruturada
+                continue
+            if not isinstance(evt, dict):
+                continue
+            etype = evt.get("type")
+            data = evt.get("data") or {}
+
+            if etype == "metadata":
+                mu = data.get("meteringUsage")
+                if isinstance(mu, list) and mu:
+                    total = 0.0
+                    uni = None
+                    for seg in mu:
+                        if not isinstance(seg, dict):
+                            continue
+                        try:
+                            total += float(seg.get("value") or 0)
+                        except (TypeError, ValueError):
+                            pass
+                        uni = uni or seg.get("unit")
+                    valor = total
+                    unidade = uni
+                if data.get("turnDurationMs") is not None:
+                    turn_ms = data.get("turnDurationMs")
+                continue
+
+            if etype == "sessionUpdate":
+                upd = data.get("update") or {}
+                kind = upd.get("sessionUpdate")
+                if kind == "agent_message_chunk":
+                    txt = (upd.get("content") or {}).get("text")
+                    if txt:
+                        msg_buf.append(txt)
+                elif kind == "tool_call":
+                    _flush_msg()
+                    title = upd.get("title")
+                    if title:
+                        lines.append(f"[tool] {title}")
+                elif kind == "tool_call_update":
+                    st = upd.get("status")
+                    if st:
+                        lines.append(f"[tool] status: {str(st).capitalize()}")
+                # agent_thought_chunk (raciocínio) é omitido do transcript.
+                continue
+
+            if etype == "runFinished":
+                status = data.get("status")
+                stop_reason = data.get("stopReason")
+                final_text = data.get("finalText")
+                continue
+
+            if etype == "runStarted":
+                continue
+
+            # Evento desconhecido (ex.: erro de transporte): preserva cru para a
+            # classificação por canal estruturado.
+            _flush_msg()
+            lines.append(line)
+
+        _flush_msg()
+
+        # Falha não-sucesso: anexa evidência acionável (status/causa) preservando
+        # trechos reconhecidos pelos _ERROR_HINTS/_AMBIGUOUS_HINTS.
+        if status is not None and status != "success":
+            detalhe = f"[ERRO] runFinished status={status}"
+            if stop_reason:
+                detalhe += f" stopReason={stop_reason}"
+            if final_text:
+                detalhe += f": {final_text}"
+            lines.append(detalhe)
+
+        # Linha-resumo final (restaura o antigo "▸ Credits: X • Time: Ys").
+        if valor is not None:
+            resumo = f"▸ Credits: {valor:.2f}"
+            if turn_ms is not None:
+                secs = int(turn_ms // 1000)
+                resumo += f" • Time: {secs // 60}m {secs % 60}s"
+            lines.append(resumo)
+
+        return "\n".join(lines), valor, unidade
 
     def _list_session_ids(self, work_dir: Path, env: dict) -> list[str]:
         """Lista os session_ids do cwd (mais recente primeiro) via kiro-cli."""
