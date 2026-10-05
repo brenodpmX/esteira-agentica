@@ -72,12 +72,21 @@ def _seed_snapshot(board_id, issues):
 
 def _capture_info(monkeypatch):
     records = []
-    original = sync_module.log.info
 
     def fake_info(component, msg, *args, **extra):
         records.append((component, msg, extra))
 
     monkeypatch.setattr(sync_module.log, "info", fake_info)
+    return records
+
+
+def _capture_trace(monkeypatch):
+    records = []
+
+    def fake_trace(component, msg, *args, **extra):
+        records.append((component, msg, extra))
+
+    monkeypatch.setattr(sync_module.log, "trace", fake_trace)
     return records
 
 
@@ -93,7 +102,11 @@ def _sync_lines(records):
 # ── CT-OBS-01: sucesso emite log no contrato mínimo ───────────────────────────
 
 def test_ct_obs01_success_log_contract(monkeypatch):
-    """1 criado, 1 atualizado, 1 removido -> um log parseável com resultado=ok."""
+    """1 criado, 1 atualizado, 1 removido -> um log parseável com resultado=ok.
+
+    O resumo de sucesso é emitido em nível TRACE (ruído por ciclo fora do
+    terminal); limite/erro permanecem em INFO.
+    """
     board = Board(FakePort(listed=[
         # #50 nova -> criado
         Issue(id="50", title="", body="", column="backlog",
@@ -109,7 +122,7 @@ def test_ct_obs01_success_log_contract(monkeypatch):
         {"id": "70", "column": "encerrado", "status": "ok",
          "updated_at": "2026-09-22T00:00:00Z"},
     ])
-    records = _capture_info(monkeypatch)
+    records = _capture_trace(monkeypatch)
     q = ChangeQueue()
 
     sync_remote("b", board, q)

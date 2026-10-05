@@ -87,7 +87,7 @@ class DeadLetterEntry:
     id: str
     identifier: str
     event: str
-    category: str      # "definitivo" | "transitorio_esgotado"
+    category: str      # "definitivo" | "definitivo_cli" | "transitorio_esgotado" | "corrigivel_pelo_agente"
     reason: str         # mensagem sanitizada (ver sanitize_reason)
     attempts: int
     isolated_at: str    # timestamp ISO 8601 UTC (mesmo padrão de ChangeItem.now())
