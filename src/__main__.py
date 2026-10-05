@@ -13,6 +13,7 @@ from src.core.agent import (AgentParams, build_prompt, build_continuation_prompt
                             resolve_repo_id, resolve_work_dir)
 from src.core.context_generator import generate_context, ensure_steering_integrity, STEERING_FILE
 from src.core import composition
+from src.core import participation
 from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
@@ -113,6 +114,13 @@ def startup(config: dict):
     _setup_ssh()
     preflight()
     REPO_DIR.mkdir(exist_ok=True)
+
+    # Evidência de execução (#310 / RF-14): registra versão/commit/ambiente/
+    # início logo no startup. Campo ausente é sinalizado explicitamente, sem
+    # inferir sucesso (RN-10). Pré-condição para iniciar a janela de observação.
+    participation.rollout_evidence(VERSION)
+    # Zera a deduplicação de despacho bloqueado (nova execução do processo).
+    participation.reset_dispatch_dedup()
 
     # Gerar CONTEXT.md para instruir agentes sobre regras e estrutura do sistema
     generate_context(config)
@@ -236,6 +244,11 @@ def board_startup_sync(config: dict):
                 log.warning("Board", f"Rate limit em '{board_id}' - retoma às {back_at}")
                 time.sleep(e.wait_seconds)
 
+    # Migração de legados (#310 / RF-11): antes da primeira seleção de tarefas,
+    # issues sem o campo `participation_intent` recebem a intenção conforme a
+    # regra de unicidade/duplicidade. Idempotente e nunca sobrescreve.
+    participation.migrate_legacy_intents(config)
+
 
 def get_board_ids(config: dict) -> list[str]:
     """Retorna lista de board_ids ordenados por prioridade (menor = mais prioritário)."""
@@ -272,7 +285,7 @@ def detect_local_all(config: dict) -> bool:
     return queue.size() > before
 
 
-def sync_remote_board(board_id: str) -> bool:
+def sync_remote_board(board_id: str, config: dict = None) -> bool:
     """Descoberta remota (down) de um único board (rotação priorizada).
 
     O sync remoto consome API do provider (sujeito a rate limit), então
@@ -286,6 +299,12 @@ def sync_remote_board(board_id: str) -> bool:
     queue = ChangeQueue()
     try:
         sync_remote(board_id, board, queue)
+        # Remoção externa (#310 / RF-13 / CT-22): observa pendências que
+        # desapareceram do quadro sem reconciliação automática registrada e
+        # emite `participation_removed_externally` (sem inferir autoria). Não
+        # bloqueia a descoberta — falha de consulta mantém a pendência.
+        from src.core import participation_reconcile
+        participation_reconcile.detect_external_removal(board, config)
     except PenaltyException:
         log.warning("Sync", f"[{board_id}] Penalty no sync remoto")
 
@@ -302,7 +321,7 @@ def sync_board(board_id: str, config: dict) -> bool:
     board).
     """
     local = detect_local_all(config)
-    remote = sync_remote_board(board_id)
+    remote = sync_remote_board(board_id, config)
     return local or remote
 
 
@@ -523,12 +542,22 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
     for issue in issues:
         col_id = issue["column"]
 
+        # Gate final de participação (#310 / RF-10): só prossegue issue com
+        # intenção confirmada (origin/authorized) no snapshot. As demais
+        # (propagated/unresolved/ausente) são ignoradas para seleção E para
+        # avanço automático, emitindo um evento deduplicado. O gate NÃO faz
+        # chamada de rede — lê apenas o campo do snapshot local (RNF-04).
+        # Backfill tardio de legados sem o campo (consistente com a migração
+        # de startup RF-11): single-board ⇒ origem; duplicado ⇒ não resolvido.
+        participation.backfill_intent_if_absent(board_id, issue, config)
+        if not participation.gate_keep(board_id, col_id, issue):
+            continue
+
         # Auto-advance do todo
         if todo_col and col_id == todo_col:
             if block_auto_advance:
                 continue
-            # Respeita o bloqueio: uma issue em 'todo' com /blocked_by ou
-            # /need_human NÃO deve ser avançada. Pular deixa o loop seguir para
+            # Respeita o bloqueio: uma issue em 'todo' com /blocked_by ou            # /need_human NÃO deve ser avançada. Pular deixa o loop seguir para
             # a próxima issue elegível do todo (tipicamente a bloqueante), que
             # avança em seu lugar — preservando a ordem da fila por bloqueios.
             if _is_blocked(issue):
@@ -689,6 +718,8 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
         remediation_prompt=remediation_prompt,
         col_name=col.get("name", col_id),
         title=title,
+        participation_intent=issue.get("participation_intent"),
+        origin_board=board_id,
     )
 
     adapter = KiroCliAgent()
@@ -728,6 +759,18 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
     # Sem política configurada, a contagem interna ocorre e nada é bloqueado.
     if not _admit_circuit_break(config, board_id, col_id, issue):
         return None
+
+    # ── Correlação de despacho (#310 / RF-15) ─────────────────────────────────
+    # Enriquece o log de execução com a intenção da participação e o quadro de
+    # origem, para correlacionar o despacho com a classificação de intenção.
+    log.info(
+        "Participation",
+        f"[{board_id}] #{issue['id']} despacho com intenção confirmada",
+        event="dispatch_participation",
+        issue=str(issue["id"]), board=board_id, column=col_id,
+        participation_intent=issue.get("participation_intent"),
+        origin_board=board_id,
+    )
 
     # ── Execução + registro de negócio por execução (#307) ────────────────────
     # Capturamos início/fim para a duração e observamos o avanço de etapa (RN-01:
@@ -1099,7 +1142,7 @@ def main():
                 #     são cross-board (ex.: issue bloqueante criada em outro board).
                 local_changes = detect_local_all(config)
                 # 1b. Remota (down) apenas no board atual da rotação priorizada.
-                remote_changes = sync_remote_board(current_board)
+                remote_changes = sync_remote_board(current_board, config)
                 had_changes = local_changes or remote_changes
 
                 # Fase 2: Processamento global da fila

@@ -35,6 +35,7 @@ PROTECTED_PATHS: list[str] = [
     ".pipe/pipe.lock",
     ".pipe/agentCircuitBreak.json",
     ".pipe/executionRecords.json",
+    ".pipe/participationPending.json",
 ]
 
 
@@ -176,6 +177,8 @@ class AgentParams:
     remediation_prompt: str = None   # prompt de remediação (E4) com os erros de sync
     col_name: str = ""     # nome humanizado da coluna/etapa (log de terminal)
     title: str = ""        # título da issue (log de terminal)
+    participation_intent: str = None  # intenção de participação (#310 / RF-15)
+    origin_board: str = None          # quadro de origem da issue (#310 / RF-15)
 
 
 class AgentPort(ABC):

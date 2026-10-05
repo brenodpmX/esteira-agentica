@@ -315,7 +315,14 @@ def test_create_issue_coluna_valida_sem_fallback(monkeypatch):
     assert not any("fallback" in m for m in warnings)
 
 
-# ── Guard do create-down (matriz 9 a 12) ──────────────────────────────────────
+# ── Guard do create-down (agora via reconciliação de participação #310) ───────
+#
+# A partir de #310, o guard de `_apply_create_down` deixou de usar o
+# `_propagation_proof` baseado em snapshot e passou a usar
+# `reconcile_remote_presence`, que classifica a presença via
+# `classify_participation` consultando `list_participations` (GraphQL). Os
+# testes abaixo exercitam o caminho REAL com um FakePort que implementa
+# `list_participations`, provando a integração (não só a função isolada).
 
 CONFIG = {
     "boards": {
@@ -334,49 +341,101 @@ def _snapshot_com_issue(board_id: str, issue_id: str, column: str):
     snap.save()
 
 
-def _board_com_issue(issue: Issue):
+def _board_com_issue(issue: Issue, participations=None):
+    from src.core.participation import Participation, ParticipationQueryError
     port = FakePort()
     board = Board(port)
     board._port.get_issue = lambda bid, iid, fullsync=False: issue
+    parts = participations
+
+    def _list(issue_id):
+        if parts is None:
+            raise ParticipationQueryError(f"#{issue_id} - sem list_participations")
+        return list(parts)
+
+    board._port.list_participations = _list
     return port, board
 
 
-def test_create_down_issue_nova_com_parent_sem_prova_cria_arquivos(monkeypatch, tmp_path):
-    """(9) Parent isolado não é prova: cria arquivos com fallback de coluna."""
+def test_create_down_issue_nova_sem_outra_presenca_cria_arquivos(monkeypatch, tmp_path):
+    """(9) Issue nova, presença única no board atual, sem parent cross-board:
+    classificada `origin` e cria arquivos com fallback de coluna."""
     monkeypatch.chdir(tmp_path)
     from src.core import sync
+    from src.core.participation import Participation
     from src.core.snapshot import Snapshot
 
     snap = Snapshot("b").load()
     snap.board = {"todo": "To Do"}
     snap.save()
 
+    # Presença única no board atual (sem outra presença, sem parent cross-board).
     port, board = _board_com_issue(
-        Issue(id="5", title="Teste", body="", column="", parent="10",
-              updated_at="2024-01-01T00:00:00Z")
+        Issue(id="5", title="Teste", body="", column="",
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=[Participation("I5", "b", "Pb", "")],
     )
     item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
 
     sync._apply_create_down("b", item, board, ChangeQueue(), CONFIG)
 
     assert ("remove_from_board", "5") not in port.calls
-    assert (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
+    body = tmp_path / ".pipe/boards/b/todo/5-teste-body.md"
+    assert body.exists()
+    # Persiste a intenção classificada no snapshot (RF-08/RF-10).
+    assert Snapshot("b").load().issue("5")["participation_intent"] == "origin"
 
 
-def test_create_down_sem_coluna_em_outro_board_configurado_descarta(monkeypatch, tmp_path):
-    """(10) Presença comprovada em outro board configurado: remove e descarta."""
+def test_create_down_parent_cross_board_sem_prova_fica_unresolved(monkeypatch, tmp_path):
+    """(9b) Parent cross-board SEM prova: `unresolved` (RN-02/CT-01c) — não cria
+    arquivos, não remove, adia."""
     monkeypatch.chdir(tmp_path)
     from src.core import sync
+    from src.core.participation import Participation
     from src.core.snapshot import Snapshot
 
     snap = Snapshot("b").load()
     snap.board = {"todo": "To Do"}
     snap.save()
-    _snapshot_com_issue("outro_board", "5", "doing")
+    # Parent #10 reside em 'outro_board' (cross-board), mas não há prova de
+    # presença confirmada com coluna conhecida em outro quadro.
+    _snapshot_com_issue("outro_board", "10", "doing")
 
     port, board = _board_com_issue(
         Issue(id="5", title="Teste", body="", column="", parent="10",
-              updated_at="2024-01-01T00:00:00Z")
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=[Participation("I5", "b", "Pb", "")],
+    )
+    item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
+
+    sync._apply_create_down("b", item, board, ChangeQueue(), CONFIG)
+
+    assert ("remove_from_board", "5") not in port.calls
+    assert not (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
+
+
+def test_create_down_presenca_propagada_com_prova_descarta(monkeypatch, tmp_path):
+    """(10) Presença comprovada em outro board configurado (coluna conhecida):
+    classificada `propagated`, removida e evento descartado."""
+    monkeypatch.chdir(tmp_path)
+    from src.core import sync
+    from src.core.participation import Participation
+    from src.core.snapshot import Snapshot
+
+    snap = Snapshot("b").load()
+    snap.board = {"todo": "To Do"}
+    snap.save()
+
+    # Prova de propagação: presença confirmada em 'outro_board' com coluna 'doing'
+    # (coluna conhecida nas columns de outro_board). Presença no board atual 'b'
+    # é a propagada.
+    port, board = _board_com_issue(
+        Issue(id="5", title="Teste", body="", column="", parent="10",
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=[
+            Participation("Io", "outro_board", "Po", "doing"),
+            Participation("Ib", "b", "Pb", ""),
+        ],
     )
     item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
 
@@ -386,20 +445,83 @@ def test_create_down_sem_coluna_em_outro_board_configurado_descarta(monkeypatch,
     assert not (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
 
 
-def test_create_down_prova_de_board_fora_da_config_nao_descarta(monkeypatch, tmp_path):
-    """(11) Snapshot de board removido do pipe.yml não serve como prova."""
+def test_create_down_propagada_com_coluna_preenchida_tambem_descarta(monkeypatch, tmp_path):
+    """(10b/CT-03) Coluna preenchida NÃO isenta: presença com prova em outro
+    board é removida mesmo chegando com Status no board atual."""
     monkeypatch.chdir(tmp_path)
     from src.core import sync
+    from src.core.participation import Participation
+    from src.core.snapshot import Snapshot
+
+    snap = Snapshot("b").load()
+    snap.board = {"todo": "To Do", "doing": "Doing"}
+    snap.save()
+
+    port, board = _board_com_issue(
+        Issue(id="5", title="Teste", body="", column="doing", parent="10",
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=[
+            Participation("Io", "outro_board", "Po", "doing"),
+            Participation("Ib", "b", "Pb", "Doing"),
+        ],
+    )
+    item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
+
+    sync._apply_create_down("b", item, board, ChangeQueue(), CONFIG)
+
+    assert ("remove_from_board", "5") in port.calls
+    assert not (tmp_path / ".pipe/boards/b/doing/5-teste-body.md").exists()
+
+
+def test_create_down_autorizada_por_rotulo_cria_arquivos(monkeypatch, tmp_path):
+    """(10c/CT-04) Rótulo `board-intent-<board atual>` autoriza participação
+    multi-quadro: `authorized`, não removida, cria arquivos."""
+    monkeypatch.chdir(tmp_path)
+    from src.core import sync
+    from src.core.participation import Participation
     from src.core.snapshot import Snapshot
 
     snap = Snapshot("b").load()
     snap.board = {"todo": "To Do"}
     snap.save()
-    _snapshot_com_issue("board_orfao", "5", "doing")   # ausente de CONFIG
 
     port, board = _board_com_issue(
         Issue(id="5", title="Teste", body="", column="", parent="10",
-              updated_at="2024-01-01T00:00:00Z")
+              labels=["board-intent-b"],
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=[
+            Participation("Io", "outro_board", "Po", "doing"),
+            Participation("Ib", "b", "Pb", ""),
+        ],
+    )
+    item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
+
+    sync._apply_create_down("b", item, board, ChangeQueue(), CONFIG)
+
+    assert ("remove_from_board", "5") not in port.calls
+    assert (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
+    assert Snapshot("b").load().issue("5")["participation_intent"] == "authorized"
+
+
+def test_create_down_prova_de_board_fora_da_config_nao_descarta(monkeypatch, tmp_path):
+    """(11) Presença em project fora da config (board_id="") não prova: a
+    presença única configurada é `origin` e cria arquivos."""
+    monkeypatch.chdir(tmp_path)
+    from src.core import sync
+    from src.core.participation import Participation
+    from src.core.snapshot import Snapshot
+
+    snap = Snapshot("b").load()
+    snap.board = {"todo": "To Do"}
+    snap.save()
+
+    port, board = _board_com_issue(
+        Issue(id="5", title="Teste", body="", column="",
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=[
+            Participation("Ib", "b", "Pb", ""),
+            Participation("Ix", "", "Px", "doing"),  # project não configurado
+        ],
     )
     item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
 
@@ -409,61 +531,32 @@ def test_create_down_prova_de_board_fora_da_config_nao_descarta(monkeypatch, tmp
     assert (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
 
 
-def test_create_down_sem_coluna_em_outro_board_sem_coluna_conhecida_nao_descarta(
-        monkeypatch, tmp_path):
-    """Presença em outro board com coluna desconhecida não é prova suficiente."""
+def test_create_down_falha_de_consulta_fica_unresolved_adiada(monkeypatch, tmp_path):
+    """(12) Falha transitória de consulta (ParticipationQueryError): `unresolved`,
+    sem remoção, sem arquivos; pendência adiada registrada (RN-09/CT-05)."""
     monkeypatch.chdir(tmp_path)
     from src.core import sync
+    from src.core import participation_reconcile as PR
     from src.core.snapshot import Snapshot
 
     snap = Snapshot("b").load()
     snap.board = {"todo": "To Do"}
     snap.save()
-    _snapshot_com_issue("outro_board", "5", "coluna_extinta")
 
+    # FakePort sem participations => list_participations levanta ParticipationQueryError.
     port, board = _board_com_issue(
         Issue(id="5", title="Teste", body="", column="",
-              updated_at="2024-01-01T00:00:00Z")
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=None,
     )
     item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
 
     sync._apply_create_down("b", item, board, ChangeQueue(), CONFIG)
 
     assert ("remove_from_board", "5") not in port.calls
-    assert (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
-
-
-def test_create_down_falha_de_remocao_nao_consome_o_evento(monkeypatch, tmp_path):
-    """(12) Falha em remove_from_board propaga: o evento permanece na fila."""
-    monkeypatch.chdir(tmp_path)
-    from src.core import sync
-    from src.core.snapshot import Snapshot
-
-    snap = Snapshot("b").load()
-    snap.board = {"todo": "To Do"}
-    snap.save()
-    _snapshot_com_issue("outro_board", "5", "doing")
-
-    port, board = _board_com_issue(
-        Issue(id="5", title="Teste", body="", column="",
-              updated_at="2024-01-01T00:00:00Z")
-    )
-    port.remove_raises = Exception("500 do GitHub")
-
-    queue = ChangeQueue()
-    queue.add(sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True))
-
-    # apply_changes classifica a falha como transitória (mensagem genérica,
-    # ver classify_error) e reenfileira em vez de propagar — comportamento
-    # introduzido por #144 para evitar head-of-line blocking (incidente #97).
-    # A garantia relevante ao guard do #106 permanece: o evento não é
-    # consumido/descartado e nenhum arquivo local é criado após a falha.
-    sync.apply_changes(board, queue, CONFIG)
-
-    # At-least-once: item continua na fila para o próximo ciclo.
-    pending = queue.getNext()
-    assert pending is not None and pending.id == "5"
     assert not (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
+    entry = PR.pending_entry("b", "5")
+    assert entry is not None and entry["next_attempt_at"]
 
 
 # ── Reconciliação de coluna no change-down (matriz 13, 14 e 16) ───────────────
@@ -567,16 +660,20 @@ def test_guard_e_fallback_nao_reintroduzem_item_removido(monkeypatch, tmp_path):
     """(16) Item removido pelo guard não volta via fallback do change-down."""
     monkeypatch.chdir(tmp_path)
     from src.core import sync
+    from src.core.participation import Participation
     from src.core.snapshot import Snapshot
 
     snap = Snapshot("b").load()
     snap.board = {"todo": "To Do"}
     snap.save()
-    _snapshot_com_issue("outro_board", "5", "doing")
 
     port, board = _board_com_issue(
         Issue(id="5", title="Teste", body="", column="", parent="10",
-              updated_at="2024-01-01T00:00:00Z")
+              updated_at="2024-01-01T00:00:00Z"),
+        participations=[
+            Participation("Io", "outro_board", "Po", "doing"),  # prova
+            Participation("Ib", "b", "Pb", ""),                  # propagada
+        ],
     )
     item = sync.ChangeItem.of(sync.SyncEvent.CREATE_DOWN, id="5", board="b", fullsync=True)
 
