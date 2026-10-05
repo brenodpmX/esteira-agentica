@@ -47,6 +47,10 @@ class ExecutionResult:
     - `session_id`: id da sessão kiro-cli (preservado quando disponível).
     - `request_id`: request ID do servidor (preservado quando disponível).
     - `tentativas`: número de invocações do subprocesso nesta entrega.
+    - `consumo`: consumo medido da execução (`execution_record.Consumo`) quando o
+      adapter o extrai do canal estruturado da ferramenta; `None` quando o
+      adapter não o fornece (o chamador degrada para indisponível). Mantido como
+      `object` para não acoplar `execution` ao módulo de registro.
     """
 
     classe: str
@@ -56,6 +60,7 @@ class ExecutionResult:
     session_id: str | None = None
     request_id: str | None = None
     tentativas: int = 1
+    consumo: object | None = None
 
     @property
     def sucesso(self) -> bool:

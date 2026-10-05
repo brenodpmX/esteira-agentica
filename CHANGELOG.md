@@ -2,6 +2,36 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.22.0] - 2026-10-05
+
+### Adicionado
+
+- **Captura do consumo real por execução (créditos) a partir do kiro-cli.** O
+  registro de negócio de cada execução (`.pipe/executionRecords.json`, #307)
+  passa a gravar o consumo **medido** — `valor`/`unidade`/`origem` — em vez do
+  `indisponível` fixo. A linha-resumo `▸ Credits: X • Time: Ys` volta a aparecer
+  no final do log de chat e no log diário (`execução concluída: ...`).
+
+### Corrigido
+
+- **Consumo sempre `indisponível` / linha de créditos sumindo dos logs.** Desde
+  o kiro-cli 2.27.x o modo texto `--no-interactive` deixou de imprimir a
+  linha-resumo de créditos/tempo; o consumo passou a ser exposto apenas em
+  `--output-format stream-json` (evento `metadata.meteringUsage`, unidade
+  `credit`). O adapter rodava em modo texto e o motor fixava
+  `Consumo.indisponivel(...)` no registro, então nenhuma execução reportava
+  consumo — mesmo com créditos sendo cobrados.
+  - Correção: o adapter `kiro_cli_agent` agora executa com
+    `--output-format stream-json` e reconstrói um transcript legível a partir
+    dos eventos ACP (prosa do agente, linhas `[tool] ...`, erros de
+    `runFinished`), somando o `meteringUsage` do metadata final do turno e
+    expondo o resultado em `ExecutionResult.consumo`. `_write_execution_record`
+    (`__main__`) grava esse consumo, degradando para `indisponível` apenas
+    quando o canal não reporta medição (timeout, não-inicialização, result
+    `None`). A classificação de falha permanece por canais estruturados
+    (`[exit-code]`/`[TIMEOUT]`/`[ERRO]` + trechos preservados crus), sem
+    regressão. `turnDurationMs` alimenta a linha-resumo de tempo.
+
 ## [1.21.0] - 2026-10-02
 
 ### Alterado

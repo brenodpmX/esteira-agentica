@@ -213,3 +213,29 @@ def test_call_agent_um_registro_por_execucao(tmp_path):
         _run_call_agent(m, config, task,
                         ExecutionResult(classe=execution.SUCEDIDO))
     assert len(er.records_for_issue("42")) == 3
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Consumo medido (stream-json) é gravado no registro — RN-04
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_call_agent_grava_consumo_reportado_do_result(tmp_path):
+    """O consumo medido pelo adapter (ExecutionResult.consumo) chega ao registro.
+
+    Prova o wiring de `_write_execution_record`: quando o result carrega um
+    consumo disponível (meteringUsage parseado do stream-json), o registro o
+    preserva com valor/unidade/origem — em vez do antigo `indisponível` fixo.
+    """
+    import src.__main__ as m
+    task = _task(tmp_path)
+    result = ExecutionResult(classe=execution.SUCEDIDO)
+    result.consumo = er.Consumo.reportado(1.23, "credit", "kiro-cli")
+    _run_call_agent(m, _config(), task, result)
+
+    registros = er.records_for_issue("42")
+    assert len(registros) == 1
+    consumo = registros[0].consumo
+    assert consumo.disponibilidade == er.DISPONIVEL
+    assert consumo.valor == 1.23
+    assert consumo.unidade == "credit"
+    assert consumo.origem == "kiro-cli"

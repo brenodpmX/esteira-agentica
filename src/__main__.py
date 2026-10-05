@@ -778,6 +778,11 @@ def _write_execution_record(config, *, result, params, issue, board_id, col_id,
     log_ref = f"logs/{issue_id}"
 
     try:
+        # Consumo medido pelo adapter (ExecutionResult.consumo). Quando o adapter
+        # não o fornece (result None, ou canal sem medição), degrada para
+        # indisponível preservando a proveniência da plataforma.
+        consumo = getattr(result, "consumo", None) or \
+            execution_record.Consumo.indisponivel(origem=params.platform)
         execution_record.record_from_execution_result(
             result=result,
             issue_id=issue_id,
@@ -790,7 +795,7 @@ def _write_execution_record(config, *, result, params, issue, board_id, col_id,
             modelo=params.model,
             inicio=inicio,
             fim=fim,
-            consumo=execution_record.Consumo.indisponivel(origem=params.platform),
+            consumo=consumo,
             log_ref=log_ref,
         )
     except execution_record.ExecutionRecordStoreError as exc:
