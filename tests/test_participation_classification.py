@@ -92,16 +92,19 @@ def test_ct01a_propagated_when_known_presence_with_column_in_other_board():
     assert result.evidence["proof_board"] == "historias"
 
 
-# ── CT-01c — presença isolada sem prova não vira origem nem propagada ─────────
+# ── CT-01c — presença ÚNICA com pai cross-board é origem (não deadlock) ───────
 
-def test_ct01c_isolated_parent_without_proof_is_unresolved():
-    # Parent em outro board, mas NENHUMA presença confirmada em board configurado.
+def test_ct01c_isolated_parent_without_proof_is_origin():
+    # Pai em outro quadro, mas presença ÚNICA (nenhuma outra em quadro
+    # configurado): é a origem. `unresolved` aqui seria deadlock permanente —
+    # não há segunda cópia nem prova futura que o resolva.
     result = classify_participation(
         "104", "epicos", [], [], _cfg(), has_cross_board_parent=True,
     )
-    assert result.intent == P.UNRESOLVED
-    assert result.intent != P.ORIGIN
-    assert result.intent != P.PROPAGATED
+    assert result.intent == P.ORIGIN
+    assert result.confirmed is True
+    assert result.should_remove is False
+    assert result.evidence["reason"] == "sole_presence_cross_board_parent"
 
 
 def test_ct01c_known_presence_without_known_column_is_unresolved():
@@ -131,7 +134,9 @@ def test_ct06_determinism_across_orderings():
         ("202", "epicos", [],
          [Participation("I", "historias", "P", "doing")],
          {"has_cross_board_parent": True}),                   # propagated
-        ("203", "epicos", [], [], {"has_cross_board_parent": True}),  # unresolved
+        ("203", "epicos", [],
+         [Participation("I", "historias", "P", "")],
+         {"has_cross_board_parent": True}),                   # unresolved (dup. ambígua)
     ]
 
     def run(order):

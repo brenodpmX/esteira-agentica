@@ -802,6 +802,15 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
         known = snapshot_by_id.get(issue_id)
 
         if known is None:
+            # Presença não resolvida (participação) ainda em adiamento: não
+            # reenfileira antes de vencer o prazo. Sem este corte, uma issue
+            # nunca persistida (unresolved) é redescoberta e re-despachada a
+            # cada ciclo — gira sem throttle, consumindo API/créditos. O backoff
+            # em participationPending era gravado, mas nenhum ponto o consultava.
+            from src.core import participation_reconcile as _pr
+            pend = _pr.pending_entry(board_id, issue_id)
+            if pend is not None and not _pr.is_due(pend):
+                continue
             if queue.add(ChangeItem.of(SyncEvent.CREATE_DOWN, id=issue_id,
                                        board=board_id, fullsync=True)):
                 created += 1
