@@ -1653,3 +1653,87 @@ query($owner:String!,$repo:String!,$number:Int!){
             "mutation($pid:ID!,$itemId:ID!){deleteProjectV2Item(input:{projectId:$pid,itemId:$itemId}){deletedItemId}}",
             pid=meta["project_id"], itemId=item_id,
         )
+
+    _PARTICIPATIONS_QUERY = """
+query($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    issue(number:$number){
+      projectItems(first:20){
+        nodes{
+          id
+          isArchived
+          project{ id }
+          fieldValues(first:10){
+            nodes{
+              ...on ProjectV2ItemFieldSingleSelectValue{
+                field{...on ProjectV2SingleSelectField{name}}
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}"""
+
+    def list_participations(self, issue_id: str) -> list:
+        """Lista as participações (presenças em projects) de uma issue (#310).
+
+        Consulta exclusivamente a API de projetos (GraphQL), seguindo o mesmo
+        padrão de `get_issue`/`_remove_propagated_items_without_status`
+        (`projectItems`/`fieldValues`). Resolve o quadro configurado por
+        `project_id` (mapa reverso de `self._projects`); projects fora da config
+        resolvem `board_id=""`.
+
+        Falha na consulta propaga como `ParticipationQueryError` (erro tipado,
+        RN-09) — nunca retorna lista vazia silenciosa.
+        """
+        from src.core.participation import Participation, ParticipationQueryError
+
+        self._penalty_check()
+        owner, repo = self._repo.split("/")
+        try:
+            data = self._gql(
+                self._PARTICIPATIONS_QUERY,
+                owner=owner, repo=repo, number=int(issue_id),
+            )
+        except PenaltyException:
+            raise
+        except Exception as exc:
+            raise ParticipationQueryError(
+                f"#{issue_id} - falha ao consultar participações: {exc}"
+            ) from exc
+
+        issue_node = (data.get("repository") or {}).get("issue")
+        if issue_node is None:
+            # Issue inexistente no repositório: sem participações a reconciliar.
+            # Distinto de falha de consulta — a query concluiu com sucesso.
+            return []
+
+        # Mapa reverso project_id -> board_id configurado.
+        pid_to_board = {
+            meta.get("project_id"): bid
+            for bid, meta in (self._projects or {}).items()
+            if meta.get("project_id")
+        }
+
+        result = []
+        for item in (issue_node.get("projectItems", {}) or {}).get("nodes", []):
+            project_id = (item.get("project") or {}).get("id") or ""
+            item_id = item.get("id") or ""
+            if not item_id or not project_id:
+                continue
+            column = ""
+            for fv in (item.get("fieldValues", {}) or {}).get("nodes", []):
+                if (fv.get("field") or {}).get("name") == "Status":
+                    column = fv.get("name") or ""
+                    break
+            result.append(Participation(
+                item_id=item_id,
+                board_id=pid_to_board.get(project_id, ""),
+                project_id=project_id,
+                column=column,
+                archived=bool(item.get("isArchived")),
+            ))
+        return result

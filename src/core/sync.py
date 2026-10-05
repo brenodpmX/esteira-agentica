@@ -518,6 +518,44 @@ def _propagation_proof(board_id: str, issue_id: str, config: dict) -> tuple[str,
     return None
 
 
+def _board_of_issue(issue_id: str, config: dict) -> str | None:
+    """Resolve, pelo snapshot, em qual quadro CONFIGURADO uma issue reside."""
+    boards = (config or {}).get("boards", {}) or {}
+    configured = [bid for bid in boards if bid != "platform"]
+    found = _find_snapshot_issue(issue_id, allowed_boards=configured)
+    return found[0] if found else None
+
+
+def _filter_suspended_cross_board_parent(board_id: str, issue_id: str, cmds,
+                                         config: dict):
+    """Remove o `/parent` quando é vínculo cross-board e a contingência suspende.
+
+    A contingência (`safety.cross_board_parent_links`) é relida do disco a cada
+    avaliação (sem cache). Só afeta NOVOS vínculos entre quadros DISTINTOS: um
+    `/parent` para issue do MESMO quadro segue intacto, e vínculos preexistentes
+    não são tocados (este caminho só avalia o comando declarado). Emite
+    `cross_board_link_blocked` quando recusa.
+    """
+    if not getattr(cmds, "parent", None):
+        return cmds
+    from src.core.participation_reconcile import (
+        cross_board_links_suspended, event_cross_board_link_blocked,
+    )
+    parent_board = _board_of_issue(str(cmds.parent), config)
+    if not parent_board or parent_board == board_id:
+        return cmds  # mesmo quadro ou parent não resolvível: não é cross-board
+    if not cross_board_links_suspended():
+        return cmds
+    from src.core.config import resolve_cross_board_links
+    event_cross_board_link_blocked(
+        parent=cmds.parent, child=issue_id,
+        parent_board=parent_board, child_board=board_id,
+        config_version=resolve_cross_board_links(config),
+    )
+    cmds.parent = None
+    return cmds
+
+
 def _reciprocates(target_data: dict, reciprocal_rel: str, source_id: str) -> bool:
     """True se o snapshot do alvo já reflete o par recíproco apontando p/ source."""
     source_id = str(source_id)
@@ -1101,6 +1139,7 @@ def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: C
     # declarado, e que os setters não façam GET redundante (nada existe ainda).
     deltas = {}
     if not cmds.is_empty():
+        cmds = _filter_suspended_cross_board_parent(board_id, created.id, cmds, config)
         deltas = board_obj.apply_commands(board_id, created.id, cmds, known=_empty_state())
 
     # Verificar addcomment
@@ -1271,6 +1310,7 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     # conhecido (snapshot): só chama o setter do atributo que realmente mudou,
     # e passa o estado conhecido ao setter para evitar GETs redundantes.
     known = _known_state(issue_data)
+    cmds = _filter_suspended_cross_board_parent(board_id, item.id, cmds, config)
     deltas = board_obj.apply_commands(board_id, item.id, cmds, known=known)
 
     # Verificar mudança de coluna

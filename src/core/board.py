@@ -222,6 +222,26 @@ class BoardPort(ABC):
         """Remove um item de um project (via deleteProjectV2Item)."""
         log.warning("Board", "remove_from_board não implementado neste adapter")
 
+    def list_participations(self, issue_id: str) -> list:
+        """Lista as participações (presenças em projects) de uma issue (#310).
+
+        Contrato: retorna uma lista de ``participation.Participation`` — uma por
+        item de project da issue —, resolvendo o quadro configurado quando o
+        project corresponder a um board do `pipe.yml` (ou `board_id=""` quando
+        não). A consulta usa EXCLUSIVAMENTE a API de projetos (GraphQL). Falha
+        na consulta propaga como erro TIPADO
+        (``participation.ParticipationQueryError``), nunca retorna lista vazia
+        silenciosa (RN-09).
+
+        O default no-op levanta erro tipado em vez de devolver lista vazia: um
+        adapter sem essa capacidade não pode mascarar propagação como "sem
+        presenças".
+        """
+        from src.core.participation import ParticipationQueryError
+        raise ParticipationQueryError(
+            f"list_participations não implementado neste adapter (issue #{issue_id})"
+        )
+
     # ── Operações estruturais de retirada segura de coluna (#305) ─────────────
     #
     # A reconciliação estrutural de retirada de coluna separa DUAS operações
@@ -330,6 +350,10 @@ class Board:
     def remove_from_board(self, board_id: str, issue_id: str):
         """Remove um item de um project (via deleteProjectV2Item)."""
         self._port.remove_from_board(board_id, issue_id)
+
+    def list_participations(self, issue_id: str) -> list:
+        """Lista as participações (presenças em projects) de uma issue (#310)."""
+        return self._port.list_participations(issue_id)
 
     # ── Operações estruturais de retirada segura de coluna (#305) ─────────────
 

@@ -377,6 +377,74 @@ def validate_registro(config: dict) -> None:
             )
 
 
+# ── safety.cross_board_parent_links (issue #310) ──────────────────────────────
+# Contingência reversível que suspende a criação de NOVOS vínculos pai/filho
+# entre issues de quadros DISTINTOS. É relida do arquivo a cada tentativa de
+# novo vínculo (por data de modificação, sem cache em memória), de modo que
+# ativar/desativar tem efeito sem reiniciar o processo.
+SAFETY_ENABLED = "enabled"
+SAFETY_SUSPENDED = "suspended"
+_SAFETY_VALID = (SAFETY_ENABLED, SAFETY_SUSPENDED)
+
+
+def validate_safety(config: dict) -> None:
+    """Valida a chave opcional `safety.cross_board_parent_links` (issue #310).
+
+    Contrato:
+    - opcional; ausência da chave ou da seção `safety` equivale a `enabled`;
+    - quando presente, deve ser EXATAMENTE `enabled` ou `suspended` — comparação
+      exata, sem normalizar caixa/espaços (`"Enabled"`, `" enabled "` são
+      rejeitados). Qualquer outro valor, vazio ou não-string é rejeitado com
+      `ConfigError` citando a chave e o valor recebido (CT-20).
+    """
+    if "safety" not in config:
+        return
+    safety = config["safety"]
+    if not isinstance(safety, dict):
+        raise ConfigError(
+            f"safety: deve ser um mapa com 'cross_board_parent_links' "
+            f"(valor recebido: {safety!r})"
+        )
+    if "cross_board_parent_links" not in safety:
+        return
+    value = safety["cross_board_parent_links"]
+    if not isinstance(value, str) or value not in _SAFETY_VALID:
+        raise ConfigError(
+            f"safety.cross_board_parent_links: deve ser exatamente "
+            f"'{SAFETY_ENABLED}' ou '{SAFETY_SUSPENDED}' "
+            f"(valor recebido: {value!r})"
+        )
+
+
+def resolve_cross_board_links(config: dict) -> str:
+    """Resolve o estado da contingência a partir de um config em memória.
+
+    Default seguro `enabled` quando a chave/seção está ausente. Não valida —
+    assume que `validate_safety` já rodou em `check_config`.
+    """
+    safety = config.get("safety") or {}
+    return safety.get("cross_board_parent_links", SAFETY_ENABLED)
+
+
+def read_cross_board_links_from_disk() -> str:
+    """Relê a contingência DIRETO do `pipe.yml` em disco, sem cache em memória.
+
+    Usada a cada tentativa de novo vínculo entre quadros (RNF-06 / CT-19): a
+    leitura reflete o estado atual do arquivo mesmo que a config carregada no
+    início do processo seja outra — ativar/desativar não exige reinício. Valor
+    inválido/ausente degrada para `enabled` (estado seguro), pois a validação
+    acionável já ocorre em `check_config` no startup.
+    """
+    try:
+        with open(PIPE_FILE, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return SAFETY_ENABLED
+    safety = (data.get("safety") or {}) if isinstance(data, dict) else {}
+    value = safety.get("cross_board_parent_links", SAFETY_ENABLED)
+    return value if value in _SAFETY_VALID else SAFETY_ENABLED
+
+
 def check_config() -> dict:
     """Valida e retorna configuração do pipe.yml."""
     _validate_env()
@@ -399,6 +467,7 @@ def check_config() -> dict:
     validate_max_attempts(config)
     validate_retry(config)
     validate_registro(config)
+    validate_safety(config)
 
     # agent_circuit_break (#306): bloco opcional de RAIZ (fora de `boards`, que
     # enumera todo dict como board). Validado antes de qualquer alteração de
