@@ -488,36 +488,6 @@ def _find_snapshot_issue(target_id: str, allowed_boards: list[str] | None = None
     return None
 
 
-def _propagation_proof(board_id: str, issue_id: str, config: dict) -> tuple[str, str] | None:
-    """Evidência de que a issue chegou ao board por propagação automática.
-
-    A única evidência aceita é a própria issue já registrada em OUTRO board
-    configurado, com coluna conhecida nas `columns` daquele board no `pipe.yml`.
-    `parent` isolado NÃO é evidência: uma sub-issue nova e legítima deste board
-    também pode chegar com coluna vazia.
-
-    Snapshots de diretórios fora da configuração são ignorados (board removido do
-    `pipe.yml` não prova nada).
-
-    Retorna (board_id_de_origem, coluna) ou None quando não há prova.
-    """
-    boards = (config or {}).get("boards", {}) or {}
-    others = [bid for bid in boards if bid != "platform" and bid != board_id]
-    if not others:
-        return None
-
-    found = _find_snapshot_issue(issue_id, allowed_boards=others)
-    if not found:
-        return None
-
-    other_board, data = found
-    column = (data.get("column") or "").strip()
-    known_cols = (boards.get(other_board, {}) or {}).get("columns", {}) or {}
-    if column and column in known_cols:
-        return other_board, column
-    return None
-
-
 def _board_of_issue(issue_id: str, config: dict) -> str | None:
     """Resolve, pelo snapshot, em qual quadro CONFIGURADO uma issue reside."""
     boards = (config or {}).get("boards", {}) or {}
@@ -530,30 +500,78 @@ def _filter_suspended_cross_board_parent(board_id: str, issue_id: str, cmds,
                                          config: dict):
     """Remove o `/parent` quando é vínculo cross-board e a contingência suspende.
 
-    A contingência (`safety.cross_board_parent_links`) é relida do disco a cada
-    avaliação (sem cache). Só afeta NOVOS vínculos entre quadros DISTINTOS: um
-    `/parent` para issue do MESMO quadro segue intacto, e vínculos preexistentes
-    não são tocados (este caminho só avalia o comando declarado). Emite
-    `cross_board_link_blocked` quando recusa.
+    Delega a decisão a `guard_cross_board_link` (fonte única da regra de
+    contingência): a chave `safety.cross_board_parent_links` é relida do disco a
+    cada avaliação (sem cache). Só afeta NOVOS vínculos entre quadros DISTINTOS:
+    um `/parent` para issue do MESMO quadro segue intacto, e vínculos
+    preexistentes não são tocados (este caminho só avalia o comando declarado).
+    O guard emite `cross_board_link_blocked` ao recusar.
     """
     if not getattr(cmds, "parent", None):
         return cmds
     from src.core.participation_reconcile import (
-        cross_board_links_suspended, event_cross_board_link_blocked,
+        CrossBoardLinkBlocked, guard_cross_board_link,
     )
+    from src.core.config import resolve_cross_board_links
     parent_board = _board_of_issue(str(cmds.parent), config)
     if not parent_board or parent_board == board_id:
         return cmds  # mesmo quadro ou parent não resolvível: não é cross-board
-    if not cross_board_links_suspended():
-        return cmds
-    from src.core.config import resolve_cross_board_links
-    event_cross_board_link_blocked(
-        parent=cmds.parent, child=issue_id,
-        parent_board=parent_board, child_board=board_id,
-        config_version=resolve_cross_board_links(config),
-    )
-    cmds.parent = None
+    try:
+        guard_cross_board_link(
+            parent=cmds.parent, child=issue_id,
+            parent_board=parent_board, child_board=board_id,
+            config_version=resolve_cross_board_links(config),
+        )
+    except CrossBoardLinkBlocked:
+        cmds.parent = None
     return cmds
+
+
+def _reconcile_links_after_apply(board_id: str, issue_id: str, deltas: dict,
+                                 board_obj: Board, config: dict, *, labels=None):
+    """Reconcilia presenças propagadas após criar vínculo pai/filho cross-board.
+
+    Para cada relação pai/filho ADICIONADA neste change-up que ligue a issue a
+    outro quadro configurado, consulta as presenças da FILHA e remove as
+    propagadas (RF-07), via `reconcile_after_link`. A relação pai/filho nunca é
+    tocada (RN-03). Falha de consulta/remoção propaga como erro tipado (RN-09),
+    reprocessado pela fila at-least-once.
+
+    Mapeamento das direções:
+      - `/parent #P` adicionado a esta issue  → filha = esta issue; quadro do pai
+        = quadro de #P. A propagação aparece no quadro do pai.
+      - `/children #K` adicionado a esta issue → filha = #K; quadro do pai = o
+        quadro desta issue (board_id).
+    """
+    if not deltas:
+        return
+    from src.core.participation_reconcile import reconcile_after_link
+
+    targets: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for parent_added in (deltas.get("parent") or {}).get("added", []):
+        parent_board = _board_of_issue(str(parent_added), config)
+        if parent_board and parent_board != board_id:
+            key = (str(issue_id), parent_board)
+            if key not in seen:
+                seen.add(key)
+                targets.append(key)
+
+    for child_added in (deltas.get("children") or {}).get("added", []):
+        child_board = _board_of_issue(str(child_added), config)
+        if child_board != board_id:
+            key = (str(child_added), board_id)
+            if key not in seen:
+                seen.add(key)
+                targets.append(key)
+
+    for child_id, parent_board in targets:
+        # A filha pode não ser esta issue: nesse caso não temos seus labels aqui;
+        # a autorização por rótulo é reavaliada na descoberta remota.
+        child_labels = labels if child_id == str(issue_id) else None
+        reconcile_after_link(board_obj, child_id, parent_board, config,
+                             labels=child_labels)
 
 
 def _reciprocates(target_data: dict, reciprocal_rel: str, source_id: str) -> bool:
@@ -1200,25 +1218,34 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     column = issue.column or ""
 
-    # Guard de propagação automática: o GitHub Projects V2 adiciona a sub-issue
-    # aos projects do pai sem definir Status. Só descarta o evento (e remove o
-    # item do board) quando há PROVA de propagação — a issue já registrada em
-    # outro board configurado com coluna conhecida. `parent` isolado é apenas
-    # contexto de log: sub-issue nova e legítima deste board também pode chegar
-    # sem coluna, e removê-la seria perda de dado.
-    if not column:
-        proof = _propagation_proof(board_id, item.id, config)
-        if proof:
-            other_board, other_col = proof
-            log.info("Sync", f"[{board_id}] #{item.id} create-down descartado - "
-                     f"propagação automática (issue em '{other_board}/{other_col}')")
-            # A remoção precisa CONCLUIR antes de o evento ser descartado: falha
-            # propaga e a fila (at-least-once) reprocessa no ciclo seguinte.
-            board_obj.remove_from_board(board_id, item.id)
-            return
-        if issue.parent:
-            log.info("Sync", f"[{board_id}] #{item.id} create-down com parent #{issue.parent} "
-                     f"e coluna vazia, sem prova de propagação - criando local")
+    # Reconciliação tardia na descoberta remota (#310 / RF-08): classifica a
+    # presença desta issue neste quadro usando a política pura
+    # (`classify_participation`) e, conforme o resultado, reconcilia ou adia:
+    #   - propagated  → remove a presença e descarta o evento (não cria arquivos);
+    #   - unresolved  → adia (fila sem bloqueio), não cria arquivos;
+    #   - origin/auth → segue a criação local e persiste `participation_intent`.
+    # A coluna (preenchida ou não) NÃO prova intenção (RN-06). A relação pai/filho
+    # nunca é tocada (RN-03). Falha de consulta/remoção propaga como erro tipado
+    # (RN-09), reprocessada pela fila at-least-once.
+    from src.core.participation_reconcile import reconcile_remote_presence
+    from src.core.participation import PROPAGATED, UNRESOLVED, ORIGIN
+    parent_board = _board_of_issue(str(issue.parent), config) if issue.parent else None
+    has_cross_board_parent = bool(parent_board and parent_board != board_id)
+    classification = reconcile_remote_presence(
+        board_obj, item.id, board_id, config,
+        labels=list(issue.labels or []), column=column,
+        archived=bool(getattr(issue, "archived", False)),
+        has_cross_board_parent=has_cross_board_parent,
+    )
+    if classification.intent == PROPAGATED:
+        log.info("Sync", f"[{board_id}] #{item.id} create-down descartado - "
+                 f"presença propagada reconciliada")
+        return
+    if classification.intent == UNRESOLVED:
+        log.info("Sync", f"[{board_id}] #{item.id} create-down adiado - "
+                 f"intenção não resolvida (sem criar arquivos locais)")
+        return
+    intent = classification.intent
 
     if not column:
         column = list(snap.board.keys())[0] if snap.board else ""
@@ -1240,7 +1267,7 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     log.info("Sync", f"[{board_id}] create-down #{item.id} '{issue.title}' -> {column}",
              issue_id=item.id, column=column)
 
-    # Atualizar snapshot
+    # Atualizar snapshot (persiste a intenção classificada — RF-08/RF-10).
     new_data = {
         "id": item.id,
         "column": column,
@@ -1248,6 +1275,7 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
         "body_mtime": str(files["body"].stat().st_mtime),
         "updated_at": issue.updated_at,
         "status": "ok",
+        "participation_intent": intent or ORIGIN,
     }
     _write_state_from_issue(new_data, issue, fullsync=item.fullsync)
     snap.issues.append(new_data)
@@ -1312,6 +1340,13 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     known = _known_state(issue_data)
     cmds = _filter_suspended_cross_board_parent(board_id, item.id, cmds, config)
     deltas = board_obj.apply_commands(board_id, item.id, cmds, known=known)
+
+    # Reconciliação imediata pós-vínculo (#310 / RF-07): quando um vínculo
+    # pai/filho ENTRE QUADROS DISTINTOS é criado neste change-up, a plataforma
+    # pode ter propagado a filha para o quadro do pai. Reconcilia a presença
+    # propagada ANTES de prosseguir, sem jamais tocar a relação pai/filho (RN-03).
+    _reconcile_links_after_apply(board_id, item.id, deltas, board_obj, config,
+                                 labels=cmds.all_labels())
 
     # Verificar mudança de coluna
     current_col = _col_from_path(body_path, board_id)

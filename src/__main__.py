@@ -285,7 +285,7 @@ def detect_local_all(config: dict) -> bool:
     return queue.size() > before
 
 
-def sync_remote_board(board_id: str) -> bool:
+def sync_remote_board(board_id: str, config: dict = None) -> bool:
     """Descoberta remota (down) de um único board (rotação priorizada).
 
     O sync remoto consome API do provider (sujeito a rate limit), então
@@ -299,6 +299,12 @@ def sync_remote_board(board_id: str) -> bool:
     queue = ChangeQueue()
     try:
         sync_remote(board_id, board, queue)
+        # Remoção externa (#310 / RF-13 / CT-22): observa pendências que
+        # desapareceram do quadro sem reconciliação automática registrada e
+        # emite `participation_removed_externally` (sem inferir autoria). Não
+        # bloqueia a descoberta — falha de consulta mantém a pendência.
+        from src.core import participation_reconcile
+        participation_reconcile.detect_external_removal(board, config)
     except PenaltyException:
         log.warning("Sync", f"[{board_id}] Penalty no sync remoto")
 
@@ -315,7 +321,7 @@ def sync_board(board_id: str, config: dict) -> bool:
     board).
     """
     local = detect_local_all(config)
-    remote = sync_remote_board(board_id)
+    remote = sync_remote_board(board_id, config)
     return local or remote
 
 
@@ -712,6 +718,8 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
         remediation_prompt=remediation_prompt,
         col_name=col.get("name", col_id),
         title=title,
+        participation_intent=issue.get("participation_intent"),
+        origin_board=board_id,
     )
 
     adapter = KiroCliAgent()
@@ -1134,7 +1142,7 @@ def main():
                 #     são cross-board (ex.: issue bloqueante criada em outro board).
                 local_changes = detect_local_all(config)
                 # 1b. Remota (down) apenas no board atual da rotação priorizada.
-                remote_changes = sync_remote_board(current_board)
+                remote_changes = sync_remote_board(current_board, config)
                 had_changes = local_changes or remote_changes
 
                 # Fase 2: Processamento global da fila

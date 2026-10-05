@@ -309,10 +309,16 @@ class TestTC04Fenomeno1SubIssuePropagadaCorrigido:
         assert def_idx != -1
         next_def_idx = content.find("\ndef ", def_idx + 1)
         body = content[def_idx: next_def_idx if next_def_idx != -1 else None]
-        assert "remove_from_board" in body, (
-            "_apply_create_down deveria conter o guard de remoção por coluna "
-            "vazia com prova de propagação — confirma que o Fenômeno 1 foi "
-            "corrigido pelo #106."
+        # Desde #310 o guard de propagação do create-down é a reconciliação de
+        # participação (`reconcile_remote_presence`), que classifica a presença e
+        # remove a propagada — superando o guard por coluna vazia do #106 (passa
+        # a cobrir também propagação COM coluna preenchida, CT-03). A proteção do
+        # Fenômeno 1 permanece: presença propagada é removida antes de criar
+        # arquivos locais.
+        assert "reconcile_remote_presence" in body, (
+            "_apply_create_down deveria conter o guard de reconciliação de "
+            "participação (reconcile_remote_presence) — confirma que o Fenômeno 1 "
+            "segue coberto (agora pelo #310, estendendo o #106)."
         )
 
 

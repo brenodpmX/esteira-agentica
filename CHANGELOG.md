@@ -2,6 +2,41 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.23.1] - 2026-10-05
+
+### Corrigido
+
+- **Integração em produção da integridade de participação entre quadros
+  (#310).** A entrega 1.23.0 introduziu a política e os efeitos de participação
+  (`src/core/participation.py`, `src/core/participation_reconcile.py`) cobertos
+  por testes unitários, mas as funções de reconciliação ainda não eram chamadas
+  pelo fluxo real do motor — a correção não tinha efeito em produção. Esta
+  versão liga cada gatilho ao caminho executado pela esteira e adiciona testes
+  de integração que exercitam esses caminhos de ponta a ponta:
+  - **RF-07 (reconciliação imediata pós-vínculo):** `sync._apply_change_up`
+    passa a chamar `reconcile_after_link` (via `_reconcile_links_after_apply`)
+    sempre que um vínculo pai/filho entre quadros distintos é aplicado,
+    removendo a presença propagada da filha no quadro do pai — inclusive quando
+    a propagação chega com coluna preenchida (CT-03), caso que o pós-hook antigo
+    por "Status vazio" não cobria.
+  - **RF-08 (reconciliação tardia na descoberta remota):**
+    `sync._apply_create_down` substitui o guard por coluna vazia
+    (`_propagation_proof`, removido) por `reconcile_remote_presence`, que
+    classifica a presença via `classify_participation` e persiste
+    `participation_intent` (`origin`/`authorized`) no snapshot da issue nova;
+    presença `propagated` é removida e o evento descartado, `unresolved` é
+    adiada sem criar arquivos.
+  - **RF-12 (contingência):** `_filter_suspended_cross_board_parent` passa a
+    delegar a decisão a `guard_cross_board_link` (fonte única da regra), unindo
+    as duas implementações antes redundantes.
+  - **RF-13 / CT-22 (remoção externa):** o loop principal
+    (`__main__.sync_remote_board`) chama `detect_external_removal` a cada
+    descoberta remota, registrando `participation_removed_externally` quando uma
+    presença pendente some sem reconciliação própria.
+  - **RF-15 (correlação de despacho):** o log de execução de agente
+    (`kiro_cli_agent._build_log`) passa a registrar `participation_intent` e
+    `origin_board`, carregados em `AgentParams`.
+
 ## [1.23.0] - 2026-10-05
 
 ### Adicionado

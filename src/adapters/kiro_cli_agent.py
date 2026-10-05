@@ -617,6 +617,10 @@ class KiroCliAgent(AgentPort):
         lines.append(f"- **board**: {params.board_id}")
         lines.append(f"- **coluna**: {params.col_id}")
         lines.append(f"- **issue**: #{params.issue_id}")
+        if params.participation_intent:
+            lines.append(f"- **participation_intent**: {params.participation_intent}")
+        if params.origin_board:
+            lines.append(f"- **origin_board**: {params.origin_board}")
         if params.repo_id:
             lines.append(f"- **repo**: {params.repo_id}")
         if params.work_dir:
