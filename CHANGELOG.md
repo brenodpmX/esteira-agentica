@@ -2,6 +2,28 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.23.2] - 2026-10-05
+
+### Corrigido
+
+- **Erros determinísticos de argumento da CLI gh agora falham rápido
+  (fail-fast) em vez de retry cego.** `classify_error` (`src/core/sync.py`)
+  passou a reconhecer os erros de uso do parser cobra do gh (flag/argumento/
+  subcomando inválido) e classificá-los na nova categoria `definitivo_cli`,
+  tratada no mesmo caminho fail-fast do `definitivo`: o item é isolado em
+  dead-letter já na primeira falha, sem consumir `max_attempts`. Antes esses
+  erros caíam no default `transitorio` e eram re-enfileirados até esgotar as
+  tentativas — desperdício garantido, pois reprocessar um comando malformado
+  produz exatamente o mesmo erro. É a classe do incidente not_planned
+  (`invalid argument "not_planned" for "-r, --reason" flag`), cujo sintoma
+  pontual já fora corrigido na fronteira do gh, mas cuja classe genérica
+  seguia como transitória. Assinaturas reconhecidas: `unknown flag:`,
+  `unknown shorthand flag:`, `flag needs an argument:`, `arg(s), received `
+  (cobre `accepts N`/`requires ... N`), `unknown command "` e
+  `invalid argument "X" for "..."`. Novo `next_step` orienta corrigir a
+  construção do comando no engine (reprocessar não resolve). Erros de
+  transporte/rede permanecem `transitorio`.
+
 ## [1.23.1] - 2026-10-05
 
 ### Corrigido

@@ -558,3 +558,104 @@ class TestNoRegressionOnExistingSpecificHandling:
 
     def test_apply_change_up_and_apply_delete_up_still_exist_and_importable(self):
         from src.core.sync import _apply_change_up, _apply_delete_up  # noqa: F401
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CT10 — classify_error: erro determinístico de uso da CLI gh -> definitivo_cli
+# ══════════════════════════════════════════════════════════════════════════
+
+class TestClassifyErrorCliUsage:
+    """CT10 — erros determinísticos de argumento/flag/subcomando da CLI gh
+    (parser cobra) classificam como 'definitivo_cli' (fail-fast, sem retry
+    cego). Mensagens são stderr reais capturados do gh."""
+
+    @pytest.mark.parametrize("message", [
+        "accepts 1 arg(s), received 0",
+        "requires at least 1 arg(s), received 0",
+        "unknown flag: --bogus-flag",
+        "unknown shorthand flag: 'x' in -x",
+        "flag needs an argument: --reason",
+        'unknown command "clos" for "gh issue"',
+    ])
+    def test_cobra_usage_messages_are_definitivo_cli(self, message):
+        from src.core.sync import classify_error
+        assert classify_error(Exception(message)) == "definitivo_cli"
+
+    def test_invalid_reason_value_is_definitivo_cli(self):
+        """A classe exata do incidente not_planned (loop de retry): valor de
+        flag inválido rejeitado pelo gh."""
+        from src.core.sync import classify_error
+        exc = Exception(
+            'invalid argument "not_planned" for "-r, --reason" flag: '
+            "valid values are {completed|not planned|duplicate}"
+        )
+        assert classify_error(exc) == "definitivo_cli"
+
+    def test_classification_is_case_insensitive(self):
+        from src.core.sync import classify_error
+        assert classify_error(Exception("Unknown Flag: --Foo")) == "definitivo_cli"
+
+    def test_generic_argument_prose_is_not_cli_usage(self):
+        """Guard anti-falso-positivo: 'argument' em prosa genérica (sem a
+        assinatura cobra 'invalid argument \"X\" for \"...\"') segue transitório."""
+        from src.core.sync import classify_error
+        exc = Exception("the server rejected the argument for an unknown reason")
+        assert classify_error(exc) == "transitorio"
+
+    def test_network_error_is_not_cli_usage(self):
+        from src.core.sync import classify_error
+        exc = ConnectionError("connection reset by peer")
+        assert classify_error(exc) == "transitorio"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CT11 — apply_changes: erro definitivo_cli sai na 1ª falha (fail-fast)
+# ══════════════════════════════════════════════════════════════════════════
+
+class TestApplyChangesCliUsageError:
+    """CT11 — erro 'definitivo_cli' remove o item já na primeira falha (sem
+    gastar max_attempts) e o isola em dead-letter com a categoria/next_step
+    específicos."""
+
+    def test_cli_usage_error_removed_on_first_failure(self, monkeypatch):
+        from src.core import sync as sync_module
+
+        q = ChangeQueue()
+        q.add(ChangeItem.of(SyncEvent.CHANGE_UP, id="17", board="b"))
+
+        def raises_cli_arg_error(board_id, item, board_obj, queue=None, config=None):
+            raise Exception(
+                'invalid argument "not_planned" for "-r, --reason" flag: '
+                "valid values are {completed|not planned|duplicate}"
+            )
+
+        monkeypatch.setattr(sync_module, "_apply_change_up", raises_cli_arg_error)
+
+        board_obj = Board(FakePort())
+        sync_module.apply_changes(board_obj, q, config={"sync": {"max_attempts": 3}})
+
+        assert q.getNext() is None, (
+            "Erro de argumento de CLI (determinístico) deveria sair da fila na "
+            "1ª falha, sem consumir max_attempts"
+        )
+
+    def test_cli_usage_error_isolated_in_dead_letter_with_category(self, monkeypatch):
+        from src.core import sync as sync_module
+        from src.core.dead_letter import DeadLetterQueue
+
+        q = ChangeQueue()
+        q.add(ChangeItem.of(SyncEvent.DELETE_UP, id="17", board="b"))
+
+        def raises_cli_arg_error(board_id, item, board_obj, queue=None):
+            raise Exception("unknown flag: --bogus")
+
+        monkeypatch.setattr(sync_module, "_apply_delete_up", raises_cli_arg_error)
+
+        board_obj = Board(FakePort())
+        sync_module.apply_changes(board_obj, q, config={})
+
+        entries = DeadLetterQueue().list()
+        assert len(entries) == 1
+        assert entries[0].category == "definitivo_cli"
+        assert entries[0].attempts == 0, "fail-fast não deve acumular tentativas"
+        assert "CLI" in entries[0].next_step or "cli" in entries[0].next_step

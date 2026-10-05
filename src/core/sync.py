@@ -39,9 +39,18 @@ _CORRIGIVEL_MESSAGE_SUBSTRINGS = (
     "unprocessable",
 )
 
+_CLI_USAGE_MESSAGE_SUBSTRINGS = (
+    "unknown flag:",
+    "unknown shorthand flag:",
+    "flag needs an argument:",
+    "arg(s), received ",
+    'unknown command "',
+)
+
 # next_step: ação recomendada, curta e acionável, por categoria de dead-letter.
 _NEXT_STEP = {
     "definitivo": "item não será retentado; revisar manualmente e, se aplicável, recriar a entrada",
+    "definitivo_cli": "erro determinístico de uso da CLI gh (flag/argumento/subcomando inválido); reprocessar não resolve — corrigir a construção do comando no engine",
     "transitorio_esgotado": "limite de tentativas esgotado; verificar causa raiz antes de reenviar manualmente",
     "corrigivel_pelo_agente": "remediação única falhou; revisar os erros de validação do board e as anotações/comandos do -body.md",
 }
@@ -78,6 +87,9 @@ def classify_error(exc: Exception) -> str:
     - "rate_limit": PenaltyException (throttle/penalty do board).
     - "definitivo": mensagens estáveis de alvo inexistente (issue fantasma,
       isolamento de board).
+    - "definitivo_cli": erro determinístico de uso da CLI gh (flag/argumento/
+      subcomando inválido, parser cobra). Permanente: reprocessar repete o erro.
+      Fail-fast direto para dead-letter, sem gastar max_attempts.
     - "corrigivel_pelo_agente": validação do board (HTTP 422 / "Validation
       Failed") ao aplicar relações/labels — o agente pode corrigir (E4).
     - "transitorio": qualquer outra exceção (default seguro).
@@ -90,9 +102,23 @@ def classify_error(exc: Exception) -> str:
     if any(substr in message for substr in _DEFINITIVE_MESSAGE_SUBSTRINGS):
         return "definitivo"
     low = message.lower()
+    if _is_cli_usage_error(low):
+        return "definitivo_cli"
     if any(substr in low for substr in _CORRIGIVEL_MESSAGE_SUBSTRINGS):
         return "corrigivel_pelo_agente"
     return "transitorio"
+
+
+def _is_cli_usage_error(low: str) -> bool:
+    """Erro determinístico de uso da CLI gh (parser cobra): flag, argumento ou
+    subcomando inválido. `low` já em minúsculas. Função pura.
+
+    O segundo caso cobre o formato de valor de flag inválido do cobra,
+    `invalid argument "<valor>" for "<flag>"` (classe do incidente not_planned).
+    """
+    if any(substr in low for substr in _CLI_USAGE_MESSAGE_SUBSTRINGS):
+        return True
+    return 'invalid argument "' in low and ' for "' in low
 
 
 def _slugify(text: str) -> str:
@@ -1065,10 +1091,10 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
                 ))
                 queue.remove(item.uuid)
                 continue
-            if category == "definitivo":
+            if category in ("definitivo", "definitivo_cli"):
                 log.warning(
                     "Sync",
-                    f"[{board_id}] #{item.id} erro definitivo em {item.event} - "
+                    f"[{board_id}] #{item.id} erro {category} em {item.event} - "
                     f"removendo da fila: {exc}",
                     board_id=board_id, issue_id=item.id, event=item.event,
                     reason=sanitize_reason(str(exc)), attempts=item.attempts,
