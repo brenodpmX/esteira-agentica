@@ -819,8 +819,31 @@ def sync_remote(board_id: str, board_obj: Board, queue: ChangeQueue):
 
         remote_at = issue.updated_at or ""
         snap_at = known.get("updated_at") or ""
+
+        # Relações (blocked_by/blocks/parent/children) são alteradas por
+        # operações que NÃO movem o updatedAt da issue (dependências nativas e
+        # vínculos de sub-issue) nem o Status/coluna. Sem compará-las aqui, uma
+        # mudança de bloqueio feita no board nunca seria reconciliada
+        # localmente, podendo congelar a fila (bloqueio obsoleto que persiste no
+        # body local). O adapter já traz essas relações na mesma query de
+        # list_issues (custo ~zero), então a divergência é detectada por
+        # comparação direta com o snapshot, independente de qualquer timestamp.
+        def _rel_changed(attr: str, snap_key: str) -> bool:
+            remote_val = getattr(issue, attr, None)
+            if remote_val is None:
+                return False  # relação não trazida pelo adapter: não infere mudança
+            return set(str(x) for x in remote_val) != \
+                set(str(x) for x in (known.get(snap_key) or []))
+
+        rel_diverged = (
+            _rel_changed("blocked_by", "blocked_by")
+            or _rel_changed("blocks", "blocks")
+            or _rel_changed("children", "children")
+            or str(issue.parent or "") != str(known.get("parent") or "")
+        )
+
         diverged = (remote_at and snap_at and remote_at > snap_at) or \
-                   (issue.column != known.get("column"))
+                   (issue.column != known.get("column")) or rel_diverged
         if diverged:
             # fullsync sempre: reconcilia propriedades + dependências de bloqueio.
             if queue.add(ChangeItem.of(SyncEvent.CHANGE_DOWN, id=issue_id,
