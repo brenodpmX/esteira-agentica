@@ -173,11 +173,13 @@ def classify_participation(
     - ``query_failed``: True quando a consulta de presenças falhou de forma
       transitória — força ``unresolved`` (RN-09 / CT-05).
     - ``has_cross_board_parent``: True quando a issue tem uma relação pai/filho
-      que a liga a outro quadro (sinal de possível propagação). Relação isolada
-      NÃO prova propagação (RN-02): sem prova, o resultado é ``unresolved``
-      (espera), nunca ``origin`` por omissão (CT-01c). A exceção de RN-01
-      (criação original SEM relação pai/filho ⇒ ``origin``) depende deste sinal
-      ser falso.
+      que a liga a outro quadro. Por si só NÃO decide nada: a propagação da
+      plataforma se materializa como uma SEGUNDA presença, nunca como uma só
+      (RN-02). Com presença única o resultado é sempre ``origin`` (não há cópia
+      a remover nem impasse resolúvel); o sinal só diferencia o motivo em
+      ``evidence`` (``sole_presence_cross_board_parent`` vs ``first_presence``).
+      A adjudicação de propagação/duplicidade depende de haver presença em
+      OUTRO quadro configurado, não deste sinal.
 
     Determinismo: nenhuma dependência de ordem, relógio ou estado mutável
     compartilhado. A ordem de precedência das regras é fixa.
@@ -221,23 +223,31 @@ def classify_participation(
 
     # 3) Sem autorização e sem prova de propagação. Distinguir:
     #    - presença conhecida em OUTRO quadro configurado SEM coluna conhecida
-    #      (duplicidade ambígua), OU relação pai/filho que liga a outro quadro
-    #      sem prova ⇒ não resolvida (espera), nunca escolhe origem por omissão
-    #      (RN-02 / CT-01c / CT-12).
-    #    - nenhuma outra presença conhecida e sem relação pai/filho cross-board
-    #      ⇒ origem (criação original — exceção de RN-01).
+    #      ⇒ duplicidade ambígua: há duas cópias e falta a coluna que elege a
+    #      origem; adia (RN-02).
+    #    - presença ÚNICA (nenhuma outra em quadro configurado) ⇒ origem, mesmo
+    #      com pai cross-board (ver abaixo).
     has_other_presence = any(
         (part.board_id or "").strip() not in ("", board_id)
         and (part.board_id or "").strip() in configured
         for part in (known_participations or [])
     )
-    if has_other_presence or has_cross_board_parent:
-        evidence["reason"] = (
-            "ambiguous_duplicate" if has_other_presence else "unproven_cross_board_parent"
-        )
+    if has_other_presence:
+        evidence["reason"] = "ambiguous_duplicate"
         return Classification(UNRESOLVED, evidence)
 
-    evidence["reason"] = "first_presence"
+    # Presença única: não há segunda cópia para remover nem impasse que o tempo
+    # resolva (nenhuma prova futura chega para uma presença só, nenhum rótulo
+    # virá). A propagação da plataforma SEMPRE se materializa como uma SEGUNDA
+    # presença; uma relação pai/filho cross-board isolada é o estado normal de
+    # uma hierarquia (epic->story->task), não prova de propagação (RN-02).
+    # Classificar `unresolved` aqui seria deadlock permanente: a presença nunca
+    # entra no snapshot, e cada ciclo a redescobre e readia — loop eterno ao
+    # reconstruir um snapshot vazio (pod morto). Logo: origem.
+    evidence["reason"] = (
+        "sole_presence_cross_board_parent" if has_cross_board_parent
+        else "first_presence"
+    )
     return Classification(ORIGIN, evidence)
 
 

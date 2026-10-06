@@ -386,9 +386,10 @@ def test_create_down_issue_nova_sem_outra_presenca_cria_arquivos(monkeypatch, tm
     assert Snapshot("b").load().issue("5")["participation_intent"] == "origin"
 
 
-def test_create_down_parent_cross_board_sem_prova_fica_unresolved(monkeypatch, tmp_path):
-    """(9b) Parent cross-board SEM prova: `unresolved` (RN-02/CT-01c) — não cria
-    arquivos, não remove, adia."""
+def test_create_down_parent_cross_board_presenca_unica_vira_origem(monkeypatch, tmp_path):
+    """(9b) Pai cross-board com presença ÚNICA no quadro atual: `origin` — cria
+    arquivos e persiste a intenção, sem remover. Presença única não é propagação
+    (não há segunda cópia); `unresolved` aqui seria deadlock permanente."""
     monkeypatch.chdir(tmp_path)
     from src.core import sync
     from src.core.participation import Participation
@@ -397,8 +398,8 @@ def test_create_down_parent_cross_board_sem_prova_fica_unresolved(monkeypatch, t
     snap = Snapshot("b").load()
     snap.board = {"todo": "To Do"}
     snap.save()
-    # Parent #10 reside em 'outro_board' (cross-board), mas não há prova de
-    # presença confirmada com coluna conhecida em outro quadro.
+    # Parent #10 reside em 'outro_board' (cross-board), mas a issue tem presença
+    # ÚNICA no quadro atual 'b' — nenhuma outra presença em quadro configurado.
     _snapshot_com_issue("outro_board", "10", "doing")
 
     port, board = _board_com_issue(
@@ -411,7 +412,8 @@ def test_create_down_parent_cross_board_sem_prova_fica_unresolved(monkeypatch, t
     sync._apply_create_down("b", item, board, ChangeQueue(), CONFIG)
 
     assert ("remove_from_board", "5") not in port.calls
-    assert not (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
+    assert (tmp_path / ".pipe/boards/b/todo/5-teste-body.md").exists()
+    assert Snapshot("b").load().issue("5")["participation_intent"] == "origin"
 
 
 def test_create_down_presenca_propagada_com_prova_descarta(monkeypatch, tmp_path):

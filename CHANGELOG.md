@@ -2,7 +2,45 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
-## [1.23.2] - 2026-10-05
+## [1.23.3] - 2026-10-05
+
+### Corrigido
+
+- **Presença única de uma issue deixa de travar em `unresolved` por ter pai
+  cross-board (fim do loop eterno na reconstrução de snapshot).**
+  `classify_participation` (`src/core/participation.py`) classificava como
+  `unresolved` toda issue com relação pai/filho ligando-a a outro quadro quando
+  não havia prova de propagação, mesmo quando a issue existia em UM ÚNICO
+  quadro. Numa hierarquia (epic->story->task) isso é o estado normal de todo
+  filho, não propagação: a propagação da plataforma sempre se materializa como
+  uma SEGUNDA presença, nunca como uma só. O efeito era um deadlock permanente —
+  a presença nunca entrava no snapshot (create-down adiado, sem gravar arquivos),
+  então cada ciclo de sync a redescobria como nova, re-despachava create-down,
+  refazia o `get_issue(fullsync)` e readiava: a esteira girava a cada ciclo sem
+  nunca dormir nem progredir. Sintoma visto no escrevas quando o `.pipe` foi
+  apagado e o motor subiu num snapshot vazio: stories #73/#79/#80/#81 (filhas do
+  epic #1) em loop eterno. Correção: presença ÚNICA (nenhuma outra presença em
+  quadro configurado) é sempre `origin`, mesmo com pai cross-board — não há cópia
+  a remover nem impasse que o tempo resolva. A adjudicação de propagação/
+  duplicidade passa a depender exclusivamente de haver presença em OUTRO quadro
+  configurado (duplicidade real), não do sinal `has_cross_board_parent`. O sinal
+  só diferencia o motivo em `evidence` (`sole_presence_cross_board_parent` vs
+  `first_presence`). Torna a classificação idempotente: snapshot vazio ou cheio,
+  mesmo resultado — matar o pod e subir reconstrói o estado como estava.
+
+- **Backoff de participações não resolvidas agora é respeitado no enfileiramento
+  (`src/core/sync.py`).** `sync_remote` reenfileirava `create-down` para toda
+  issue ausente do snapshot a cada ciclo, sem consultar o adiamento gravado em
+  `.pipe/participationPending.json` (`next_attempt_at`). Uma presença genuinamente
+  `unresolved` (duplicidade ambígua ou falha de consulta) nunca persiste, então
+  era redescoberta e re-despachada a cada ciclo — o mesmo loop sem throttle,
+  gastando API/créditos. O backoff existia (`defer_pending`/`is_due`) mas nenhum
+  ponto o consultava fora de `detect_external_removal`. Agora `sync_remote` pula
+  o reenfileiramento enquanto a pendência não vence o prazo, limitando a
+  reavaliação a uma vez por intervalo (`rerun_cooldown` ou 300s) em vez de a cada
+  ciclo.
+
+
 
 ### Corrigido
 

@@ -227,3 +227,41 @@ def test_ct04_penalty_during_read_does_not_prune_and_preserves_snapshot():
     # Snapshot persistido permanece idêntico (nenhuma issue marcada/alterada).
     after = Snapshot("b").path.read_text(encoding="utf-8")
     assert after == before
+
+
+# ── CT-05: adiamento de participação não resolvida corta reenfileiramento ─────
+
+def test_ct05_unresolved_pending_not_due_skips_create_down():
+    """Issue ausente do snapshot COM pendência de participação ainda não vencida
+    não é reenfileirada (throttle); ao vencer o prazo, volta a enfileirar.
+
+    Sem este corte, uma presença `unresolved` (nunca persistida) seria
+    redescoberta e re-despachada a cada ciclo — loop sem throttle.
+    """
+    from datetime import datetime, timedelta, timezone
+    from src.core import participation_reconcile as PR
+    from src.core.participation import Classification, UNRESOLVED
+
+    board = Board(FakePort(listed=[
+        Issue(id="88", title="Nao resolvida", body="", column="backlog",
+              updated_at="2026-09-24T12:00:00Z"),
+    ]))
+    _seed_snapshot("b", [])
+
+    # Pendência registrada com prazo no futuro: não vencida.
+    PR.defer_pending("b", "88", Classification(UNRESOLVED, {}), 600)
+    entry = PR.pending_entry("b", "88")
+    assert PR.is_due(entry) is False
+
+    q = ChangeQueue()
+    sync_remote("b", board, q)
+    assert _drain(q) == []  # throttle: nada enfileirado enquanto adiada
+
+    # Prazo vencido: volta a enfileirar create-down.
+    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    entry["next_attempt_at"] = past.strftime("%Y-%m-%dT%H:%M:%SZ")
+    PR._save_pending({PR._pending_key("b", "88"): entry})
+
+    q2 = ChangeQueue()
+    sync_remote("b", board, q2)
+    assert _events(_drain(q2)) == [(SyncEvent.CREATE_DOWN.value, "88")]
