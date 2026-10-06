@@ -25,6 +25,15 @@ services:
       - ${PIPE_REPO_DIR:-./repo}:/app/repo
       - ${PIPE_LOGS_DIR:-./logs}:/app/logs
 
+  # Mesmos bind mounts no init de permissões: é ele quem, rodando como root,
+  # corrige a posse do diretório do host (criado como root pelo daemon quando
+  # ausente no 'up') para pipe:pipe, antes de o serviço pipe subir.
+  init-perms:
+    volumes:
+      - ${PIPE_STATE_DIR:-./.pipe}:/app/.pipe
+      - ${PIPE_REPO_DIR:-./repo}:/app/repo
+      - ${PIPE_LOGS_DIR:-./logs}:/app/logs
+
   # O dind precisa enxergar o repo NO MESMO PATH que o pipe para resolver os
   # bind mounts das stacks aninhadas (dev/lib etc.). Em modo dev o repo é um
   # bind mount do host, então o mesmo bind é aplicado ao dind. O dind-storage

@@ -2,6 +2,34 @@
 # Valor central: trocar pipe.yml, contexts/ ou credenciais NÃO exige 'docker build'
 
 services:
+  # Init de permissões: ajusta a posse dos pontos de montagem de estado para o
+  # usuário pipe (uid 1000) ANTES do serviço pipe subir, e encerra. Necessário
+  # porque, com bind mounts (compose.dev.yml), se o diretório do host não existe
+  # no 'up', o daemon Docker cria o mountpoint como root e o pipe (não-root,
+  # ADR-05) falha com PermissionError ao abrir .pipe/pipe.lock. Rodar este passo
+  # como root torna a subida idempotente a 'rm -rf .pipe'/pod morto, sem tornar
+  # o serviço pipe root (ADR-05 preservado: só este init efêmero usa root).
+  # Com named volumes (base), é inócuo: o chown apenas reafirma pipe:pipe.
+  init-perms:
+    build:
+      context: .
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - >
+        for d in /app/.pipe /app/logs /app/repo
+        /home/pipe/.kiro /home/pipe/.local/share/kiro-cli; do
+        mkdir -p "$$d" && chown pipe:pipe "$$d"; done
+    volumes:
+      - pipe-repo:/app/repo
+      - pipe-logs:/app/logs
+      - pipe-state:/app/.pipe
+      - kiro-home:/home/pipe/.kiro
+      - kiro-local:/home/pipe/.local/share/kiro-cli
+    # Sem 'restart': é um passo único que executa e encerra (default = no).
+    # Se o chown falhar (saída != 0), o pipe nem sobe (depends_on exige sucesso).
+
   # Daemon Docker isolado (Docker-in-Docker) para o agente subir as stacks
   # dev/qa do produto e rodar ITs Testcontainers. Fica num sidecar privileged;
   # o daemon e os containers aninhados NÃO tocam o host (raio de dano contido).
@@ -57,6 +85,8 @@ services:
     depends_on:
       dind:
         condition: service_healthy
+      init-perms:
+        condition: service_completed_successfully
     volumes:
       # Configuração: editar no host + 'docker compose up -d' = nova config SEM rebuild
       - ./pipe.yml:/app/pipe.yml:ro

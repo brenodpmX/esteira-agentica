@@ -1781,3 +1781,60 @@ class TestDindDevOverride:
             "compose.dev.yml deve dar ao dind o mesmo bind mount de repo do pipe "
             "(${PIPE_REPO_DIR:-./repo}:/app/repo) para os bind mounts aninhados resolverem."
         )
+
+
+# ---------------------------------------------------------------------------
+# v1.23.4 — init-perms: posse dos diretórios de estado antes de o pipe subir
+# ---------------------------------------------------------------------------
+
+
+class TestInitPermsOwnership:
+    """O serviço efêmero init-perms corrige a posse dos pontos de montagem de
+    estado (criados como root pelo daemon quando ausentes no 'up') para pipe,
+    tornando a subida idempotente a 'rm -rf .pipe'/pod morto, sem tornar o
+    serviço pipe root (ADR-05)."""
+
+    def test_init_perms_existe_e_roda_como_root(self, compose_text):
+        import yaml
+        services = yaml.safe_load(compose_text).get("services", {})
+        assert "init-perms" in services, (
+            "Serviço 'init-perms' ausente no docker-compose.yml."
+        )
+        assert str(services["init-perms"].get("user")) == "0:0", (
+            "init-perms deve rodar como root (user: \"0:0\") para poder chown."
+        )
+
+    def test_init_perms_chown_dos_diretorios_de_estado(self, compose_text):
+        import yaml
+        cmd = yaml.safe_load(compose_text)["services"]["init-perms"]["command"]
+        texto = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        assert "chown pipe:pipe" in texto, "init-perms deve chown para pipe:pipe."
+        for d in ("/app/.pipe", "/app/logs", "/app/repo"):
+            assert d in texto, f"init-perms não cobre o diretório de estado {d}."
+
+    def test_pipe_depende_de_init_perms_concluido(self, compose_text):
+        import yaml
+        dep = yaml.safe_load(compose_text)["services"]["pipe"].get("depends_on", {})
+        assert "init-perms" in dep, "pipe deve declarar depends_on init-perms."
+        assert dep["init-perms"]["condition"] == "service_completed_successfully", (
+            "pipe deve esperar init-perms concluir com sucesso antes de subir."
+        )
+
+    def test_pipe_continua_nao_root(self, compose_text):
+        import yaml
+        pipe = yaml.safe_load(compose_text)["services"]["pipe"]
+        assert str(pipe.get("user", "")) not in ("0", "0:0", "root"), (
+            "ADR-05: o serviço pipe NÃO deve rodar como root; só o init-perms usa root."
+        )
+
+    @US04_SKIP
+    def test_init_perms_tem_bind_mounts_de_estado_no_dev(self, compose_dev_text):
+        import yaml
+        d = yaml.safe_load(compose_dev_text) if compose_dev_text else {}
+        vols = (d.get("services", {}).get("init-perms", {}) or {}).get("volumes", [])
+        texto = " ".join(vols)
+        for dest in ("/app/.pipe", "/app/repo", "/app/logs"):
+            assert dest in texto, (
+                f"init-perms (compose.dev.yml) deve bind-montar {dest} para corrigir "
+                "a posse do diretório do host."
+            )

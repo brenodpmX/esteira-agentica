@@ -2,7 +2,30 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
-## [1.23.3] - 2026-10-05
+## [1.23.4] - 2026-10-06
+
+### Corrigido
+
+- **Subida idempotente quando `.pipe/` (ou outro diretório de estado) não existe
+  no `up` — fim do `PermissionError` em `.pipe/pipe.lock`.** Com os bind mounts
+  de estado do `compose.dev.yml`, se o diretório do host não existir no momento
+  do `docker compose up`, o daemon Docker cria o mountpoint como **root**; o
+  serviço `pipe` roda como usuário não-root `pipe` (uid 1000, ADR-05) e falhava
+  com `PermissionError: [Errno 13] Permission denied: '.pipe/pipe.lock'` em
+  `lock.acquire`, entrando em crash-loop. Acontecia ao remover `.pipe` (unblock
+  manual) ou ao matar/subir o pod sem passar pelo `make` (que faz `mkdir -p`).
+  Correção: novo serviço efêmero `init-perms` no `docker-compose.yml` que roda
+  como root APENAS para `mkdir -p` + `chown pipe:pipe` dos pontos de montagem de
+  estado (`/app/.pipe`, `/app/logs`, `/app/repo`, `/home/pipe/.kiro`,
+  `/home/pipe/.local/share/kiro-cli`) e encerra; o serviço `pipe` ganha
+  `depends_on: init-perms (service_completed_successfully)`. O `compose.dev.yml`
+  espelha os três bind mounts de estado no `init-perms` para que ele corrija a
+  posse do diretório do host. ADR-05 preservado: a imagem e o `USER pipe` do
+  serviço `pipe` não mudam — apenas este init efêmero usa root. Com named
+  volumes (base) o passo é inócuo (reafirma pipe:pipe). Torna `rm -rf .pipe` +
+  subida (ou pod morto) recuperável sem intervenção manual de permissão.
+
+
 
 ### Corrigido
 
