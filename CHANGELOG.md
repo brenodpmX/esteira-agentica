@@ -2,7 +2,31 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
-## [1.23.4] - 2026-10-06
+## [1.24.0] - 2026-10-06
+
+### Adicionado
+
+- **Socket Docker Unix no container do agente (`/var/run/docker.sock`) via
+  sidecar `sockbridge`.** Completa o ambiente DinD (Opção B, v1.13.0): o
+  container `pipe` compartilha o NETWORK namespace do `dind` (alcança o daemon
+  em `tcp://127.0.0.1:2375`) mas NÃO o filesystem, então nunca enxergou o socket
+  unix do dind. Ferramentas que assumem o socket unix padrão falhavam dentro do
+  pipe — notavelmente **Testcontainers** (ex.: `IntegracaoBase`/`mvn verify` do
+  escrevas, que fixa `UnixSocketClientProviderStrategy` + `/var/run/docker.sock`),
+  reportando "sem Docker Unix socket". Novo serviço `sockbridge` (reusa a imagem
+  do pipe, que agora traz `socat`) roda como root e encaminha
+  `UNIX-LISTEN:/var/run/docker.sock` → `TCP:127.0.0.1:2375`; o socket vive num
+  named volume `docker-sock` montado em `/var/run` tanto no bridge quanto no
+  pipe. O `pipe` ganha `depends_on: sockbridge (service_healthy)`. Resultado:
+  Testcontainers e o `docker` CLI sem `DOCKER_HOST` passam a funcionar dentro do
+  pipe **sem alterar o produto**. É capacidade da ferramenta (qualquer produto
+  com ITs Testcontainers se beneficia), não específica do escrevas. ADR-05
+  preservado: a imagem e o `USER pipe` do serviço `pipe` não mudam; só o
+  `sockbridge` efêmero usa root. `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=
+  /var/run/docker.sock` continua coerente: o path é resolvido pelo daemon do
+  dind (que tem o socket real) ao montar no Ryuk.
+
+
 
 ### Corrigido
 

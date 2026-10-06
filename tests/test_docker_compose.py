@@ -1838,3 +1838,74 @@ class TestInitPermsOwnership:
                 f"init-perms (compose.dev.yml) deve bind-montar {dest} para corrigir "
                 "a posse do diretório do host."
             )
+
+
+# ---------------------------------------------------------------------------
+# v1.24.0 — sockbridge: socket Docker Unix no container do agente (-> dind tcp)
+# ---------------------------------------------------------------------------
+
+
+class TestSockbridge:
+    """O sidecar sockbridge expõe /var/run/docker.sock no pipe encaminhando para
+    o daemon do dind (tcp://127.0.0.1:2375), para ferramentas que assumem o
+    socket unix padrão (Testcontainers). ADR-05 preservado: só o sockbridge usa
+    root; o serviço pipe segue não-root."""
+
+    def _svc(self, compose_text, name):
+        import yaml
+        return yaml.safe_load(compose_text).get("services", {}).get(name, {})
+
+    def test_sockbridge_existe_e_root(self, compose_text):
+        sb = self._svc(compose_text, "sockbridge")
+        assert sb, "Serviço 'sockbridge' ausente no docker-compose.yml."
+        assert str(sb.get("user")) == "0:0", (
+            "sockbridge deve rodar como root (user: \"0:0\") para criar o socket."
+        )
+
+    def test_sockbridge_encaminha_unix_para_tcp_do_dind(self, compose_text):
+        cmd = self._svc(compose_text, "sockbridge").get("command", [])
+        texto = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        assert "socat" in texto, "sockbridge deve usar socat."
+        assert "UNIX-LISTEN:/var/run/docker.sock" in texto, (
+            "sockbridge deve escutar em /var/run/docker.sock."
+        )
+        assert "TCP:127.0.0.1:2375" in texto, (
+            "sockbridge deve encaminhar para o daemon do dind em tcp://127.0.0.1:2375."
+        )
+
+    def test_sockbridge_compartilha_netns_do_dind(self, compose_text):
+        sb = self._svc(compose_text, "sockbridge")
+        assert sb.get("network_mode") == "service:dind", (
+            "sockbridge deve compartilhar o network namespace do dind para alcançar o tcp."
+        )
+
+    def test_sockbridge_monta_volume_do_socket(self, compose_text):
+        vols = self._svc(compose_text, "sockbridge").get("volumes", [])
+        assert any("docker-sock:/var/run" in v for v in vols), (
+            "sockbridge deve montar docker-sock em /var/run (onde cria o socket)."
+        )
+
+    def test_pipe_consome_o_socket_e_depende_do_bridge(self, compose_text):
+        pipe = self._svc(compose_text, "pipe")
+        vols = pipe.get("volumes", [])
+        assert any("docker-sock:/var/run" in v for v in vols), (
+            "pipe deve montar docker-sock em /var/run para enxergar o socket."
+        )
+        dep = pipe.get("depends_on", {})
+        assert "sockbridge" in dep, "pipe deve declarar depends_on sockbridge."
+        assert dep["sockbridge"]["condition"] == "service_healthy", (
+            "pipe deve esperar o sockbridge ficar healthy (socket pronto)."
+        )
+
+    def test_docker_sock_volume_declarado(self, compose_text):
+        import yaml
+        vols = yaml.safe_load(compose_text).get("volumes", {}) or {}
+        assert "docker-sock" in vols, (
+            "Named volume 'docker-sock' (socket compartilhado) não declarado."
+        )
+
+    def test_pipe_continua_nao_root(self, compose_text):
+        pipe = self._svc(compose_text, "pipe")
+        assert str(pipe.get("user", "")) not in ("0", "0:0", "root"), (
+            "ADR-05: o serviço pipe NÃO deve rodar como root; só o sockbridge usa root."
+        )

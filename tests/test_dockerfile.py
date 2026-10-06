@@ -431,6 +431,14 @@ class TestCopySrc:
 class TestEstruturaDockerfile:
     """Estrutura geral: imagem base, camadas, variáveis de ambiente, entrypoint."""
 
+    def test_socat_instalado(self, dockerfile_text):
+        """socat deve estar instalado: o sidecar sockbridge (reusa esta imagem)
+        encaminha /var/run/docker.sock -> tcp do dind (v1.24.0)."""
+        assert re.search(r"\bsocat\b", dockerfile_text), (
+            "socat ausente no Dockerfile. O sockbridge reusa a imagem do pipe para "
+            "expor o socket Docker Unix; socat é obrigatório no apt-get install."
+        )
+
     def test_base_python_3_12(self, dockerfile_text):
         assert re.search(r"FROM\s+python:3\.12", dockerfile_text), (
             "Imagem base não é python:3.12. Requisito US-01: Python 3.12+."

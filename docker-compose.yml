@@ -65,6 +65,35 @@ services:
       retries: 30
     restart: unless-stopped
 
+  # Ponte de socket: expõe um socket Docker Unix em /var/run/docker.sock
+  # encaminhando para o daemon do dind em tcp://127.0.0.1:2375. O container pipe
+  # compartilha o NETWORK namespace do dind (alcança o tcp) mas NÃO o filesystem,
+  # então não enxerga o socket unix do dind. Ferramentas que assumem o socket
+  # unix padrão (Testcontainers, docker CLI sem DOCKER_HOST) passam a funcionar
+  # dentro do pipe sem alterar o produto. Reusa a imagem do pipe (tem socat) e
+  # roda como root só para criar o socket no volume compartilhado. O socket vai
+  # num named volume (docker-sock) montado em /var/run no bridge e no pipe.
+  sockbridge:
+    build:
+      context: .
+    user: "0:0"
+    network_mode: "service:dind"
+    depends_on:
+      dind:
+        condition: service_healthy
+    command:
+      - socat
+      - UNIX-LISTEN:/var/run/docker.sock,fork,mode=0666
+      - TCP:127.0.0.1:2375
+    volumes:
+      - docker-sock:/var/run
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /var/run/docker.sock"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   pipe:
     build:
       context: .
@@ -87,6 +116,8 @@ services:
         condition: service_healthy
       init-perms:
         condition: service_completed_successfully
+      sockbridge:
+        condition: service_healthy
     volumes:
       # Configuração: editar no host + 'docker compose up -d' = nova config SEM rebuild
       - ./pipe.yml:/app/pipe.yml:ro
@@ -97,6 +128,9 @@ services:
       - pipe-state:/app/.pipe
       - kiro-home:/home/pipe/.kiro
       - kiro-local:/home/pipe/.local/share/kiro-cli
+      # Socket Docker Unix fornecido pelo sockbridge (-> daemon do dind via tcp),
+      # para ferramentas que assumem /var/run/docker.sock (ex.: Testcontainers).
+      - docker-sock:/var/run
     secrets:
       - ssh_key
     # PID 1 = tini: repassa SIGTERM ao Python (shutdown limpo/rápido, sem
@@ -115,6 +149,8 @@ volumes:
   pipe-state:
   kiro-home:
   kiro-local:
+  # Socket Docker Unix compartilhado entre sockbridge (cria) e pipe (consome).
+  docker-sock:
   # Storage do daemon dind: persiste imagens e volumes das stacks dev/qa entre
   # execuções (ambiente de desenvolvimento/teste "real"). qa/run.sh faz seu
   # próprio down -v a cada rodada; os dados do modo dev persistem aqui.
