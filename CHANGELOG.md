@@ -2,7 +2,39 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
-## [1.24.0] - 2026-10-06
+## [1.25.0] - 2026-10-06
+
+### Corrigido
+
+- **Mudança de relação (bloqueio/sub-issue/parent) agora é percebida na
+  sincronização, mesmo sem alterar `updatedAt`.** Operações de dependência
+  nativa (`blocked_by`/`blocking`) e de vínculo de sub-issue no GitHub NÃO movem
+  o `updatedAt` da issue nem o Status/coluna do item no ProjectV2. Como
+  `sync_remote` só divergia por `updatedAt` ou coluna, uma troca de bloqueio
+  feita no board nunca era reconciliada localmente: um `/blocked_by` obsoleto
+  persistia no body local e congelava a fila (`_is_blocked` segue considerando a
+  issue bloqueada por um bloqueador já concluído). Caso real: épico #1 do
+  escrevas parado atrás de um bloqueio fantasma `#73 /blocked_by #226` com #226
+  já concluída e a dependência já removida no GitHub.
+
+### Adicionado
+
+- **`list_issues` dobra `blockedBy`/`blocking`/`parent`/`subIssues`/`state` na
+  MESMA query GraphQL do ProjectV2** (antes só `number/title/body/updatedAt/
+  labels`). Custo medido via `rateLimit{cost}`: 1 ponto por página (`first:5`),
+  inalterado — as relações vêm sem request adicional. Cada `Issue` listada passa
+  a carregar as relações e o `state`, com warning quando `totalCount` excede a
+  página (`first:50`), sinalizando mudança possivelmente não detectável sem
+  paginação adicional.
+- **`sync_remote` compara as relações contra o snapshot** (`blocked_by`,
+  `blocks`, `children`, `parent`), por comparação direta e insensível à ordem,
+  independente de qualquer timestamp. Qualquer divergência enfileira o mesmo
+  `change-down` (fullsync) já existente, que reconcilia o body local. Elimina a
+  dependência do `updatedAt` como relógio para relações — a causa-raiz do freeze.
+  `get_issue(fullsync=True)` segue usando REST para as dependências na
+  reconciliação (acurado e só chamado quando há mudança), sem custo por ciclo.
+
+
 
 ### Adicionado
 

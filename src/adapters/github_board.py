@@ -847,7 +847,7 @@ class GitHubBoardAdapter(BoardPort):
                 id
                 isArchived
                 fieldValues(first:10){nodes{...on ProjectV2ItemFieldSingleSelectValue{field{...on ProjectV2SingleSelectField{name}} name}}}
-                content{...on Issue{number title body updatedAt labels(first:20){nodes{name}}}}
+                content{...on Issue{number title body updatedAt state labels(first:20){nodes{name}} parent{number} subIssues(first:50){totalCount nodes{number}} blockedBy(first:50){totalCount nodes{number}} blocking(first:50){totalCount nodes{number}}}}
               }
             }
           }}
@@ -884,6 +884,23 @@ class GitHubBoardAdapter(BoardPort):
                     for l in (content.get("labels", {}) or {}).get("nodes", [])
                 ]
 
+                parent_node = content.get("parent") or {}
+                parent = str(parent_node["number"]) if parent_node.get("number") else None
+
+                def _rel_numbers(field: str) -> list[str]:
+                    conn = content.get(field) or {}
+                    nums = [str(n["number"]) for n in (conn.get("nodes") or [])
+                            if n.get("number")]
+                    total = conn.get("totalCount")
+                    if total is not None and total > len(nums):
+                        log.warning("GitHub",
+                                    f"{self._tp}#{content['number']} - {field} truncado "
+                                    f"({len(nums)}/{total}); mudança além da página pode "
+                                    f"não ser detectada",
+                                    operation="list_issues", board_id=board_id,
+                                    issue_id=str(content["number"]), field=field)
+                    return nums
+
                 issues.append(Issue(
                     id=str(content["number"]),
                     title=content.get("title", ""),
@@ -891,6 +908,11 @@ class GitHubBoardAdapter(BoardPort):
                     column=column,
                     labels=labels,
                     updated_at=content.get("updatedAt", ""),
+                    state=(content.get("state") or "").lower(),
+                    parent=parent,
+                    children=_rel_numbers("subIssues"),
+                    blocked_by=_rel_numbers("blockedBy"),
+                    blocks=_rel_numbers("blocking"),
                 ))
 
             page_info = page.get("pageInfo", {})
