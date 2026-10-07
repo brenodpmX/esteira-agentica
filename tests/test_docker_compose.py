@@ -1862,6 +1862,18 @@ class TestSockbridge:
             "sockbridge deve rodar como root (user: \"0:0\") para criar o socket."
         )
 
+    def test_sockbridge_nao_anexa_logs(self, compose_text):
+        """As linhas benignas 'Broken pipe' do socat (conexões Testcontainers/Ryuk
+        encerradas no teardown) não devem poluir a saída do 'docker compose up'
+        (foreground do make). attach: false desanexa a saída sem parar o serviço;
+        os logs seguem acessíveis via 'docker compose logs sockbridge'."""
+        sb = self._svc(compose_text, "sockbridge")
+        assert sb.get("attach") is False, (
+            "Serviço 'sockbridge' deve ter attach: false para não poluir o log da "
+            "esteira no foreground; os logs seguem acessíveis via "
+            "'docker compose logs sockbridge'."
+        )
+
     def test_sockbridge_encaminha_unix_para_tcp_do_dind(self, compose_text):
         cmd = self._svc(compose_text, "sockbridge").get("command", [])
         texto = " ".join(cmd) if isinstance(cmd, list) else str(cmd)

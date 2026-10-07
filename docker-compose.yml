@@ -77,6 +77,12 @@ services:
     build:
       context: .
     user: "0:0"
+    # Não anexa os logs do socat à saída agregada do 'docker compose up': cada
+    # conexão Docker encerrada no teardown (Testcontainers/Ryuk) emite uma linha
+    # 'write(...): Broken pipe' benigna que poluía o log da esteira. O serviço
+    # segue rodando e seus logs continuam acessíveis via
+    # 'docker compose logs sockbridge'. Requer Compose v2.20+.
+    attach: false
     network_mode: "service:dind"
     depends_on:
       dind:
