@@ -2,6 +2,20 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.25.1] - 2026-10-07
+
+### Corrigido
+
+- **Logs do `sockbridge` não poluem mais a saída em foreground do `make`.**
+  O `sockbridge` roda `socat` com `fork`: cada conexão Docker encerrada no
+  teardown de testes (Testcontainers/Ryuk) emite uma linha benigna
+  `write(...): Broken pipe` no socat-filho daquela conexão. Essas linhas
+  entravam no log agregado do `docker compose up` e poluíam a tela. Aplicado
+  `attach: false` ao serviço `sockbridge` (mesmo tratamento já dado ao `dind`
+  na 1.13.1): o serviço continua rodando e seus logs seguem acessíveis via
+  `docker compose logs sockbridge`, apenas não são anexados ao foreground.
+  Requer Compose v2.20+.
+
 ## [1.25.0] - 2026-10-06
 
 ### Corrigido
