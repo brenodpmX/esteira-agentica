@@ -88,8 +88,12 @@ services:
       dind:
         condition: service_healthy
     command:
+      # unlink-early: remove um socket pré-existente antes do bind. O volume
+      # docker-sock é persistente; se a instância anterior morreu (SIGKILL) sem
+      # limpar, o socket velho fica no volume e o socat aborta ("exists") em loop
+      # de restart. unlink-early torna cada subida idempotente.
       - socat
-      - UNIX-LISTEN:/var/run/docker.sock,fork,mode=0666
+      - UNIX-LISTEN:/var/run/docker.sock,fork,mode=0666,unlink-early
       - TCP:127.0.0.1:2375
     volumes:
       - docker-sock:/var/run

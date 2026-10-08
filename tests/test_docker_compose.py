@@ -1884,6 +1884,11 @@ class TestSockbridge:
         assert "TCP:127.0.0.1:2375" in texto, (
             "sockbridge deve encaminhar para o daemon do dind em tcp://127.0.0.1:2375."
         )
+        assert "unlink-early" in texto, (
+            "sockbridge deve usar unlink-early no UNIX-LISTEN para remover um socket "
+            "pré-existente no volume persistente docker-sock e evitar o loop de restart "
+            "com 'socat E \"/var/run/docker.sock\" exists'."
+        )
 
     def test_sockbridge_compartilha_netns_do_dind(self, compose_text):
         sb = self._svc(compose_text, "sockbridge")

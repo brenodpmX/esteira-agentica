@@ -2,6 +2,23 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.25.2] - 2026-10-08
+
+### Corrigido
+
+- **`sockbridge` não sobe mais em loop de restart por socket Docker órfão no
+  volume persistente.** O `socat` do `sockbridge` escutava em
+  `UNIX-LISTEN:/var/run/docker.sock` sem `unlink-early`. Como o volume
+  `docker-sock` é persistente, quando a instância anterior era encerrada por
+  SIGKILL (sem limpar o socket), o arquivo `/var/run/docker.sock` permanecia no
+  volume; na subida seguinte o socat abortava com
+  `E "/var/run/docker.sock" exists` e entrava em loop de restart, nunca ficando
+  healthy — derrubando `dind`/`pipe` que dependem dele (`dependency failed to
+  start: sockbridge is unhealthy`). Adicionado `unlink-early` ao endereço de
+  escuta: o socat remove qualquer socket pré-existente antes do bind, tornando
+  cada subida idempotente. Latente desde a introdução do sockbridge (1.24.0);
+  só se manifestava a partir do segundo deploy sobre o mesmo volume.
+
 ## [1.25.1] - 2026-10-07
 
 ### Corrigido
