@@ -1089,7 +1089,7 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
         board_id = item.board
         try:
             if item.event == SyncEvent.CREATE_UP.value:
-                _apply_create_up(board_id, item, board_obj, queue)
+                _apply_create_up(board_id, item, board_obj, queue, config)
             elif item.event == SyncEvent.CREATE_DOWN.value:
                 _apply_create_down(board_id, item, board_obj, queue, config)
             elif item.event == SyncEvent.CHANGE_UP.value:
@@ -1185,7 +1185,8 @@ def _isolate_in_dead_letter(board_id: str, item: ChangeItem, category: str,
     DeadLetterQueue().add(entry)
 
 
-def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None):
+def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None,
+                     config: dict = None):
     """Cria issue no board a partir do arquivo local."""
     snap = Snapshot(board_id).load()
     issue_data = next((i for i in snap.issues if i.get("body_path") == item.identifier), None)
