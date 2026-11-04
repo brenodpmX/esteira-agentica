@@ -676,6 +676,7 @@ Padrões protegidos (`PROTECTED_PATHS`):
 | `.pipe/agentCircuitBreak.json` | Estado do limitador de reexecuções por contexto (#306) |
 | `.pipe/executionRecords.json` | Registros de execução de agentes + linhagem histórica (#307) |
 | `.pipe/participationPending.json` | Participações entre quadros pendentes de reconciliação e próxima tentativa (#310) |
+| `.pipe/syncCircuitBreaker.json` | Estado do circuit-breaker de sincronismo (#309) |
 
 ## Anotações no body (comandos `@---`)
 
@@ -1148,6 +1149,44 @@ está entre eles. Se não pertencer, a operação é **abortada** com um warning
 - **Custo:** +1 chamada GraphQL por operação destrutiva. Em um board ativo
   (~10 closes/min) isso adiciona ~10 chamadas/min — dentro da quota padrão de
   5000 pontos/hora do GraphQL do GitHub.
+
+## Circuit-breaker de sincronismo (`sync.circuit_breaker`)
+
+Dono único das proteções contra falha repetida de sincronismo (issue #309),
+incluindo a antiga remediação E4. Todos os campos são opcionais.
+
+```yaml
+sync:
+  circuit_breaker:
+    persistence: file          # file (padrão, .pipe/syncCircuitBreaker.json) | memory
+    escalation_agent: correcao-esteira   # agente dedicado; deve existir em 'agents'
+    issue:
+      max_failures: 3          # falhas consecutivas para bloquear a issue
+      block_duration: 300      # segundos de bloqueio da issue
+      max_blocks: 3            # bloqueios consecutivos antes de escalar ao agente
+    platform:
+      max_blocked_issues: 5    # issues distintas bloqueadas para bloquear a plataforma
+      block_window: 600        # janela (s) para contar as issues bloqueadas
+      block_duration: 900      # segundos de bloqueio da plataforma
+    half_open:
+      success_threshold: 2     # sucessos em meio-aberto para fechar o circuito
+```
+
+- Só falhas de sincronismo com a plataforma contam; rate limit/penalty segue no
+  throttle e nunca incrementa contadores.
+- Issue bloqueada: as mudanças ficam na fila sem tentativa. Plataforma
+  bloqueada: subida e descida dela são puladas no ciclo, sem parar a esteira.
+- Expirado o bloqueio, o circuito fica meio-aberto: `success_threshold` sucessos
+  fecham; uma falha reabre.
+- Após `max_blocks` bloqueios consecutivos (ou de imediato em erro de validação
+  422), o agente `escalation_agent` é acionado uma única vez com o fato da falha,
+  o log de erro completo e a instrução de corrigir a issue. Se o sync falhar de
+  novo, a esteira encerra com código de saída 1 (evento
+  `sync_circuit_breaker_fatal`: issue, board, erro, tentativas, agente).
+- O agente dedicado precisa estar em `agents` (com contexto em
+  `contexts/<plataforma>/<agente>.md`); sem ele a escalação encerra a esteira.
+- A descida sempre traz o estado completo da plataforma (sem modo parcial) e
+  relação de bloqueio já existente é tratada como sucesso idempotente.
 
 ## Rate Limit (GitHub)
 

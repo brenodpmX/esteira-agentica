@@ -5,11 +5,11 @@ from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
 from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
 from src.core.change_queue import ChangeQueue, QUEUE_FILE
-from src.core.sync import (sync_remote, detect_local_changes, apply_changes,
-                           RemediationFailStop)
+from src.core.sync import sync_remote, detect_local_changes, apply_changes
+from src.core.sync_circuit_breaker import SyncCircuitBreaker, SyncCircuitBreakerFatal
 from src.core.version import VERSION
 from src.core.agent import (AgentParams, build_prompt, build_continuation_prompt,
-                            build_remediation_prompt, resolve_agent_id,
+                            build_sync_escalation_prompt, resolve_agent_id,
                             resolve_repo_id, resolve_work_dir)
 from src.core.context_generator import generate_context, ensure_steering_integrity, STEERING_FILE
 from src.core import composition
@@ -280,7 +280,10 @@ def detect_local_all(config: dict) -> bool:
     """
     queue = ChangeQueue()
     before = queue.size()
+    breaker = SyncCircuitBreaker(config)
     for board_id in get_board_ids(config):
+        if breaker.platform_blocked(breaker.platform_of(board_id)):
+            continue
         detect_local_changes(board_id, queue)
     return queue.size() > before
 
@@ -297,6 +300,9 @@ def sync_remote_board(board_id: str, config: dict = None) -> bool:
     """
     global board
     queue = ChangeQueue()
+    breaker = SyncCircuitBreaker(config)
+    if breaker.platform_blocked(breaker.platform_of(board_id)):
+        return False
     try:
         sync_remote(board_id, board, queue)
         # Remoção externa (#310 / RF-13 / CT-22): observa pendências que
@@ -341,16 +347,21 @@ def process_queue(config: dict):
         return []
 
 
+def queue_has_actionable(config: dict, queue: ChangeQueue) -> bool:
+    breaker = SyncCircuitBreaker(config)
+    for item in queue.items():
+        if breaker.platform_blocked(breaker.platform_of(item.board)):
+            continue
+        if breaker.issue_blocked(item.board, item.id or item.identifier):
+            continue
+        return True
+    return False
+
+
 # Sentinela de retorno do keep_task: distingue "nada a fazer" (None → avança
 # para o próximo board) de "fiz um auto-advance" (AUTO_ADVANCED → reinicia o
 # loop, pois há trabalho a caminho após o sync propagar a movimentação).
 AUTO_ADVANCED = object()
-
-
-# ── Remediação (E4) ───────────────────────────────────────────────────────────
-# Freio: cada alvo (board, issue) só é remediado UMA vez por episódio. Se após a
-# remediação o mesmo alvo falhar de novo com erro corrigível, é fail-stop.
-_remediated_targets: set[tuple[str, str]] = set()
 
 
 def _build_task_for_target(config: dict, board_id: str, issue_id: str) -> dict | None:
@@ -381,51 +392,40 @@ def _build_task_for_target(config: dict, board_id: str, issue_id: str) -> dict |
     }
 
 
-def remediate_pending(config: dict, signals: list) -> None:
-    """Orquestra a remediação única (E4) dos sinais devolvidos pela sync.
+def _sync_fatal(esc, reason: str) -> NoReturn:
+    log.error(
+        "SyncCircuitBreaker",
+        f"[{esc.board_id}] #{esc.issue_id} escalação impossível - encerrando a "
+        f"esteira: {reason}",
+        event="sync_circuit_breaker_fatal", board=esc.board_id,
+        issue=esc.issue_id, erro=reason, tentativas=esc.blocks,
+        agente_que_corrigiu=esc.agent_id,
+    )
+    raise SyncCircuitBreakerFatal(
+        esc.board_id, esc.issue_id, reason, esc.blocks, esc.agent_id
+    )
 
-    Para cada alvo:
-    - se já foi remediado neste episódio → fail-stop (log console+arquivo + PARA);
-    - senão, marca o alvo, monta o task e chama o agente UMA vez com o prompt de
-      remediação (que retoma a sessão da (issue, coluna) e recebe os erros).
-    O re-sync acontece naturalmente no próximo ciclo do loop (detect_local →
-    process_queue); se o mesmo alvo reincidir, cai no fail-stop acima.
-    """
-    for sig in signals or []:
-        target = (sig.board_id, str(sig.issue_id))
-        if target in _remediated_targets:
-            _remediation_fail_stop(sig)
-        _remediated_targets.add(target)
 
-        task = _build_task_for_target(config, sig.board_id, sig.issue_id)
+def escalate_pending(config: dict, escalations: list) -> None:
+    for esc in escalations or []:
+        configured = any(
+            esc.agent_id in platform_agents
+            for platform_agents in config.get("agents", {}).values()
+        )
+        if not configured:
+            _sync_fatal(esc, f"agente dedicado '{esc.agent_id}' não configurado em 'agents'")
+
+        task = _build_task_for_target(config, esc.board_id, esc.issue_id)
         if not task:
-            _remediation_fail_stop(sig)
+            _sync_fatal(esc, "issue ou coluna não resolvível para a escalação")
 
         log.warning(
-            "Remediação",
-            f"[{sig.board_id}] #{sig.issue_id} sync falhou (corrigível) - "
-            f"acionando remediação única do agente",
-            board_id=sig.board_id, issue_id=sig.issue_id, reason=sig.reason,
+            "SyncCircuitBreaker",
+            f"[{esc.board_id}] #{esc.issue_id} sync bloqueado - acionando o agente "
+            f"dedicado '{esc.agent_id}'",
+            board=esc.board_id, issue=esc.issue_id, agente_dedicado=esc.agent_id,
         )
-        call_agent(config, task, remediation_errors=sig.reason)
-
-
-def _remediation_fail_stop(sig) -> NoReturn:
-    """Registra (console+arquivo via logger) e dispara o fail-stop controlado.
-
-    Nunca retorna: sempre levanta RemediationFailStop. A anotação `NoReturn`
-    torna explícito (para leitores e type-checkers) que o fluxo não continua
-    após uma chamada — por isso `remediate_pending` pode seguir assumindo que
-    `task` é válido.
-    """
-    log.error(
-        "Remediação",
-        f"[{sig.board_id}] #{sig.issue_id} remediação falhou - PARANDO a esteira "
-        f"(fail-stop): {sig.reason}",
-        event="remediation_fail_stop", board_id=sig.board_id,
-        issue_id=sig.issue_id, reason=sig.reason,
-    )
-    raise RemediationFailStop(sig.board_id, str(sig.issue_id), sig.reason)
+        call_agent(config, task, escalation_errors=esc.error_log, agent_id=esc.agent_id)
 
 
 # Cache de cooldown de reexecução.
@@ -649,7 +649,8 @@ def _auto_advance(board_id: str, issue: dict, target_col: str, snap: Snapshot):
     log.info("KeepTask", f"[{board_id}] auto-advance #{issue['id']}: {old_col} → {target_col}")
 
 
-def call_agent(config: dict, task: dict | None, remediation_errors: str | None = None):
+def call_agent(config: dict, task: dict | None, escalation_errors: str | None = None,
+               agent_id: str | None = None):
     if not task:
         return
     board_id = task["board_id"]
@@ -657,7 +658,7 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
     col = task["column"]
     issue = task["issue"]
 
-    agent_id = resolve_agent_id(col, issue)
+    agent_id = agent_id or resolve_agent_id(col, issue)
     # Resolver plataforma e config do agente
     agents_cfg = config.get("agents", {})
     platform = None
@@ -679,13 +680,12 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
     repo_id = resolve_repo_id(config, board_cfg)
     work_dir = resolve_work_dir(config, board_cfg)
 
-    prompt = build_prompt(config, task)
-    # E10: prompt de continuação (usado pelo adapter quando há sessão confirmada).
-    continuation_prompt = build_continuation_prompt(config, task)
-    # E4: prompt de remediação (com os erros de sync), quando solicitado.
-    remediation_prompt = None
-    if remediation_errors:
-        remediation_prompt = build_remediation_prompt(config, task, remediation_errors)
+    if escalation_errors:
+        prompt = build_sync_escalation_prompt(config, task, escalation_errors)
+        continuation_prompt = None
+    else:
+        prompt = build_prompt(config, task)
+        continuation_prompt = build_continuation_prompt(config, task)
 
     # Persona do agente (P1.4): injetada por código via AgentParams.context.
     # A persona vive em contexts/<platform>/<agent_id>.md (NÃO vai para steering).
@@ -715,7 +715,6 @@ def call_agent(config: dict, task: dict | None, remediation_errors: str | None =
         repo_id=repo_id,
         context=persona or None,
         continuation_prompt=continuation_prompt,
-        remediation_prompt=remediation_prompt,
         col_name=col.get("name", col_id),
         title=title,
         participation_intent=issue.get("participation_intent"),
@@ -1145,20 +1144,14 @@ def main():
                 remote_changes = sync_remote_board(current_board, config)
                 had_changes = local_changes or remote_changes
 
-                # Fase 2: Processamento global da fila
-                remediation = process_queue(config)
-                if remediation:
-                    # E4: sync falhou com erro corrigível → remediação única.
-                    remediate_pending(config, remediation)
+                escalations = process_queue(config)
+                if escalations:
+                    escalate_pending(config, escalations)
                     index = 0
                     continue
-                # Fila processada sem pendências de validação: libera o freio de
-                # remediação para episódios futuros.
-                _remediated_targets.clear()
 
-                # Se houve mudanças ou fila ainda tem itens, volta ao início
                 queue = ChangeQueue()
-                if had_changes or queue.size() > 0:
+                if had_changes or (queue.size() > 0 and queue_has_actionable(config, queue)):
                     index = 0
                     continue
 
@@ -1193,15 +1186,8 @@ def main():
             except _Shutdown:
                 log.info("Pipe", "Interrompido (SIGTERM) - encerrando de forma limpa")
                 running = False
-            except RemediationFailStop as e:
-                # E4: remediação única falhou → fail-stop controlado (para a esteira).
-                log.error(
-                    "Pipe",
-                    f"[{e.board_id}] #{e.issue_id} fail-stop de remediação - "
-                    f"encerrando a esteira: {e.reason}",
-                    event="remediation_fail_stop",
-                )
-                running = False
+            except SyncCircuitBreakerFatal:
+                raise SystemExit(1)
             except SnapshotIntegrityError as e:
                 log.error(
                     "Pipe",

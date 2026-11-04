@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import traceback
 from dataclasses import asdict, dataclass, fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from src.core.config import resolve_max_attempts
 from src.core.dead_letter import DeadLetterEntry, DeadLetterQueue, sanitize_reason
 from src.core.log import log
 from src.core.snapshot import BOARDS_DIR, Snapshot
+from src.core.sync_circuit_breaker import SyncCircuitBreaker, SyncEscalation
 
 PIPE_DIR = Path(".pipe")
 ORPHAN_FILE = PIPE_DIR / "orphanFiles.json"
@@ -52,32 +54,8 @@ _NEXT_STEP = {
     "definitivo": "item não será retentado; revisar manualmente e, se aplicável, recriar a entrada",
     "definitivo_cli": "erro determinístico de uso da CLI gh (flag/argumento/subcomando inválido); reprocessar não resolve — corrigir a construção do comando no engine",
     "transitorio_esgotado": "limite de tentativas esgotado; verificar causa raiz antes de reenviar manualmente",
-    "corrigivel_pelo_agente": "remediação única falhou; revisar os erros de validação do board e as anotações/comandos do -body.md",
+    "corrigivel_pelo_agente": "revisar os erros de validação do board e as anotações/comandos do -body.md",
 }
-
-
-@dataclass
-class RemediationSignal:
-    """Sinal de que um item precisa de remediação pelo agente (E4).
-
-    A sync NÃO chama o agente: coleta estes sinais e os devolve ao loop do
-    `__main__`, que orquestra a remediação única + re-sync + fail-stop.
-    """
-    board_id: str
-    issue_id: str
-    event: str
-    reason: str
-
-
-class RemediationFailStop(Exception):
-    """Fail-stop controlado (E4): remediação única falhou → PARA a esteira."""
-    def __init__(self, board_id: str, issue_id: str, reason: str):
-        self.board_id = board_id
-        self.issue_id = issue_id
-        self.reason = reason
-        super().__init__(
-            f"[{board_id}] #{issue_id} remediação falhou (fail-stop): {reason}"
-        )
 
 
 def classify_error(exc: Exception) -> str:
@@ -474,21 +452,15 @@ def _write_state_from_cmds(issue_data: dict, cmds) -> None:
     issue_data["archived"] = bool(cmds.archive)
 
 
-def _write_state_from_issue(issue_data: dict, issue, fullsync: bool) -> None:
-    """Grava no snapshot o estado real vindo do board (fluxo down).
-
-    Sempre grava labels/parent/children/archived/state (chamada única).
-    blocked_by/blocks só são sobrescritos em fullsync (senão preserva o que já
-    havia no snapshot, pois deps não vêm na chamada única).
-    """
+def _write_state_from_issue(issue_data: dict, issue) -> None:
+    """Grava no snapshot o estado real e completo vindo do board (fluxo down)."""
     issue_data["labels"] = list(issue.labels or [])
     issue_data["parent"] = issue.parent
     issue_data["children"] = list(issue.children or [])
     issue_data["archived"] = bool(getattr(issue, "archived", False))
     issue_data["state"] = (issue.state or "open")
-    if fullsync:
-        issue_data["blocked_by"] = list(issue.blocked_by or [])
-        issue_data["blocks"] = list(issue.blocks or [])
+    issue_data["blocked_by"] = list(issue.blocked_by or [])
+    issue_data["blocks"] = list(issue.blocks or [])
 
 
 def _find_snapshot_issue(target_id: str, allowed_boards: list[str] | None = None) -> tuple[str, dict] | None:
@@ -733,7 +705,7 @@ def _absence_confirmed(board_obj: Board, board_id: str, issue_id: str) -> bool:
     destrói estado a partir de sinal duvidoso).
     """
     try:
-        probe = board_obj.get_issue(board_id, issue_id, fullsync=False)
+        probe = board_obj.get_issue(board_id, issue_id)
     except Exception as e:  # noqa: BLE001 - qualquer falha de leitura => não poda
         log.warning("Sync", f"[{board_id}] #{issue_id} ausência não confirmável "
                     f"(erro ao reconsultar: {e}); delete-down suprimido",
@@ -1056,37 +1028,47 @@ def detect_local_changes(board_id: str, queue: ChangeQueue):
 # apply_changes - persiste mudanças da fila
 # ══════════════════════════════════════════════════════════════════════════════
 
-def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
+def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None,
+                  breaker: SyncCircuitBreaker = None):
     """Consome toda a fila e aplica mudanças. Para no primeiro PenaltyException.
 
     Erros não classificados como rate limit nunca interrompem o processamento
-    dos demais itens (evita head-of-line blocking, ver incidente #97):
-    - "definitivo": item sai da fila já na primeira falha.
-    - "corrigivel_pelo_agente" (E4): validação do board (422); item sai da fila
-      SEM retry cego e é reportado como RemediationSignal ao loop (que orquestra
-      a remediação única).
-    - "transitorio": item volta ao fim da fila com attempts incrementado, até
-      esgotar o limite configurado (sync.max_attempts); aí também sai da fila.
+    dos demais itens (evita head-of-line blocking, ver incidente #97). Falhas de
+    sincronismo (transitórias e corrigíveis pelo agente) são contadas pelo
+    circuit-breaker de sincronismo (#309), dono único do bloqueio, da escalação
+    ao agente dedicado e do fail-stop:
+    - issue ou plataforma bloqueada: o item permanece na fila, sem tentativa.
+    - "definitivo": item sai da fila já na primeira falha (dead-letter).
+    - "corrigivel_pelo_agente": escalação imediata ao agente dedicado.
+    - "transitorio": cada falha é contada; ao bloquear/escalar o item é retido,
+      senão volta ao fim da fila até esgotar sync.max_attempts (dead-letter).
     Cada item é tentado no máximo uma vez por chamada de apply_changes.
 
-    Retorna a lista de RemediationSignal coletados (vazia se nenhum).
+    Retorna a lista de SyncEscalation coletadas (vazia se nenhuma). Levanta
+    SyncCircuitBreakerFatal (do módulo do circuit-breaker) se o sync falhar de novo após a correção do agente.
     """
     config = config or {}
     max_attempts = resolve_max_attempts(config)
+    breaker = breaker or SyncCircuitBreaker(config)
     tried_targets = []
-    remediation_signals: list[RemediationSignal] = []
+    escalations: list[SyncEscalation] = []
 
     while True:
         item = queue.getNext()
         if not item:
-            return remediation_signals
+            return escalations
         if any(item.same_target(t) for t in tried_targets):
-            # Já tentamos este alvo nesta chamada (requeue ao fim da fila) —
-            # não reprocessar no mesmo ciclo, evita loop infinito.
-            return remediation_signals
+            return escalations
         tried_targets.append(item)
 
         board_id = item.board
+        issue_key = item.id or item.identifier
+        platform = breaker.platform_of(board_id)
+
+        if breaker.platform_blocked(platform) or breaker.issue_blocked(board_id, issue_key):
+            queue.requeue(item)
+            continue
+
         try:
             if item.event == SyncEvent.CREATE_UP.value:
                 _apply_create_up(board_id, item, board_obj, queue, config)
@@ -1102,27 +1084,12 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
                 _apply_delete_down(board_id, item, board_obj, queue)
 
             queue.remove(item.uuid)
+            breaker.record_success(board_id, issue_key, platform)
         except PenaltyException:
             log.warning("Sync", f"[{board_id}] Penalty - abandonando apply_changes")
-            return remediation_signals
+            return escalations
         except Exception as exc:
             category = classify_error(exc)
-            if category == "corrigivel_pelo_agente":
-                # E4: NÃO entra no retry cego nem vai para dead-letter agora.
-                # Sai da fila e sinaliza "precisa remediação" ao loop.
-                log.warning(
-                    "Sync",
-                    f"[{board_id}] #{item.id} erro corrigível pelo agente em "
-                    f"{item.event} - sinalizando remediação: {exc}",
-                    board_id=board_id, issue_id=item.id, event=item.event,
-                    reason=sanitize_reason(str(exc)), category=category,
-                )
-                remediation_signals.append(RemediationSignal(
-                    board_id=board_id, issue_id=str(item.id),
-                    event=item.event, reason=sanitize_reason(str(exc)),
-                ))
-                queue.remove(item.uuid)
-                continue
             if category in ("definitivo", "definitivo_cli"):
                 log.warning(
                     "Sync",
@@ -1134,9 +1101,22 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
                 )
                 _isolate_in_dead_letter(board_id, item, category, exc)
                 queue.remove(item.uuid)
+                breaker.release(board_id, issue_key)
                 continue
 
-            # transitorio
+            escalation = breaker.record_failure(
+                board_id, issue_key, sanitize_reason(str(exc)),
+                correctable=(category == "corrigivel_pelo_agente"),
+                platform=platform,
+                error_log="".join(traceback.format_exception(exc)),
+            )
+            if escalation or breaker.issue_blocked(board_id, issue_key):
+                if escalation:
+                    escalations.append(escalation)
+                item.attempts = 0
+                queue.requeue(item)
+                continue
+
             item.attempts += 1
             if item.attempts >= max_attempts:
                 category = "transitorio_esgotado"
@@ -1150,6 +1130,7 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None):
                 )
                 _isolate_in_dead_letter(board_id, item, category, exc)
                 queue.remove(item.uuid)
+                breaker.release(board_id, issue_key)
                 continue
 
             log.warning(
@@ -1268,7 +1249,7 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
                        config: dict = None):
     """Cria arquivos locais a partir do issue no board."""
     snap = Snapshot(board_id).load()
-    issue = board_obj.get_issue(board_id, item.id, fullsync=item.fullsync)
+    issue = board_obj.get_issue(board_id, item.id)
     if issue is None:
         # Issue desapareceu do repositório entre o enfileiramento e a aplicação.
         log.warning("Sync", f"[{board_id}] #{item.id} create-down ignorado - "
@@ -1336,13 +1317,11 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
         "status": "ok",
         "participation_intent": intent or ORIGIN,
     }
-    _write_state_from_issue(new_data, issue, fullsync=item.fullsync)
+    _write_state_from_issue(new_data, issue)
     snap.issues.append(new_data)
     snap.save()
 
-    # Gatilho de par recíproco: alvos de deps recém-descobertas no board.
-    # Só em fullsync (única situação em que blocked_by/blocks vêm preenchidos).
-    if queue is not None and item.fullsync:
+    if queue is not None:
         deltas = _deps_deltas_from_snapshot(issue, _empty_state())
         _trigger_reciprocal_downs(item.id, deltas, queue)
 
@@ -1363,15 +1342,9 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     lines = content.strip().splitlines()
     title = lines[0].lstrip("# ").strip() if lines else ""
     raw_body = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
-    # Separar comandos do body real
     body, cmds = split_body(raw_body)
     cmds = sanitize_relations(item.id, cmds)
 
-    # Remédio 1: se a issue está sendo arquivada (comando /archive no body OU
-    # coluna de destino com on_in:[archive]), remove TODOS os bloqueios antes
-    # de arquivar. A remoção produz deltas 'removed' em blocked_by/blocks e o
-    # _trigger_reciprocal_downs (ao final desta função) enfileira um fullsync
-    # (change-down) para cada issue reciprocamente vinculada — desbloqueando-as.
     dest_col = _col_from_path(body_path, board_id)
     if (cmds.archive or _column_archives(board_id, dest_col, config)) \
             and (cmds.blocked_by or cmds.blocks):
@@ -1381,7 +1354,6 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
         cmds.blocked_by = []
         cmds.blocks = []
 
-    # Atualizar body/title no board (body limpo, sem o bloco @---)
     try:
         board_obj.update_issue(board_id, item.id, title=title, body=body)
     except Exception as e:
@@ -1393,21 +1365,19 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
             return
         raise
 
-    # Aplicar comandos como estado autoritativo, comparando contra o estado
-    # conhecido (snapshot): só chama o setter do atributo que realmente mudou,
-    # e passa o estado conhecido ao setter para evitar GETs redundantes.
     known = _known_state(issue_data)
     cmds = _filter_suspended_cross_board_parent(board_id, item.id, cmds, config)
-    deltas = board_obj.apply_commands(board_id, item.id, cmds, known=known)
+    try:
+        deltas = board_obj.apply_commands(board_id, item.id, cmds, known=known)
+    except Exception:
+        issue_data["body_path"] = str(body_path)
+        issue_data["body_mtime"] = str(body_path.stat().st_mtime)
+        snap.save()
+        raise
 
-    # Reconciliação imediata pós-vínculo (#310 / RF-07): quando um vínculo
-    # pai/filho ENTRE QUADROS DISTINTOS é criado neste change-up, a plataforma
-    # pode ter propagado a filha para o quadro do pai. Reconcilia a presença
-    # propagada ANTES de prosseguir, sem jamais tocar a relação pai/filho (RN-03).
     _reconcile_links_after_apply(board_id, item.id, deltas, board_obj, config,
                                  labels=cmds.all_labels())
 
-    # Verificar mudança de coluna
     current_col = _col_from_path(body_path, board_id)
     old_col = issue_data.get("column")
     if current_col != old_col:
@@ -1415,7 +1385,6 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
         _fire_column_events(board_id, item.id, board_obj, config, old_col, current_col)
         issue_data["column"] = current_col
 
-    # Verificar addcomment
     slug = body_path.stem.removesuffix("-body")
     ac_file = body_path.parent / f"{slug}-addcomment.md"
     if ac_file.exists():
@@ -1424,7 +1393,6 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
             board_obj.add_comment(board_id, item.id, comment)
             ac_file.write_text("", encoding="utf-8")
 
-    # Atualizar history
     comments = board_obj.list_comments(board_id, item.id)
     history_file = body_path.parent / f"{slug}-history.md"
     history_file.write_text(_format_history(comments), encoding="utf-8")
@@ -1433,15 +1401,12 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     log.info("Sync", f"[{board_id}] change-up #{item.id} {col_label}",
              issue_id=item.id, column=current_col, from_column=old_col)
 
-    # Atualizar snapshot
     issue_data["body_path"] = str(body_path)
     issue_data["body_mtime"] = str(body_path.stat().st_mtime)
     issue_data["status"] = "ok"
-    # Gravar o estado desejado como conhecido ANTES de disparar o gatilho.
     _write_state_from_cmds(issue_data, cmds)
     snap.save()
 
-    # Gatilho de par recíproco sobre relações adicionadas/removidas.
     if queue is not None and deltas:
         _trigger_reciprocal_downs(item.id, deltas, queue)
 
@@ -1455,18 +1420,12 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
         return
 
     old_col = issue_data.get("column")
-    issue = board_obj.get_issue(board_id, item.id, fullsync=item.fullsync)
+    issue = board_obj.get_issue(board_id, item.id)
     if issue is None:
         # Issue desapareceu do repositório entre o enfileiramento e a aplicação.
         log.warning("Sync", f"[{board_id}] #{item.id} change-down ignorado - "
                     f"issue inexistente no repositório")
         return
-    # Sem fullsync, deps (blocked_by/blocks) não vêm na chamada única. Para não
-    # apagar o bloco de deps ao reescrever o body, preserva o que o snapshot já
-    # conhece sobre as dependências desta issue.
-    if not item.fullsync:
-        issue.blocked_by = list(issue_data.get("blocked_by") or [])
-        issue.blocks = list(issue_data.get("blocks") or [])
     # Coluna já vem na chamada única de get_issue (projectItems/Status).
     remote_col = issue.column or ""
 
@@ -1536,10 +1495,8 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     log.trace("Sync", f"[{board_id}] change-down #{item.id} -> {current_col}",
              issue_id=item.id, column=current_col)
 
-    # Gatilho de par recíproco: calcula deltas de deps ANTES de sobrescrever o
-    # estado conhecido no snapshot. Só em fullsync (deps preenchidas).
     deps_deltas = None
-    if queue is not None and item.fullsync:
+    if queue is not None:
         deps_deltas = _deps_deltas_from_snapshot(issue, issue_data)
 
     # Atualizar snapshot
@@ -1549,7 +1506,7 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     issue_data["updated_at"] = issue.updated_at
     issue_data["status"] = "ok"
     # Gravar o estado real do board como conhecido ANTES de disparar o gatilho.
-    _write_state_from_issue(issue_data, issue, fullsync=item.fullsync)
+    _write_state_from_issue(issue_data, issue)
     snap.save()
 
     if deps_deltas:

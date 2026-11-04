@@ -101,6 +101,10 @@ class ChangeQueue:
         """Retorna a quantidade de itens na fila."""
         return len(self._read())
 
+    def items(self) -> list[ChangeItem]:
+        """Retorna uma cópia dos itens pendentes, do mais antigo ao mais novo."""
+        return self._read()
+
     def has_board(self, board_id: str) -> bool:
         """Retorna True se há pelo menos um item para o board informado."""
         return any(item.board == board_id for item in self._read())

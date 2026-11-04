@@ -126,12 +126,9 @@ class BoardPort(ABC):
         pass
 
     @abstractmethod
-    def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
-        """Busca uma issue específica.
-
-        Quando fullsync=True, também traz dependencies (blocked_by/blocks),
-        que exigem chamadas REST extras não disponíveis no GraphQL.
-        """
+    def get_issue(self, board_id: str, issue_id: str) -> Issue:
+        """Busca uma issue específica com o estado completo, incluindo
+        dependencies (blocked_by/blocks)."""
         pass
 
     @abstractmethod
@@ -295,8 +292,8 @@ class Board:
     def list_issues(self, board_id: str) -> list[Issue]:
         return self._port.list_issues(board_id)
 
-    def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
-        return self._port.get_issue(board_id, issue_id, fullsync)
+    def get_issue(self, board_id: str, issue_id: str) -> Issue:
+        return self._port.get_issue(board_id, issue_id)
 
     def create_issue(self, board_id: str, title: str, body: str, column: str) -> Issue:
         return self._port.create_issue(board_id, title, body, column)
