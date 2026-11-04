@@ -38,6 +38,14 @@ registro:               # opcional: retenção PRÓPRIA dos registros de execuç
                         # log.ttl. Ausente = nenhum expurgo automático. Ver
                         # "Execução de Agentes".
 
+agent_timeout_seg: 3600  # opcional: timeout máximo (segundos, inteiro > 0) de
+                        # UMA execução do agente (kiro-cli). Ausente = default
+                        # 3600 (1h), preservando o comportamento atual.
+                        # Aplicado ao subprocess.run e refletido na mensagem
+                        # [TIMEOUT] em caso de estouro. Valor inválido
+                        # (<= 0, não inteiro) é rejeitado na validação do
+                        # pipe.yml (ConfigError). Ver "Execução de Agentes".
+
 retry:                  # opcional: retry inline SEGURO (só p/ DEFINITE_NOT_STARTED,
   max_tentativas: 3     # ex.: kiro-cli ausente no PATH). NÃO se aplica a resultado
   backoff_inicial_seg: 30  # ambíguo (UNKNOWN_OUTCOME), que é fail-closed. Ausente =
@@ -408,6 +416,22 @@ O que muda no comportamento para quem opera:
 
 Contrato técnico completo e tabela de chaves:
 [`doc/architecture/composicao-camadas-prompt-contexto/contrato.md`](doc/architecture/composicao-camadas-prompt-contexto/contrato.md).
+
+### Timeout de execução (`agent_timeout_seg`)
+
+O timeout máximo de **uma** execução do agente (kiro-cli) é configurável por
+pipe via a chave opcional `agent_timeout_seg`, na raiz do `pipe.yml` (inteiro
+`> 0`, em segundos). Ausente ⇒ default `3600` (1h), o mesmo valor que já era
+fixo no motor — um `pipe.yml` sem a chave mantém o comportamento atual sem
+qualquer mudança.
+
+O valor configurado é usado tanto no `timeout` do `subprocess.run` que
+executa o agente quanto na mensagem registrada quando o tempo se esgota
+(`[TIMEOUT] Agente excedeu Ns`), que agora reflete o valor efetivamente em
+vigor — não mais um número fixo. Valor inválido (`<= 0`, não inteiro,
+booleano) é rejeitado na validação do `pipe.yml` com `ConfigError` citando a
+chave `agent_timeout_seg`, antes de qualquer execução de agente. O valor é
+único e global ao pipe — não há timeout diferente por board, coluna ou etapa.
 
 ### gitevents (controle de branches)
 

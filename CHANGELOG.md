@@ -2,6 +2,23 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.27.0] - 2026-11-04
+
+### Adicionado
+
+- **Timeout de execução do agente configurável via `pipe.yml` (#337)**: nova
+  chave opcional na raiz, `agent_timeout_seg` (inteiro `> 0`), substitui a
+  constante hardcoded `_TIMEOUT = 3600` que antes era global a todos os pipes
+  em `src/adapters/kiro_cli_agent.py`. O valor validado é propagado via
+  `AgentParams.timeout_seg` e usado tanto no `timeout` passado ao
+  `subprocess.run` da execução do agente quanto na mensagem
+  `[TIMEOUT] Agente excedeu Ns`, que agora reflete o valor efetivamente
+  configurado. Chave ausente aplica o default `3600` (1h), preservando o
+  comportamento atual sem exigir mudança em nenhum `pipe.yml` existente.
+  Valor inválido (`<= 0`, não inteiro, booleano) é rejeitado na validação do
+  `pipe.yml` com `ConfigError` citando `agent_timeout_seg`, antes de qualquer
+  execução de agente.
+
 ## [1.26.0] - 2026-11-04
 
 ### Adicionado
