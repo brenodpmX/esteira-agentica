@@ -1,6 +1,6 @@
 from src.core.log import log
 from src.core.config import (check_config as validate_config, ConfigError,
-                             SSH_KEY_ENV, CONTEXTS_DIR)
+                             SSH_KEY_ENV, CONTEXTS_DIR, resolve_agent_timeout)
 from src.core.preflight import preflight
 from src.core.board import Board, PenaltyException, BoardAccessError
 from src.core.snapshot import Snapshot, SnapshotGuard, SnapshotIntegrityError
@@ -719,6 +719,7 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
         title=title,
         participation_intent=issue.get("participation_intent"),
         origin_board=board_id,
+        timeout_seg=resolve_agent_timeout(config),
     )
 
     adapter = KiroCliAgent()

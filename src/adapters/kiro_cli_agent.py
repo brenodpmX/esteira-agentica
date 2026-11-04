@@ -18,9 +18,6 @@ from src.core.execution import (
 
 _tz = timezone(timedelta(hours=-3))
 
-# Timeout máximo de uma execução do agente (segundos).
-_TIMEOUT = 3600
-
 # Remove sequências ANSI/escape do output capturado.
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\].*?(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 
@@ -257,12 +254,12 @@ class KiroCliAgent(AgentPort):
                 cwd=str(work_dir),
                 capture_output=True,
                 text=True,
-                timeout=_TIMEOUT,
+                timeout=params.timeout_seg,
                 env=env,
             )
         except subprocess.TimeoutExpired:
             self._last_consumo = Consumo.indisponivel(origem=params.platform)
-            return f"[TIMEOUT] Agente excedeu {_TIMEOUT}s"
+            return f"[TIMEOUT] Agente excedeu {params.timeout_seg}s"
         except FileNotFoundError:
             self._last_consumo = Consumo.indisponivel(origem=params.platform)
             return "[ERRO] kiro-cli não encontrado no PATH"

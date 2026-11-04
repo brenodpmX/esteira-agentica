@@ -335,6 +335,23 @@ def resolve_retry(config: dict) -> RetryConfig:
     )
 
 
+DEFAULT_AGENT_TIMEOUT_SEG = 3600
+
+
+def validate_agent_timeout(config: dict) -> None:
+    if "agent_timeout_seg" not in config:
+        return
+    value = config["agent_timeout_seg"]
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ConfigError(
+            f"agent_timeout_seg: deve ser inteiro > 0 (valor recebido: {value!r})"
+        )
+
+
+def resolve_agent_timeout(config: dict) -> int:
+    return config.get("agent_timeout_seg", DEFAULT_AGENT_TIMEOUT_SEG)
+
+
 # ── registro.* (issue #307) ───────────────────────────────────────────────────
 # Retenção PRÓPRIA dos registros de execução, independente do TTL do log
 # detalhado (`log.ttl`). São dois controles distintos que coexistem.
@@ -469,6 +486,7 @@ def check_config() -> dict:
     validate_sync_circuit_breaker(config)
     validate_retry(config)
     validate_registro(config)
+    validate_agent_timeout(config)
     validate_safety(config)
 
     # agent_circuit_break (#306): bloco opcional de RAIZ (fora de `boards`, que
