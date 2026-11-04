@@ -922,16 +922,10 @@ class GitHubBoardAdapter(BoardPort):
 
         return issues
 
-    def get_issue(self, board_id: str, issue_id: str, fullsync: bool = False) -> Issue:
+    def get_issue(self, board_id: str, issue_id: str) -> Issue:
         self._penalty_check()
-        log.info("GitHub", f"{self._tp}#{issue_id} - Buscando issue"
-                 + (" (fullsync)" if fullsync else ""),
-                 operation="get_issue", board_id=board_id, issue_id=issue_id,
-                 fullsync=fullsync)
-        # Chamada única: propriedades + labels + parent + children + status
-        # (coluna) + isArchived do item do project. Dependencies (blocked_by/
-        # blocks) NÃO existem no GraphQL (só REST) e só são buscadas quando
-        # fullsync=True, via _get_dependencies (2 chamadas REST).
+        log.info("GitHub", f"{self._tp}#{issue_id} - Buscando issue",
+                 operation="get_issue", board_id=board_id, issue_id=issue_id)
         data = self._gql(
             "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){"
             "number title body state updatedAt "
@@ -977,10 +971,7 @@ class GitHubBoardAdapter(BoardPort):
                     break
             break
 
-        # Dependencies só no fullsync (2 chamadas REST extras).
-        blocked_by, blocks = ([], [])
-        if fullsync:
-            blocked_by, blocks = self._get_dependencies(issue_id)
+        blocked_by, blocks = self._get_dependencies(issue_id)
 
         return Issue(
             id=str(issue["number"]),
@@ -1500,6 +1491,28 @@ query($owner:String!,$repo:String!,$number:Int!){
             log.warning("GitHub", f"#{issue_number} - falha ao listar blocking: {e}")
         return blocked_by, blocks
 
+    @staticmethod
+    def _is_existing_dependency_error(exc: Exception) -> bool:
+        low = str(exc).lower()
+        if "already been taken" in low:
+            return True
+        return "already" in low and ("depend" in low or "block" in low)
+
+    def _add_dependency(self, path: str, blocker_db_id: int, blocked_id: str,
+                        blocker_id: str) -> None:
+        try:
+            self._api("POST", path, issue_id=blocker_db_id)
+        except PenaltyException:
+            raise
+        except Exception as exc:
+            if not self._is_existing_dependency_error(exc):
+                raise
+            log.info("GitHub",
+                     f"{self._tp}#{blocked_id} - relação de bloqueio com "
+                     f"#{blocker_id} já existe - tratada como sucesso",
+                     operation="add_dependency", issue_id=blocked_id,
+                     blocker_id=blocker_id, idempotent=True)
+
     def set_blocked_by(self, board_id: str, issue_id: str, blocker_ids: list[str],
                        known_current: list[str] | None = None) -> None:
         """SET das issues que bloqueiam esta (blocked_by).
@@ -1519,8 +1532,9 @@ query($owner:String!,$repo:String!,$number:Int!){
         for b in desired - current:
             db = self._get_issue_db_id(b)
             if db:
-                self._api("POST", f"/repos/{owner}/{repo}/issues/{issue_id}/dependencies/blocked_by",
-                          issue_id=db)
+                self._add_dependency(
+                    f"/repos/{owner}/{repo}/issues/{issue_id}/dependencies/blocked_by",
+                    db, issue_id, b)
         for b in current - desired:
             db = self._get_issue_db_id(b)
             if db:
@@ -1555,8 +1569,9 @@ query($owner:String!,$repo:String!,$number:Int!){
         log.info("GitHub", f"{self._tp}#{issue_id} - blocks {sorted(desired)}",
                  operation="set_blocks", board_id=board_id, issue_id=issue_id)
         for n in desired - current:
-            self._api("POST", f"/repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by",
-                      issue_id=this_db)
+            self._add_dependency(
+                f"/repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by",
+                this_db, n, issue_id)
         for n in current - desired:
             self._gh("api", "-X", "DELETE",
                      "-H", "Accept: application/vnd.github+json",

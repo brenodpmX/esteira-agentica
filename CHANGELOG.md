@@ -2,6 +2,48 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.26.0] - 2026-11-04
+
+### Adicionado
+
+- **Circuit-breaker de sincronismo (#309)** em `src/core/sync_circuit_breaker.py`.
+  Conta falhas de sincronismo com a plataforma (exceto rate limit/penalty) em
+  dois níveis: por issue (`issue.max_failures` falhas consecutivas bloqueiam a
+  issue por `issue.block_duration` s, retendo suas mudanças na fila) e por
+  plataforma (`platform.max_blocked_issues` issues distintas bloqueadas em
+  `platform.block_window` s bloqueiam a plataforma por `platform.block_duration`
+  s; a etapa de sincronismo dela é pulada sem parar a esteira). Ao expirar o
+  bloqueio entra em meio-aberto: `half_open.success_threshold` sucessos fecham o
+  circuito; uma falha reabre. Após `issue.max_blocks` bloqueios consecutivos
+  aciona uma única vez o agente dedicado de correção (`escalation_agent`,
+  default `correcao-esteira`) com o fato da falha, o log de erro completo e a
+  instrução de correção; falha de sync após essa correção encerra a esteira com
+  código de saída 1 e registra issue, board, erro, tentativas e agente.
+  Configurável em `sync.circuit_breaker` (todos os campos opcionais, com
+  default) e persistido em `.pipe/syncCircuitBreaker.json` (protegido) ou em
+  memória (`persistence: memory`).
+
+### Alterado
+
+- A remediação E4 (`RemediationSignal`, `RemediationFailStop`,
+  `remediate_pending`, `build_remediation_prompt`, `AgentParams.remediation_prompt`)
+  foi absorvida pelo circuit-breaker: erro de validação do board (422) escala de
+  imediato ao agente dedicado e a reincidência encerra a esteira. O fail-stop
+  agora termina o processo com código de saída diferente de zero.
+- `get_issue` não tem mais o modo parcial (`fullsync`): toda descida traz o
+  estado completo, incluindo `blocked_by`/`blocks`.
+- `_apply_change_up` grava `body_mtime` no snapshot antes de propagar falha de
+  `apply_commands`, evitando a redescoberta da mesma mudança em loop.
+- `set_blocked_by`/`set_blocks` tratam "relação de bloqueio já existente" como
+  sucesso idempotente (log) e seguem para as próximas relações.
+
+### Interação com `sync.max_attempts`
+
+Cada falha é contada pelo circuit-breaker antes do retry transitório. Quando a
+falha bloqueia ou escala, o item é retido na fila com `attempts` zerado; só
+vai a dead-letter por `max_attempts` se esse limite for menor que
+`issue.max_failures` (e então o contador da issue é liberado).
+
 ## [1.25.3] - 2026-11-04
 
 ### Corrigido

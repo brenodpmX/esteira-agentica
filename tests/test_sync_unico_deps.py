@@ -2,7 +2,7 @@
 
 Caso central do RF-05: toda sincronização reconcilia as relações de bloqueio,
 não apenas propriedades. O change-down enfileirado pela sincronização única é
-`fullsync=True`; ao aplicá-lo, `get_issue` é chamado com `fullsync=True` e o
+`fullsync=True`; ao aplicá-lo, `get_issue` sempre traz o estado completo e o
 snapshot passa a refletir as dependências vindas do board (ex.: 80 -> 90).
 
 Reaproveita o invariante do gatilho de par recíproco (condição de parada) já
@@ -30,9 +30,9 @@ def _chdir_tmp(tmp_path, monkeypatch):
 
 
 class FakePort(BoardPort):
-    """Fake cujo get_issue(fullsync=True) devolve blocked_by=['90'].
+    """Fake cujo get_issue devolve blocked_by=['90'].
 
-    Registra as chamadas de get_issue para asserir que o down foi fullsync.
+    Registra as chamadas de get_issue para asserir que o down buscou a issue.
     """
 
     def __init__(self, listed=None):
@@ -43,15 +43,13 @@ class FakePort(BoardPort):
     def sync_boards(self, boards): pass
     def list_issues(self, board_id): return list(self._listed)
 
-    def get_issue(self, board_id, issue_id, fullsync=False):
-        self.get_issue_calls.append((issue_id, fullsync))
+    def get_issue(self, board_id, issue_id):
+        self.get_issue_calls.append(issue_id)
         issue = Issue(id=issue_id, title="Issue 70", body="corpo",
                       column="desenvolvimento",
                       updated_at="2026-09-24T12:00:00Z")
-        if fullsync:
-            # Dependência mudou no board: 80 -> 90.
-            issue.blocked_by = ["90"]
-            issue.blocks = []
+        issue.blocked_by = ["90"]
+        issue.blocks = []
         return issue
 
     def create_issue(self, board_id, title, body, column):
@@ -100,7 +98,7 @@ def test_ct02b_change_down_is_fullsync():
 
 
 def test_ct02b_dependencies_reconciled_after_apply():
-    """(b) após aplicar o down: get_issue é chamado com fullsync=True e o
+    """(b) após aplicar o down: get_issue traz o estado completo e o
     snapshot de #70 reflete blocked_by=['90'] (reconciliado, não mais ['80'])."""
     port = FakePort(listed=[
         Issue(id="70", title="Issue 70", body="", column="desenvolvimento",
@@ -121,8 +119,8 @@ def test_ct02b_dependencies_reconciled_after_apply():
     sync_remote("b", board, q)
     apply_changes(board, q, config={})
 
-    # get_issue foi chamado com fullsync=True ao aplicar o change-down.
-    assert ("70", True) in port.get_issue_calls
+    # get_issue completo foi chamado ao aplicar o change-down.
+    assert "70" in port.get_issue_calls
 
     snap = Snapshot("b").load()
     data = snap.issue("70")

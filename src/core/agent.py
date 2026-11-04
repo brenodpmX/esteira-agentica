@@ -36,6 +36,7 @@ PROTECTED_PATHS: list[str] = [
     ".pipe/agentCircuitBreak.json",
     ".pipe/executionRecords.json",
     ".pipe/participationPending.json",
+    ".pipe/syncCircuitBreaker.json",
 ]
 
 
@@ -174,7 +175,6 @@ class AgentParams:
     repo_id: str = None    # id do repositório alvo (chave em git.repo)
     context: str = None
     continuation_prompt: str = None  # prompt de continuação (E10) quando há sessão
-    remediation_prompt: str = None   # prompt de remediação (E4) com os erros de sync
     col_name: str = ""     # nome humanizado da coluna/etapa (log de terminal)
     title: str = ""        # título da issue (log de terminal)
     participation_intent: str = None  # intenção de participação (#310 / RF-15)
@@ -451,29 +451,42 @@ def build_continuation_prompt(config: dict, task: dict) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# build_remediation_prompt (E4)
+# build_sync_escalation_prompt
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_remediation_prompt(config: dict, task: dict, errors: str) -> str:
-    """Monta o PROMPT DE REMEDIAÇÃO (E4) com os erros da sincronização.
+_PROTECTED_REDACTION = "[caminho protegido omitido]"
 
-    Enviado uma única vez quando o sync falha com erro corrigível pelo agente
-    (validação do board / 422). Distinto do prompt de execução e do de
-    continuação (E10, situação 3): não pede refazer a tarefa, só corrigir o que
-    causou a falha de sincronização.
-    """
+
+def _redact_protected(text: str) -> str:
+    def redact(match: re.Match) -> str:
+        token = match.group(0)
+        stripped = token.rstrip(".,;:\"'`)")
+        if any(_matches_protected(stripped, p) for p in PROTECTED_PATHS):
+            return _PROTECTED_REDACTION
+        return token
+
+    return re.sub(r"\S+", redact, text or "")
+
+
+def build_sync_escalation_prompt(config: dict, task: dict, error_log: str) -> str:
+    issue = task.get("issue") or {}
+    body_path = issue.get("body_path") or "(desconhecido)"
     lines = [
-        "Sua última execução nesta issue foi concluída, mas a esteira não "
-        "conseguiu sincronizar as alterações com o board. Não refaça a tarefa — "
-        "corrija apenas o que causou a falha.",
+        f"A sincronização da issue #{issue.get('id')} do board "
+        f"`{task.get('board_id')}` com a plataforma de board falhou "
+        f"repetidamente e a esteira não consegue publicar o estado dela.",
         "",
-        "Erros da sincronização:",
-        (errors or "").strip() or "(sem detalhes)",
+        "Log de erro completo:",
+        "```",
+        _redact_protected((error_log or "").strip()) or "(sem detalhes)",
+        "```",
         "",
-        "Ajuste os comandos e anotações do `-body.md` (bloco `@---` e anotações) "
-        "para resolver esses erros, seguindo as regras do sistema (relações, "
-        "anti-ciclo, declarar de um lado só). Altere só o necessário para "
-        "sincronizar.",
+        f"Corrija a issue para que ela consiga sincronizar. O arquivo da issue é "
+        f"`{body_path}`: ajuste o corpo, as anotações e os comandos do bloco "
+        f"`@---` seguindo as regras do sistema (relações, anti-ciclo, declarar "
+        f"de um lado só). Não refaça nem altere o escopo da tarefa; altere "
+        f"apenas o necessário para sincronizar. Não acesse arquivos de estado "
+        f"interno da esteira.",
     ]
     prompt = "\n".join(lines)
     _assert_no_protected(prompt)

@@ -465,6 +465,8 @@ def check_config() -> dict:
     _validate_sleep(config["sleep"])
 
     validate_max_attempts(config)
+    from src.core.sync_circuit_breaker import validate_sync_circuit_breaker
+    validate_sync_circuit_breaker(config)
     validate_retry(config)
     validate_registro(config)
     validate_safety(config)
@@ -489,6 +491,13 @@ def check_config() -> dict:
         for platform in agents.values()
         for agent_id in platform
     }
+    escalation_agent = ((config.get("sync") or {}).get("circuit_breaker") or {}).get(
+        "escalation_agent")
+    if escalation_agent is not None and escalation_agent not in known_agents:
+        raise ConfigError(
+            f"sync.circuit_breaker.escalation_agent: agente '{escalation_agent}' "
+            f"não existe em 'agents'"
+        )
     boards = _require(config, "boards", "pipe.yml")
     _validate_boards(boards, known_agents)
     

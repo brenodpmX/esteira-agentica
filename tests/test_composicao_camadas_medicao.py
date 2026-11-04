@@ -130,7 +130,7 @@ class TestInstrucoesObrigatorias:
         monkeypatch.setattr(main, "ensure_steering_integrity", lambda c: False)
         monkeypatch.setattr(main, "build_prompt", lambda c, t: prompt_for(tmp_path, c, t))
         monkeypatch.setattr(main, "build_continuation_prompt", lambda c, t: "cont")
-        monkeypatch.setattr(main, "build_remediation_prompt", lambda c, t, e: "rem")
+        monkeypatch.setattr(main, "build_sync_escalation_prompt", lambda c, t, e: "rem")
         monkeypatch.setattr(main, "CONTEXTS_DIR", tmp_path / "contexts")
 
         with patch("src.__main__.KiroCliAgent", FakeAdapterNoTokens):
