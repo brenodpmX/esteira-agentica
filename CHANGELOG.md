@@ -2,6 +2,28 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.25.3] - 2026-11-04
+
+### Corrigido
+
+- **`create-up` não duplica mais issues novas que nascem com algum comando no
+  bloco `@---`.** `_apply_create_up` (`src/core/sync.py`) chamava
+  `_filter_suspended_cross_board_parent(board_id, created.id, cmds, config)`
+  sem receber `config` como parâmetro — a issue já havia sido criada com
+  sucesso no GitHub nesse ponto, e a chamada lançava
+  `NameError: name 'config' is not defined`. O tratamento genérico de
+  `apply_changes` classificava o erro como transitório e reenfileirava o
+  item, recriando a mesma issue local do zero a cada tentativa (até
+  `retry.max_tentativas`, default 3) — qualquer comando não vazio no `@---`
+  disparava o problema (não só `/parent`), não apenas a criação de sub-issue
+  a partir de uma Story. Caso real: 4 Tasks do board `br.com.escrevas`
+  materializadas em 12 issues no GitHub antes de a fila esgotar as
+  tentativas. O mecanismo da issue #310 (`participation_intent`) foi
+  investigado e descartado como causa — a duplicação ocorria mesmo com a
+  issue mãe e as filhas no mesmo board. Corrigido propagando `config` de
+  `apply_changes` até `_apply_create_up` (parâmetro opcional, retrocompatível):
+  a issue passa a ser criada exatamente uma vez por item da fila.
+
 ## [1.25.2] - 2026-10-08
 
 ### Corrigido

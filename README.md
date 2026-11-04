@@ -1104,6 +1104,34 @@ esse erro específico: registram um warning
 snapshot e **descartam** o evento em vez de re-enfileirá-lo. Qualquer outra
 exceção continua propagando normalmente.
 
+### Incidente resolvido: duplicidade ao criar sub-issue (#339)
+
+Ao criar uma issue nova (`create-up`) que já nasce com algum comando no bloco
+`@---` (`/parent #N` era o caso mais comum — uma Task criada a partir de uma
+Story no fluxo planning-poker, mas qualquer comando não vazio disparava o
+mesmo problema), `_apply_create_up` (`src/core/sync.py`) chamava
+`_filter_suspended_cross_board_parent(board_id, created.id, cmds, config)`
+sem receber `config` como parâmetro. A issue já havia sido criada com sucesso
+no GitHub nesse ponto; a chamada lançava `NameError: name 'config' is not
+defined`, capturado pelo tratamento genérico de `apply_changes` e classificado
+como erro transitório — o item voltava para a fila e a mesma issue local era
+recriada do zero, repetindo `create_issue` contra o GitHub a cada tentativa
+(até `retry.max_tentativas`, default 3). Resultado: cada issue criada com
+algum comando no `@---` podia ser materializada em duplicidade (até
+triplicidade, com os defaults) no board antes de a fila esgotar as tentativas.
+
+O mecanismo de `participation_intent` (issue #310) foi investigado e descartado
+como causa: ele só age sobre vínculo pai/filho entre boards distintos, e a
+duplicação ocorria mesmo com a issue mãe e as filhas no mesmo board.
+
+A correção propaga `config` de `apply_changes` até `_apply_create_up`
+(parâmetro opcional, `config: dict = None`, retrocompatível), eliminando o
+`NameError`: a issue passa a ser criada exatamente uma vez por item da fila,
+independente do conteúdo do bloco `@---`.
+
+Documentação: [casos de teste](doc/quality/duplicidade-ao-criar-sub-issue/test-cases.md),
+[resultado da execução de testes](doc/quality/duplicidade-ao-criar-sub-issue/test-results.md).
+
 ### Isolamento de IDs entre boards
 
 O espaço de números de issues do GitHub é **compartilhado** entre todos os

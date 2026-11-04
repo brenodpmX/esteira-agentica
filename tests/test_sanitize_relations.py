@@ -447,7 +447,7 @@ def test_apply_create_up_self_reference_not_sent_to_adapter(tmp_path, monkeypatc
 
     port = FakePort()
     board_obj = Board(port)
-    item = ChangeItem.of(SyncEvent.CREATE_UP, id=str(body_path), board=board_id)
+    item = ChangeItem.of(SyncEvent.CREATE_UP, identifier=str(body_path), board=board_id)
     queue = ChangeQueue()
 
     sync._apply_create_up(board_id, item, board_obj, queue=queue)
