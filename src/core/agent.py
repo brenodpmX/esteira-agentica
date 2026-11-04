@@ -179,6 +179,7 @@ class AgentParams:
     title: str = ""        # título da issue (log de terminal)
     participation_intent: str = None  # intenção de participação (#310 / RF-15)
     origin_board: str = None          # quadro de origem da issue (#310 / RF-15)
+    timeout_seg: int = 3600
 
 
 class AgentPort(ABC):
