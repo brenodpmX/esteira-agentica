@@ -1,9 +1,10 @@
-"""Casos de Teste — captura de consumo via stream-json (kiro-cli 2.27.x).
+"""Casos de Teste — captura de consumo via stream-json (kiro-cli 2.27.x e 3.0.0).
 
 Desde o kiro-cli 2.27.x o modo texto deixou de imprimir a linha-resumo de
 créditos/tempo; o consumo passou a ser exposto apenas em
-``--output-format stream-json`` (evento ``metadata.meteringUsage``). Estes testes
-cobrem:
+``--output-format stream-json``. No 2.27.x via ``metadata.meteringUsage``; no
+3.0.0 via ``sessionUpdate`` ``session_info_update``
+(``_meta.kiro.promptTurnSummaries``). Estes testes cobrem ambos os formatos:
 
 - o parser dos eventos ACP (transcript legível + consumo + linha-resumo);
 - a captura do consumo em ``_run`` (reportado quando há medição; indisponível
@@ -52,6 +53,41 @@ def _stream(metering=None, turn_ms=None, status="success", with_tool=False,
     lines.append(_ev({"type": "metadata", "data": final_meta}))
     lines.append(_ev({"type": "runFinished", "data": {"sessionId": "s",
         "status": status, "stopReason": "end_turn", "finalText": msg}}))
+    return "\n".join(lines) + "\n"
+
+
+def _stream_v3(summaries=None, elapsed_ms=None, status="success",
+               with_tool=False, msg="ok") -> str:
+    """Monta um stdout stream-json no formato do kiro-cli >= 3.0.0.
+
+    O consumo migrou de ``metadata.meteringUsage`` (value/unit) para
+    ``sessionUpdate`` de tipo ``session_info_update``, com
+    ``_meta.kiro.promptTurnSummaries`` (usage/unit) e ``_meta.kiro.elapsedTime``.
+    """
+    lines = [_ev({"type": "runStarted",
+                  "data": {"payloadSchema": "acp", "acpProtocolVersion": 1,
+                           "engine": "v3"}})]
+    if with_tool:
+        lines.append(_ev({"type": "sessionUpdate", "data": {"sessionId": "s",
+            "update": {"sessionUpdate": "tool_call",
+                       "title": "Running: echo hi", "kind": "execute"}}}))
+        lines.append(_ev({"type": "sessionUpdate", "data": {"sessionId": "s",
+            "update": {"sessionUpdate": "tool_call_update", "status": "completed"}}}))
+    lines.append(_ev({"type": "sessionUpdate", "data": {"sessionId": "s",
+        "update": {"sessionUpdate": "agent_message_chunk",
+                   "content": {"type": "text", "text": msg}}}}))
+    kiro_meta = {"status": status, "kind": "turn_completion",
+                 "executionId": "e", "turnId": "t", "requestIds": ["r"]}
+    if summaries is not None:
+        kiro_meta["promptTurnSummaries"] = summaries
+    if elapsed_ms is not None:
+        kiro_meta["elapsedTime"] = elapsed_ms
+    lines.append(_ev({"type": "sessionUpdate", "data": {"sessionId": "s",
+        "update": {"sessionUpdate": "session_info_update",
+                   "_meta": {"kiro": kiro_meta}}}}))
+    lines.append(_ev({"type": "runFinished", "data": {"sessionId": "s",
+        "status": status, "stopReason": "end_turn", "finalText": msg,
+        "finalTextTruncated": False}}))
     return "\n".join(lines) + "\n"
 
 
@@ -107,6 +143,82 @@ class TestParseStreamJson(unittest.TestCase):
         raw = _stream(metering=None, status="error")
         transcript, _, _ = self.agent._parse_stream_json(raw)
         self.assertIn("[ERRO] runFinished status=error", transcript)
+
+
+class TestParseStreamJsonV3(unittest.TestCase):
+    """kiro-cli >= 3.0.0: consumo em session_info_update/promptTurnSummaries."""
+
+    def setUp(self):
+        self.agent = KiroCliAgent()
+
+    def test_summary_unico_usa_usage_e_unit(self):
+        raw = _stream_v3(
+            summaries=[{"unit": "credit", "unitPlural": "credits",
+                        "usage": 0.08198122520729684}],
+            elapsed_ms=2459)
+        transcript, valor, unidade = self.agent._parse_stream_json(raw)
+        self.assertAlmostEqual(valor, 0.08198122520729684)
+        self.assertEqual(unidade, "credit")
+        self.assertIn("ok", transcript)
+        self.assertIn("▸ Credits: 0.08", transcript)
+        self.assertIn("Time: 0m 2s", transcript)
+        self.assertTrue(transcript.strip().splitlines()[-1].startswith("▸ Credits:"))
+
+    def test_summaries_segmentados_sao_somados(self):
+        raw = _stream_v3(summaries=[{"unit": "credit", "usage": 0.117},
+                                    {"unit": "credit", "usage": 0.082}],
+                         elapsed_ms=6325)
+        _, valor, unidade = self.agent._parse_stream_json(raw)
+        self.assertAlmostEqual(valor, 0.199)
+        self.assertEqual(unidade, "credit")
+
+    def test_tool_calls_viram_linhas_tool_v3(self):
+        raw = _stream_v3(summaries=[{"unit": "credit", "usage": 0.2}],
+                         with_tool=True, msg="feito")
+        transcript, _, _ = self.agent._parse_stream_json(raw)
+        self.assertIn("[tool] Running: echo hi", transcript)
+        self.assertIn("[tool] status: Completed", transcript)
+        self.assertIn("feito", transcript)
+
+    def test_sem_summaries_retorna_none(self):
+        raw = _stream_v3(summaries=None)
+        transcript, valor, unidade = self.agent._parse_stream_json(raw)
+        self.assertIsNone(valor)
+        self.assertIsNone(unidade)
+        self.assertNotIn("▸ Credits:", transcript)
+
+    def test_run_captura_consumo_formato_v3(self):
+        agent = KiroCliAgent()
+        agent._last_consumo = None
+
+        def fake_run(cmd, **kwargs):
+            r = MagicMock(); r.returncode = 0; r.stderr = ""
+            r.stdout = _stream_v3(
+                summaries=[{"unit": "credit", "usage": 0.42}], elapsed_ms=1500)
+            return r
+
+        with TemporaryDirectory() as tmp:
+            esteira = Path(tmp) / "esteira"
+            repo = esteira / "repo" / "main"
+            repo.mkdir(parents=True)
+            steering = esteira / ".kiro" / "steering" / "esteira.md"
+            steering.parent.mkdir(parents=True)
+            steering.write_text("---\ninclusion: always\n---\n#x\n")
+            params = AgentParams(
+                platform="kiro-cli", agent_id="dev", agent_name="Eng", model="m",
+                issue_id="1", board_id="task", col_id="doing",
+                prompt="P", work_dir=str(repo), context=None,
+                continuation_prompt=None)
+            with patch("subprocess.run", side_effect=fake_run), \
+                 patch("src.adapters.kiro_cli_agent.SessionIndex") as mock_idx, \
+                 patch("src.adapters.kiro_cli_agent.STEERING_FILE", steering), \
+                 patch.object(agent, "_session_exists", return_value=False), \
+                 patch.object(agent, "_latest_session_id", return_value=None):
+                mock_idx.return_value.get.return_value = None
+                agent._run(params, repo)
+        self.assertEqual(agent._last_consumo.disponibilidade, DISPONIVEL)
+        self.assertAlmostEqual(agent._last_consumo.valor, 0.42)
+        self.assertEqual(agent._last_consumo.unidade, "credit")
 
 
 class TestRunCapturaConsumo(unittest.TestCase):

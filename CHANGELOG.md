@@ -2,6 +2,21 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.27.2] - 2026-11-05
+
+### Corrigido
+
+- **Consumo por execução deixou de ser capturado no kiro-cli 3.0.0.** O parser
+  de `--output-format stream-json` (`_parse_stream_json`) lia o consumo apenas
+  do evento `metadata.meteringUsage` (`value`/`unit`), formato do kiro-cli
+  2.27.x. No 3.0.0 esse evento deixou de existir: o consumo migrou para um
+  `sessionUpdate` de tipo `session_info_update`, em
+  `_meta.kiro.promptTurnSummaries` (lista `{unit, usage}`), e a duração do turno
+  migrou de `turnDurationMs` para `_meta.kiro.elapsedTime`. Sem reconhecer o
+  novo formato, toda execução registrava `Consumo.indisponivel` e a linha-resumo
+  `▸ Credits: X • Time: Ys` sumia do log. O parser passa a ler o formato 3.0.0,
+  mantendo o caminho 2.27.x como fallback. Campo renomeado `value` -> `usage`.
+
 ## [1.27.1] - 2026-11-04
 
 ### Corrigido
