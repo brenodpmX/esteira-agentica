@@ -125,7 +125,7 @@ ARG KIRO_CLI_URL=https://desktop-release.q.us-east-1.amazonaws.com/latest/kirocl
 
 RUN curl --proto '=https' --tlsv1.2 -fsSL "$KIRO_CLI_URL" -o /tmp/kirocli.zip \
     && unzip -q /tmp/kirocli.zip -d /tmp/kirocli_extract \
-    && /tmp/kirocli_extract/kirocli/install.sh --no-confirm \
+    && /tmp/kirocli_extract/kirocli/install.sh --no-modify-path \
     && rm -rf /tmp/kirocli.zip /tmp/kirocli_extract \
     && ~/.local/bin/kiro-cli --version
 
