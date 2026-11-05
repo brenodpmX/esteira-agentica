@@ -736,7 +736,7 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
     # steering, contexto SEMPRE carregado). Fail-closed (CA-5): sem as instruções
     # obrigatórias, NÃO acionamos o agente e sinalizamos a falha de composição.
     record = compose_execution_record(adapter, prompt, continuation_prompt, col, issue)
-    log.info(
+    log.trace(
         "Composicao",
         f"[{board_id}] #{issue['id']} medição da composição",
         event="composicao_medicao", **record,
@@ -763,7 +763,7 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
     # ── Correlação de despacho (#310 / RF-15) ─────────────────────────────────
     # Enriquece o log de execução com a intenção da participação e o quadro de
     # origem, para correlacionar o despacho com a classificação de intenção.
-    log.info(
+    log.trace(
         "Participation",
         f"[{board_id}] #{issue['id']} despacho com intenção confirmada",
         event="dispatch_participation",

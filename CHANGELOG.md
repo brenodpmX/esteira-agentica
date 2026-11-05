@@ -2,6 +2,16 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.27.5] - 2026-11-05
+
+### Alterado
+
+- **Logs `medição da composição` e `despacho com intenção confirmada` passam de
+  `info` para `trace`.** São registros de diagnóstico emitidos a cada despacho
+  de agente; deixam de poluir o terminal no nível padrão, mas continuam sendo
+  gravados no arquivo de log com os mesmos campos estruturados
+  (`composicao_medicao`, `dispatch_participation`).
+
 ## [1.27.4] - 2026-11-05
 
 ### Corrigido
