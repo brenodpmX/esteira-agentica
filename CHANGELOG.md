@@ -2,6 +2,17 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.27.4] - 2026-11-05
+
+### Corrigido
+
+- **Log de conclusão da execução não mostrava o custo.** O consumo já era
+  capturado (registro de execução e linha `▸ Credits: X • Time: Ys` no log do
+  agente), mas o console imprimia a última linha do output, e o stderr do
+  kiro-cli (`[INFO] [KRS] ...`) é anexado depois da linha de créditos,
+  escondendo-a. A mensagem `execução concluída` agora exibe a linha de consumo
+  quando existe; sem ela, mantém a última linha não-vazia.
+
 ## [1.27.3] - 2026-11-05
 
 ### Corrigido

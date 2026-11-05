@@ -156,7 +156,7 @@ class KiroCliAgent(AgentPort):
         prefix = f"[{params.board_id}] #{params.issue_id}"
         if result.classe == SUCEDIDO:
             log.info("Kiro", f"{prefix} execução concluída: "
-                     f"{self._last_meaningful_line(result.output)}",
+                     f"{self._completion_summary(result.output)}",
                      log=str(log_path))
             return
         if result.classe == UNKNOWN_OUTCOME:
@@ -498,6 +498,18 @@ class KiroCliAgent(AgentPort):
         clean = self._strip_ansi(output)
         lines = [l.strip() for l in clean.strip().splitlines() if l.strip()]
         return lines[-1] if lines else "(sem output)"
+
+    def _completion_summary(self, output: str) -> str:
+        """Resumo da conclusão para o log: linha de consumo quando houver.
+
+        O stderr do kiro-cli é anexado depois da linha ``▸ Credits:``; usar só
+        a última linha escondia o custo atrás de ruído de diagnóstico.
+        """
+        clean = self._strip_ansi(output)
+        for line in reversed(clean.splitlines()):
+            if line.strip().startswith("▸ Credits:"):
+                return line.strip()
+        return self._last_meaningful_line(output)
 
     # Marcadores ESTRUTURAIS da ferramenta de execução (kiro-cli / adapter) que
     # classificam uma execução como falha. #303: a classificação considera

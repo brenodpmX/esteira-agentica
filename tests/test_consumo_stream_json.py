@@ -307,6 +307,35 @@ class TestRunCapturaConsumo(unittest.TestCase):
 
 class TestExecuteExpoeConsumo(unittest.TestCase):
 
+    def test_log_conclusao_mostra_consumo_apesar_do_stderr(self):
+        agent = KiroCliAgent()
+        params = AgentParams(
+            platform="kiro-cli", agent_id="dev", agent_name="Eng", model="m",
+            issue_id="9", board_id="bug", col_id="correcao",
+            prompt="P", work_dir="/tmp", context=None,
+        )
+        saida = (
+            "feito\n▸ Credits: 18.90 • Time: 10m 59s\n"
+            "[INFO] kas.server.starting {}\n"
+            "[INFO] [KRS] <-- GenerateAssistantResponseCommand done totalEvents=11"
+        )
+        with patch("src.adapters.kiro_cli_agent.KiroCliAgent._create_log",
+                   return_value=Path("/tmp/_z.md")), \
+             patch("src.adapters.kiro_cli_agent.KiroCliAgent._run",
+                   return_value=saida), \
+             patch("src.adapters.kiro_cli_agent.KiroCliAgent._append_log"), \
+             patch("src.adapters.kiro_cli_agent.log") as mock_log:
+            agent.execute(params)
+        msgs = [c.args[1] for c in mock_log.info.call_args_list]
+        concluida = [m for m in msgs if "execução concluída" in m]
+        self.assertEqual(len(concluida), 1)
+        self.assertIn("▸ Credits: 18.90 • Time: 10m 59s", concluida[0])
+        self.assertNotIn("KRS", concluida[0])
+
+    def test_log_conclusao_sem_consumo_mantem_ultima_linha(self):
+        agent = KiroCliAgent()
+        self.assertEqual(agent._completion_summary("a\nfinal"), "final")
+
     def test_execute_anexa_consumo_ao_result(self):
         agent = KiroCliAgent()
         params = AgentParams(
