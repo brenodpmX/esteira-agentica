@@ -299,8 +299,11 @@ class KiroCliAgent(AgentPort):
           ``[tool] ...``, erros de ``runFinished``), encerrada por uma linha-
           resumo ``▸ Credits: X • Time: Ys`` quando há medição — restaurando o
           resumo que o kiro-cli deixou de imprimir no modo texto.
-        - ``valor_consumo``/``unidade_consumo``: soma do ``meteringUsage`` do
-          metadata final do turno (``None`` quando a ferramenta não reportou).
+        - ``valor_consumo``/``unidade_consumo``: consumo medido no turno
+          (``None`` quando a ferramenta não reportou). Fonte conforme a versão
+          do kiro-cli: >= 3.0.0 no evento ``session_info_update``
+          (``_meta.kiro.promptTurnSummaries``); <= 2.27.x no evento
+          ``metadata`` (``meteringUsage``), mantido como fallback.
 
         Robustez: linhas não-JSON são preservadas cruas (nada é perdido); tipos
         de evento desconhecidos (ex.: erro de transporte) são anexados crus para
@@ -339,6 +342,8 @@ class KiroCliAgent(AgentPort):
             etype = evt.get("type")
             data = evt.get("data") or {}
 
+            # kiro-cli <= 2.27.x: evento `metadata` com `meteringUsage`
+            # (lista {value, unit}) + `turnDurationMs`. Mantido como fallback.
             if etype == "metadata":
                 mu = data.get("meteringUsage")
                 if isinstance(mu, list) and mu:
@@ -361,6 +366,30 @@ class KiroCliAgent(AgentPort):
             if etype == "sessionUpdate":
                 upd = data.get("update") or {}
                 kind = upd.get("sessionUpdate")
+                # kiro-cli >= 3.0.0: o consumo migrou de `metadata`/
+                # `meteringUsage` para `session_info_update`/
+                # `_meta.kiro.promptTurnSummaries` (lista {unit, usage}); a
+                # duração migrou de `turnDurationMs` (metadata) para
+                # `_meta.kiro.elapsedTime` (ms). Campo `value` -> `usage`.
+                if kind == "session_info_update":
+                    kiro_meta = ((upd.get("_meta") or {}).get("kiro")) or {}
+                    summaries = kiro_meta.get("promptTurnSummaries")
+                    if isinstance(summaries, list) and summaries:
+                        total = 0.0
+                        uni = None
+                        for seg in summaries:
+                            if not isinstance(seg, dict):
+                                continue
+                            try:
+                                total += float(seg.get("usage") or 0)
+                            except (TypeError, ValueError):
+                                pass
+                            uni = uni or seg.get("unit")
+                        valor = total
+                        unidade = uni
+                    if kiro_meta.get("elapsedTime") is not None:
+                        turn_ms = kiro_meta.get("elapsedTime")
+                    continue
                 if kind == "agent_message_chunk":
                     txt = (upd.get("content") or {}).get("text")
                     if txt:
