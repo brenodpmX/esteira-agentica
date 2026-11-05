@@ -2,6 +2,18 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.27.1] - 2026-11-04
+
+### Corrigido
+
+- **Build da imagem falhava ao instalar o kiro-cli (`install.sh`).** O
+  instalador do kiro-cli deixou de aceitar `--no-confirm` (`[ERROR] Unknown
+  argument: --no-confirm`), abortando `docker compose build` na camada 6. A
+  flag foi trocada por `--no-modify-path`, que é o equivalente atual para
+  instalação não-interativa sem editar arquivos de inicialização de shell —
+  desnecessário no container, já que o `PATH` inclui `~/.local/bin`
+  explicitamente na camada de `ENV` seguinte.
+
 ## [1.27.0] - 2026-11-04
 
 ### Adicionado
