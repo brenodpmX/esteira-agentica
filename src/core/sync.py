@@ -1385,13 +1385,26 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
         _fire_column_events(board_id, item.id, board_obj, config, old_col, current_col)
         issue_data["column"] = current_col
 
+    # Addcomment: processa o arquivo de QUALQUER coluna (simétrico à detecção
+    # em detect_local_changes, que varre `rglob(slug-addcomment)`). Um addcomment
+    # não-vazio deixado numa coluna antiga (sidecar órfão de uma mudança de
+    # coluna anterior) era detectado como change-up a cada ciclo mas nunca
+    # processado — só o arquivo ao lado do body era lido/limpo —, gerando um
+    # loop infinito de change-up. Agora cada addcomment encontrado é postado uma
+    # vez e esvaziado; os sidecars órfãos (fora da coluna atual) são removidos.
     slug = body_path.stem.removesuffix("-body")
-    ac_file = body_path.parent / f"{slug}-addcomment.md"
-    if ac_file.exists():
-        comment = ac_file.read_text(encoding="utf-8").strip()
+    board_dir = BOARDS_DIR / board_id
+    for ac_file in sorted(board_dir.rglob(f"{slug}-addcomment.md")):
+        comment = ac_file.read_text(encoding="utf-8").strip() if ac_file.exists() else ""
         if comment:
             board_obj.add_comment(board_id, item.id, comment)
+        if ac_file.parent == body_path.parent:
             ac_file.write_text("", encoding="utf-8")
+        else:
+            # Sidecar órfão numa coluna antiga: remove o addcomment e, se
+            # existir, o history correspondente que ficou para trás.
+            ac_file.unlink(missing_ok=True)
+            (ac_file.parent / f"{slug}-history.md").unlink(missing_ok=True)
 
     comments = board_obj.list_comments(board_id, item.id)
     history_file = body_path.parent / f"{slug}-history.md"

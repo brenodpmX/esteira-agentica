@@ -2,6 +2,22 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.27.3] - 2026-11-05
+
+### Corrigido
+
+- **Loop infinito de `change-up` por `addcomment` órfão em coluna antiga.**
+  `detect_local_changes` marca `change-up` quando encontra um `-addcomment.md`
+  não-vazio via `rglob` em QUALQUER coluna do board, mas `_apply_change_up` só
+  lia/esvaziava o `addcomment` ao lado do body (coluna atual). Quando uma issue
+  mudava de coluna e deixava para trás um `addcomment` não-vazio na coluna
+  antiga (sidecar órfão), a detecção re-enfileirava `change-up` a cada ciclo e
+  o processamento nunca consumia o arquivo — `change-up` em loop (observado com
+  o bug #327: `addcomment` de ~5k em `analise-tecnica/` com o body já em
+  `correcao/`, re-despachado a cada ~7s). `_apply_change_up` passa a processar
+  o `addcomment` de qualquer coluna (posta uma vez) e remove os sidecars órfãos
+  (`-addcomment`/`-history`) fora da coluna atual, encerrando o loop.
+
 ## [1.27.2] - 2026-11-05
 
 ### Corrigido
