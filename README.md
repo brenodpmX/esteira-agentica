@@ -73,6 +73,18 @@ agents:
     dev:
       name: engineering
       model: claude-sonnet-5
+    limits:               # opcional: limites de consumo da plataforma (issue
+                          # #311); ausente = sem controle. Ver "Limitador
+                          # opcional de consumo de IA por plataforma".
+      timezone: America/Sao_Paulo  # opcional; ausente = fuso local da máquina
+      daily:
+        limit: 50000      # OBRIGATÓRIO se 'daily' presente; inteiro >= 1
+      weekly:
+        limit: 300000
+        reset_weekday: 0  # 0 (segunda) a 6 (domingo); OBRIGATÓRIO se 'weekly'
+      monthly:
+        limit: 1200000
+        reset_day: 1      # 1-28 ou "last"; OBRIGATÓRIO se 'monthly' presente
 
 boards:
   platform: github
@@ -628,6 +640,77 @@ caminho), antes de qualquer alteração de estado.
 > completo (campos, taxonomia, mapeamento e saída da consulta de linhagem):
 > [`doc/architecture/registro-execucao-agentes-linhagem-historica/contrato.md`](doc/architecture/registro-execucao-agentes-linhagem-historica/contrato.md).
 
+### Limitador opcional de consumo de IA por plataforma (`agents.<plataforma>.limits`)
+
+Uma mesma conta de plataforma de IA pode ser usada por várias instâncias da
+esteira, e uma mesma instância pode acionar mais de uma plataforma. Sem uma
+cota independente por plataforma, um trabalho de menor prioridade pode
+consumir a capacidade reservada para outro. O limitador (issue #311) permite
+declarar, **por plataforma**, tetos opcionais de consumo para os períodos
+diário, semanal e mensal — combináveis entre si — usando como insumo o
+consumo por execução já capturado pela issue #307
+(`.pipe/executionRecords.json`).
+
+- **Opt-in estrito:** sem o bloco `limits` sob a plataforma, nada é acumulado
+  nem verificado — comportamento idêntico ao atual.
+- **Decisão antes do agente:** quando o consumo acumulado de **qualquer**
+  período configurado atinge ou ultrapassa o limite, a **próxima** tentativa
+  de acionar aquela plataforma é impedida antes do despacho. Uma execução que
+  já começou **nunca** é interrompida, mesmo que ultrapasse o limite durante a
+  execução — por isso o controle não é um teto absoluto, e sim um bloqueio da
+  próxima chamada.
+- **Isolamento:** o bloqueio afeta somente a combinação instância/plataforma.
+  Outras plataformas da mesma instância e a mesma plataforma em outra
+  instância seguem operando normalmente (cada instância tem o seu próprio
+  `.pipe/`).
+- **Falha aberta:** quando a plataforma não reporta consumo ao fim da
+  execução, o acionamento continua normalmente e a indisponibilidade é
+  registrada à parte, nunca confundida com consumo zero.
+
+```yaml
+agents:
+  <plataforma>:
+    <agente>:
+      name: <string>
+    limits:                      # OPCIONAL — ausente = sem controle
+      timezone: <string|null>    # OPCIONAL; ex.: "America/Sao_Paulo"; ausente = fuso local da máquina
+      daily:
+        limit: <inteiro >= 1>
+      weekly:
+        limit: <inteiro >= 1>
+        reset_weekday: <0-6>      # 0 = segunda, 6 = domingo
+      monthly:
+        limit: <inteiro >= 1>
+        reset_day: <1-28|"last">
+```
+
+- **Validação na verificação de configuração:** limite `<= 0`, dia fora de
+  faixa ou fuso inexistente falham o startup com `ConfigError` apontando a
+  chave; `limits` não é confundido com uma entrada de agente (não exige
+  `name`/contexto).
+- **Retomada sem reinício:** o `pipe.yml` em disco é relido a cada avaliação
+  (cache por `mtime`), então aumentar ou remover um limite retoma o
+  acionamento imediatamente. Um bloco inválido editado em runtime mantém a
+  configuração carregada no startup, com aviso.
+- **Reset automático:** cada período reinicia no seu marco (diário na virada
+  do dia, semanal no `reset_weekday`, mensal no `reset_day`, incluindo
+  `"last"` para meses com menos dias), no fuso configurado ou no fuso local da
+  máquina.
+- **Estado persistente:** o acumulado por plataforma/período fica em
+  `.pipe/consumptionLimit.json` (estado interno protegido — ver tabela de
+  `PROTECTED_PATHS`), sobrevivendo a ciclos ociosos e reinícios do processo.
+  Estado ausente ou corrompido é zerado com segurança (nunca bloqueia por
+  falta de dado) e a recuperação é registrada.
+- **Registro estruturado de cada tentativa impedida** (`consumo_limite_bloqueio`,
+  nível `WARNING`), com instância, plataforma, unidade, consumo do período,
+  limite, período e condição de retomada — a base para auditoria e para o
+  baseline do primeiro ciclo. Indisponibilidade de medição gera
+  `consumo_indisponivel`; retomada gera `consumo_limite_retomada`.
+
+Runbook completo (como configurar, diagnosticar um bloqueio e ler os
+registros):
+[`doc/runbook/limitador-consumo-ia-plataforma.md`](doc/runbook/limitador-consumo-ia-plataforma.md).
+
 ### Continuidade de sessão
 
 A esteira mantém a continuidade do raciocínio do agente entre execuções da
@@ -701,6 +784,7 @@ Padrões protegidos (`PROTECTED_PATHS`):
 | `.pipe/executionRecords.json` | Registros de execução de agentes + linhagem histórica (#307) |
 | `.pipe/participationPending.json` | Participações entre quadros pendentes de reconciliação e próxima tentativa (#310) |
 | `.pipe/syncCircuitBreaker.json` | Estado do circuit-breaker de sincronismo (#309) |
+| `.pipe/consumptionLimit.json` | Acumulado de consumo por plataforma e período do limitador opcional (#311) |
 
 ## Anotações no body (comandos `@---`)
 

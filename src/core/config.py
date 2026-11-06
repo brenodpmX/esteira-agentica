@@ -75,12 +75,12 @@ CONTEXTS_DIR = Path("contexts")
 def _validate_agents(agents: dict):
     missing = []
     empty = []
+    from src.core.consumption_limit import LIMITS_KEY
     for platform_id, platform in agents.items():
         for agent_id, agent_cfg in platform.items():
+            if agent_id == LIMITS_KEY:
+                continue
             _require(agent_cfg, "name", f"agents.{platform_id}.{agent_id}")
-            # P1.5 (F0.9): a esteira NÃO cria mais o arquivo de contexto (persona).
-            # Ele é insumo do operador (versionado no repo PIPE, montado readonly).
-            # Aqui apenas validamos e orientamos — nunca escrevemos.
             ctx_file = CONTEXTS_DIR / platform_id / f"{agent_id}.md"
             if not ctx_file.exists():
                 missing.append(str(ctx_file))
@@ -502,12 +502,15 @@ def check_config() -> dict:
     _validate_git(git)
     
     agents = _require(config, "agents", "pipe.yml")
+    from src.core.consumption_limit import LIMITS_KEY, validate_consumption_limits
+    validate_consumption_limits(config)
     _validate_agents(agents)
-    
+
     known_agents = {
         agent_id
         for platform in agents.values()
         for agent_id in platform
+        if agent_id != LIMITS_KEY
     }
     escalation_agent = ((config.get("sync") or {}).get("circuit_breaker") or {}).get(
         "escalation_agent")

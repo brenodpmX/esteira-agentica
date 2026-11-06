@@ -575,8 +575,10 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
             continue
         if _is_blocked(issue):
             continue
-        # Cooldown: pula a issue se foi reexecutada há pouco (mesmo board+coluna).
         if _in_rerun_cooldown(board_id, col_id, issue["id"], cooldown):
+            continue
+        if not _consumption_allows(config, board_cfg, board_id, col_id, issue,
+                                   resolve_agent_id(col, issue)):
             continue
 
         log.info("KeepTask", f"[{board_id}] #{issue['id']} selecionada em '{col_id}'")
@@ -659,15 +661,7 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
     issue = task["issue"]
 
     agent_id = agent_id or resolve_agent_id(col, issue)
-    # Resolver plataforma e config do agente
-    agents_cfg = config.get("agents", {})
-    platform = None
-    agent_cfg = {}
-    for platform_id, platform_agents in agents_cfg.items():
-        if agent_id in platform_agents:
-            platform = platform_id
-            agent_cfg = platform_agents[agent_id]
-            break
+    platform, agent_cfg = _resolve_platform(config, agent_id)
 
     if not platform:
         log.warning("Agent", f"Agente '{agent_id}' não encontrado na config")
@@ -752,11 +746,9 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
         )
         return None
 
-    # ── Limitador de reexecuções por contexto (#306) ──────────────────────────
-    # Fonte única da contagem: conta a entrega no instante da entrega (independe
-    # do resultado) e bloqueia ANTES do dispatch quando o contexto excede o
-    # limite. Fail-closed: falha de persistência/integridade NEGA a admissão.
-    # Sem política configurada, a contagem interna ocorre e nada é bloqueado.
+    if not _consumption_allows(config, board_cfg, board_id, col_id, issue, agent_id):
+        return None
+
     if not _admit_circuit_break(config, board_id, col_id, issue):
         return None
 
@@ -787,7 +779,61 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
         board_id=board_id, col_id=col_id, avancou=avancou,
         inicio=inicio, fim=fim,
     )
+    _record_consumption(config, board_cfg, params, result)
     return result
+
+
+def _resolve_platform(config: dict, agent_id: str) -> tuple[str | None, dict]:
+    from src.core.consumption_limit import LIMITS_KEY
+
+    if agent_id == LIMITS_KEY:
+        return None, {}
+    for platform_id, platform_agents in config.get("agents", {}).items():
+        if agent_id in platform_agents:
+            return platform_id, platform_agents[agent_id]
+    return None, {}
+
+
+def _consumption_limiter(config: dict, board_cfg: dict):
+    from src.core import consumption_limit
+
+    return consumption_limit.ConsumptionLimiter(
+        consumption_limit.instance_id(config, (board_cfg or {}).get("repo"))
+    )
+
+
+def _consumption_allows(config: dict, board_cfg: dict, board_id: str, col_id: str,
+                        issue: dict, agent_id: str) -> bool:
+    """Gate do limitador de consumo por plataforma (#311), antes do agente."""
+    from src.core import consumption_limit
+
+    platform, _ = _resolve_platform(config, agent_id)
+    if not platform:
+        return True
+    policy = consumption_limit.read_policy_from_disk(config, platform)
+    if not policy.active:
+        return True
+    decision = _consumption_limiter(config, board_cfg).admit(
+        platform, policy, board=board_id, coluna=col_id, issue=issue.get("id"),
+        agente=agent_id,
+    )
+    return decision.admitted
+
+
+def _record_consumption(config: dict, board_cfg: dict, params, result) -> None:
+    """Acumula o consumo da execução concluída no limitador (#311)."""
+    from src.core import consumption_limit
+
+    policy = consumption_limit.read_policy_from_disk(config, params.platform)
+    if not policy.active:
+        return
+    motivo = ("execução sem resultado do adapter" if result is None
+              else "plataforma não reportou consumo")
+    _consumption_limiter(config, board_cfg).record(
+        params.platform, policy, getattr(result, "consumo", None), motivo=motivo,
+        board=params.board_id, coluna=params.col_id, issue=params.issue_id,
+        agente=params.agent_id,
+    )
 
 
 def _issue_advanced(board_id: str, col_id: str, issue: dict) -> bool:
