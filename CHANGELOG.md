@@ -2,6 +2,31 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.28.0] - 2026-11-06
+
+### Adicionado
+
+- **Limitador opcional de consumo de IA por plataforma (#311)**: nova chave
+  opcional `agents.<plataforma>.limits`, com limites independentes e
+  combináveis de consumo para os períodos diário, semanal e mensal
+  (`daily.limit`, `weekly.limit`+`reset_weekday`, `monthly.limit`+`reset_day`)
+  e fuso opcional (`timezone`; ausente = fuso local da máquina). Sem o bloco,
+  nada muda. Com ele, a esteira acumula o consumo reconhecido de cada
+  plataforma por instância e período (reaproveitando a captura por execução da
+  issue #307) e, antes de acionar o agente, impede a próxima tentativa quando o
+  acumulado de qualquer período atingir o limite — sem interromper uma
+  execução já em andamento e sem afetar outras plataformas ou outras
+  instâncias. O reset de cada período é automático pelo calendário/fuso
+  configurado e retoma o acionamento; aumentar ou desativar o limite também
+  retoma sem reinício do processo, pois o `pipe.yml` é relido a cada avaliação.
+  Consumo não reportado pela plataforma não bloqueia (falha aberta) e é
+  registrado de forma distinta de consumo zero. Toda tentativa impedida emite
+  aviso no terminal/log e um registro estruturado (`consumo_limite_bloqueio`)
+  com instância, plataforma, unidade, consumo, limite, período e condição de
+  retomada; o novo estado persistente fica em `.pipe/consumptionLimit.json`
+  (estado interno protegido). Runbook de operação:
+  [`doc/runbook/limitador-consumo-ia-plataforma.md`](doc/runbook/limitador-consumo-ia-plataforma.md).
+
 ## [1.27.5] - 2026-11-05
 
 ### Alterado
