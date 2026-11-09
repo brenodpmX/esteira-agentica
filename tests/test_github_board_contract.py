@@ -178,3 +178,31 @@ def test_remote_columns_reads_published_options():
         "options": {o["name"]: o["id"] for o in adapter._options},
     }
     assert adapter.remote_columns("entrega") == ["backlog", "revisao", "done"]
+
+
+def test_prepare_reordena_para_ordem_da_config():
+    adapter = FakeGqlAdapter(options=_opts("a", "b", "c"))
+    boards = [{"id": "entrega", "name": "Entrega", "columns": ["c", "a", "b"]}]
+
+    adapter.prepare_structure(boards)
+
+    assert [o["name"] for o in adapter._options] == ["c", "a", "b"]
+    by_name = {o["name"]: o["id"] for o in adapter._options}
+    assert by_name == {"a": "OPT1", "b": "OPT2", "c": "OPT3"}
+
+
+def test_prepare_reordena_mantendo_retirada_no_fim():
+    adapter = FakeGqlAdapter(options=_opts("a", "velha", "b"))
+    boards = [{"id": "entrega", "name": "Entrega", "columns": ["b", "nova", "a"]}]
+
+    adapter.prepare_structure(boards)
+
+    assert [o["name"] for o in adapter._options] == ["b", "nova", "a", "velha"]
+    by_name = {o["name"]: o["id"] for o in adapter._options}
+    assert by_name["velha"] == "OPT2"
+
+
+def test_prepare_sem_mutacao_quando_ordem_ja_igual():
+    adapter = FakeGqlAdapter(options=_opts("a", "b"))
+    adapter.prepare_structure([{"id": "entrega", "name": "Entrega", "columns": ["a", "b"]}])
+    assert adapter.mutations == []
