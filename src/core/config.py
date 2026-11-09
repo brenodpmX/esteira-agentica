@@ -133,6 +133,77 @@ def validate_column_migrations(board_id: str, board_cfg: dict) -> None:
             )
 
 
+FILE_SYNC_KEY = "file-sync"
+DEFAULT_ALLOWED_FILE_TYPES = ("png", "jpg", "jpeg", "gif", "webp", "pdf",
+                              "txt", "md", "csv", "json", "log", "zip")
+ON_REJECT_SILENT = "silencioso"
+ON_REJECT_WARN = "aviso"
+ON_REJECT_BLOCK = "bloqueante"
+ON_REJECT_MODES = (ON_REJECT_SILENT, ON_REJECT_WARN, ON_REJECT_BLOCK)
+
+
+@dataclass(frozen=True)
+class FileSyncPolicy:
+    allowed_types: frozenset
+    max_size: int | None
+    on_reject: str
+
+
+def _normalize_type(value: str) -> str:
+    return value.strip().lower().lstrip(".")
+
+
+def validate_file_sync(board_id: str, board_cfg: dict) -> None:
+    path = f"boards.{board_id}.{FILE_SYNC_KEY}"
+    if FILE_SYNC_KEY not in board_cfg:
+        return
+    cfg = board_cfg[FILE_SYNC_KEY]
+    if not isinstance(cfg, dict):
+        raise ConfigError(f"{path}: deve ser um mapa (valor recebido: {cfg!r})")
+
+    if "allowed-types" in cfg:
+        types = cfg["allowed-types"]
+        if not isinstance(types, list) or not types:
+            raise ConfigError(
+                f"{path}.allowed-types: deve ser uma lista não-vazia de extensões "
+                f"(valor recebido: {types!r})"
+            )
+        for entry in types:
+            if not isinstance(entry, str) or not _normalize_type(entry):
+                raise ConfigError(
+                    f"{path}.allowed-types: extensão inválida — deve ser string "
+                    f"não-vazia (entrada: {entry!r})"
+                )
+
+    if "max-size" in cfg:
+        size = cfg["max-size"]
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+            raise ConfigError(
+                f"{path}.max-size: deve ser inteiro > 0, em bytes "
+                f"(valor recebido: {size!r})"
+            )
+
+    if "on-reject" in cfg:
+        mode = cfg["on-reject"]
+        if mode not in ON_REJECT_MODES:
+            raise ConfigError(
+                f"{path}.on-reject: deve ser um de {', '.join(ON_REJECT_MODES)} "
+                f"(valor recebido: {mode!r})"
+            )
+
+
+def resolve_file_sync_policy(config: dict, board_id: str) -> FileSyncPolicy:
+    board_cfg = ((config or {}).get("boards", {}) or {}).get(board_id) or {}
+    cfg = board_cfg.get(FILE_SYNC_KEY) if isinstance(board_cfg, dict) else None
+    cfg = cfg if isinstance(cfg, dict) else {}
+    types = cfg.get("allowed-types") or DEFAULT_ALLOWED_FILE_TYPES
+    return FileSyncPolicy(
+        allowed_types=frozenset(_normalize_type(t) for t in types),
+        max_size=cfg.get("max-size"),
+        on_reject=cfg.get("on-reject") or ON_REJECT_WARN,
+    )
+
+
 def _validate_boards(boards: dict, known_agents: set[str] | None = None):
     known_agents = known_agents or set()
     _require(boards, "platform", "boards")
@@ -155,8 +226,8 @@ def _validate_boards(boards: dict, known_agents: set[str] | None = None):
         _require(board, "name", f"boards.{board_id}")
         columns = _require(board, "columns", f"boards.{board_id}")
 
-        # Validação de forma do mapa opcional de destinos de migração (#305).
         validate_column_migrations(board_id, board)
+        validate_file_sync(board_id, board)
         
         for col_id, col in columns.items():
             _require(col, "name", f"boards.{board_id}.columns.{col_id}")
