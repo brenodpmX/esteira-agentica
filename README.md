@@ -96,6 +96,12 @@ boards:
     name: Backlog
     priority: 0
     flow: feature
+    file-sync:            # opcional: política de arquivo embutido/anexado
+                          # (issue #345); ausente = default do motor. Ver
+                          # "Sincronização de arquivos embutidos e em anexos".
+      allowed-types: [png, jpg, pdf]  # opcional; substitui a lista default
+      max-size: 5000000   # opcional; bytes; ausente = sem limite
+      on-reject: aviso     # opcional: silencioso | aviso (default) | bloqueante
     columns:
       todo:
         name: To Do
@@ -255,6 +261,7 @@ src/
 │   ├── change_queue.py     # Fila persistente de sincronismo
 │   ├── snapshot.py         # Snapshot por board
 │   ├── session.py          # Índice de sessões do agente
+│   ├── file_sync.py        # Download de arquivo embutido/anexado (board → local)
 │   └── sync.py             # Sincronização local ↔ board
 ├── adapters/               # Implementações
 │   ├── github_board.py     # Adapter para GitHub Projects V2
@@ -1089,6 +1096,59 @@ Motivos padronizados: bloqueio — `destino_ausente`, `destino_inexistente`,
 interrupção — `sem_progresso`.
 
 Runbook detalhado: [`doc/runbook/retirada-colunas.md`](doc/runbook/retirada-colunas.md).
+
+## Sincronização de arquivos embutidos e em anexos (`boards.<board_id>.file-sync`)
+
+Além do texto do corpo e dos comentários, a sincronização descendente (board →
+local) baixa os arquivos **embutidos** (ex.: imagem colada no texto) ou
+**anexados** (upload) referenciados em markdown (`![]()`, `[]()`) ou HTML
+(`<img src>`, `<a href>`) — no corpo da issue e em qualquer comentário,
+inclusive comentários novos chegando numa issue já sincronizada. O board não
+distingue embutido de anexado na API: ambos chegam como um link no texto; quem
+decide se um link é de fato um anexo do board é o adapter.
+
+- **Onde os arquivos ficam:** diretório `<coluna>/<id>-<slug>-files/`, com o
+  mesmo prefixo (`<id>-<slug>`) de `-body.md`/`-history.md`/`-addcomment.md`.
+  A pipe cria e move esse diretório junto com os 3 arquivos quando a issue
+  muda de coluna (`change-down`, `change-up` e auto-advance) e o remove ao
+  excluir a issue — o agente não precisa (nem deve) gerenciar esse ciclo de
+  vida.
+- **Política de segurança (por board, opcional):** antes de baixar, cada
+  arquivo passa por tipo e tamanho. Uma recusa nunca bloqueia a sincronização
+  do texto — só o arquivo recusado não é baixado.
+  - `allowed-types`: lista de extensões aceitas. Ausente = default do motor
+    (`png`, `jpg`, `jpeg`, `gif`, `webp`, `pdf`, `txt`, `md`, `csv`, `json`,
+    `log`, `zip`). Quando declarada, **substitui** a default para aquele
+    board (não soma).
+  - `max-size`: tamanho máximo em bytes por arquivo. Ausente = sem limite.
+  - `on-reject`: comportamento na recusa — `silencioso` | `aviso` (default) |
+    `bloqueante`.
+    - **silencioso**: nenhuma mensagem na issue; a recusa fica só em log
+      (`log.trace`), com o arquivo, a URL e o motivo.
+    - **aviso** (default): publica um único comentário na issue listando os
+      arquivos recusados e o motivo; o mesmo aviso não se repete em
+      sincronizações seguintes enquanto o conjunto de arquivos recusados não
+      mudar.
+    - **bloqueante**: além do aviso, adiciona automaticamente a label
+      `need_human` pedindo a remoção dos arquivos não permitidos; a recusa e a
+      label voltam em toda sincronização enquanto o(s) mesmo(s) arquivo(s)
+      continuar(em) referenciado(s), e cessam quando deixam de ser
+      referenciados.
+- **O que conta como anexo é decisão do adapter**, não do formato do link. No
+  GitHub, só URLs de upload do próprio board (`user-attachments`,
+  `user-images.githubusercontent.com` e anexos de issue/PR do repositório)
+  são tratadas como arquivo; um link comum para outro arquivo do repositório
+  ou para um site externo não dispara download nem passa pela política de
+  recusa.
+- Corpo ou comentário sem nenhum arquivo embutido/anexado sincroniza só o
+  texto, exatamente como antes desta funcionalidade.
+- A sincronização local → board (o agente anexar um arquivo de volta) e a
+  varredura retroativa de issues/comentários anteriores a esta entrega não
+  fazem parte deste mecanismo.
+
+> O diretório `-files` é previsível pelo prefixo da issue, mas o prompt do
+> agente não o cita explicitamente hoje — o agente que precisar dos arquivos
+> sincronizados deve localizá-lo pela mesma convenção de nome do `-body.md`.
 
 ## Otimização de Sincronização
 

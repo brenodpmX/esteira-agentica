@@ -2,6 +2,33 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.29.0] - 2026-11-09
+
+### Adicionado
+
+- **Sincronização de arquivos embutidos e em anexos (#345)**: a sincronização
+  descendente (board → local) passa a baixar, além do texto, os arquivos
+  embutidos (ex.: imagem colada no texto) ou anexados (upload) no corpo da
+  issue e em qualquer comentário, inclusive comentários novos recebidos após a
+  issue já sincronizada. Os arquivos ficam num diretório previsível
+  `<id>-<slug>-files/`, ao lado de `-body.md`/`-history.md`/`-addcomment.md`,
+  e são movidos junto com eles quando a issue muda de coluna — ciclo de vida
+  por conta da pipe, não do agente. Antes do download, uma política de
+  segurança por tipo e tamanho decide se o arquivo é aceito: lista de tipos
+  permitidos com default do motor (`png`, `jpg`, `jpeg`, `gif`, `webp`, `pdf`,
+  `txt`, `md`, `csv`, `json`, `log`, `zip`) e sem limite de tamanho por
+  padrão, ambos parametrizáveis por board em `pipe.yml`
+  (`boards.<board_id>.file-sync`). A recusa nunca bloqueia a sincronização do
+  texto — só o arquivo recusado não é baixado — e tem três comportamentos
+  configuráveis (`on-reject`): `silencioso` (só log/trace), `aviso` (default;
+  comentário único na issue listando os arquivos recusados, sem repetir
+  enquanto o conjunto não mudar) e `bloqueante` (aviso + label `need_human`
+  automática, reaplicada em toda sincronização enquanto o arquivo seguir
+  referenciado). No adapter GitHub, só contam como anexo as URLs de upload do
+  próprio board (`user-attachments`, `user-images.githubusercontent.com` e
+  anexos de issue/PR do repositório); um link comum para outro arquivo do
+  repositório ou site não é tratado como anexo.
+
 ## [1.28.0] - 2026-11-06
 
 ### Adicionado
