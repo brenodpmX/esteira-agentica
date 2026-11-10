@@ -122,6 +122,26 @@ boards:
 Cada agente precisa de um arquivo de contexto em `contexts/<plataforma>/<agente>.md`.
 Ao executar, o sistema cria arquivos vazios automaticamente e exige preenchimento.
 
+## Exemplos
+
+Dois pacotes de exemplo completos e hipotéticos (nenhum dado real) demonstram a
+Esteira de ponta a ponta, cada um com `pipe.yml`, contextos de agente já
+preenchidos, issue de exemplo e documentação própria de uso e customização:
+
+- [`exemplos/minimalista/`](exemplos/minimalista/USO.md) — a menor configuração
+  possível: uma coluna de execução, um agente, um comentário de resumo na
+  issue.
+- [`exemplos/referencia-hipotetica/`](exemplos/referencia-hipotetica/USO.md) —
+  cenário fictício de uma empresa de software, com três colunas e três
+  agentes (planejador, desenvolvedor, revisor) encadeados e abertura de pull
+  request.
+
+Siga apenas o `USO.md` do pacote escolhido para aplicar e observar o
+resultado — nenhum conhecimento adicional da implementação é necessário. O
+processo de validação interna, o roteiro de apresentação e a regra de
+manutenção desses exemplos estão documentados em
+[`doc/exemplos/`](doc/exemplos/).
+
 ## Uso
 
 ### Execução local (Python)

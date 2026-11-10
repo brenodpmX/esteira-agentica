@@ -1,0 +1,51 @@
+# Exemplo Minimalista — cenário hipotético. Nenhum dado real.
+sleep: 60
+
+log:
+  dir: logs
+  ttl: 10
+  level: INFO
+
+project:
+  name: Vitrine Minimalista (cenário hipotético)
+  summary: Cenário hipotético de uma equipe pequena que usa um único agente para executar uma tarefa e registrar o resultado na issue.
+  humans:
+    - name: Pessoa Exemplo A
+      role: Responsável hipotético pela fila de tarefas
+
+git:
+  repo:
+    main: git@github.com:exemplo-org/vitrine-minimalista-hipotetico.git
+  flow:
+    base: main
+    feature:
+      prefix: feature/
+      branch_pattern: feature/{id}-{slug}
+      create: main
+      merge: main
+
+agents:
+  kiro-cli:
+    dev:
+      name: Assistente Exemplo
+      model: claude-sonnet-5
+
+boards:
+  platform: github
+  exemplo:
+    name: Vitrine Minimalista
+    priority: 0
+    flow: feature
+    columns:
+      entrada:
+        name: Entrada
+      execucao:
+        name: Execução
+        agent: dev
+        gitevents: no-branch
+        target-prompt: Leia a issue, escreva no comentário da issue um resumo de três linhas do que foi pedido e avance a issue.
+        change:
+          advance: final
+      final:
+        name: Final
+        archive: true
