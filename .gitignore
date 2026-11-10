@@ -30,3 +30,7 @@ kiro-cli
 
 # Steering gerado em runtime pela esteira (não versionar)
 .kiro/steering/
+
+!exemplos/**/pipe.yml
+!exemplos/**/contexts/
+!exemplos/**/contexts/kiro-cli/

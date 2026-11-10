@@ -1,0 +1,14 @@
+# Exemplo de Referência — cenário hipotético. Nenhum dado real.
+objetivo: Demonstrar uma esteira com mais de uma coluna e mais de um agente trabalhando em sequência sobre a mesma issue.
+publico: Pessoas técnicas externas que já entenderam o exemplo Minimalista e querem ver um fluxo mais próximo de uma rotina de desenvolvimento.
+caso_de_uso: Empresa fictícia de software que quer que agentes planejem, desenvolvam e revisem uma tarefa, deixando rastro em comentários e um pull request.
+pre_requisitos:
+  - PIPE_SSH_KEY_FILE definida
+  - GitHub Project de teste
+  - kiro-cli instalado
+resultado_esperado: A issue de exemplo criada na coluna Entrada passa pelas colunas Planejamento, Desenvolvimento e Revisão, recebe um comentário de cada agente, tem um pull request aberto e termina na coluna Final.
+limites: Cenário fictício de um único board; não mede custo universal nem desempenho; o conteúdo implementado pelo agente é trivial e serve só para demonstrar o fluxo.
+versao_suportada: 1.29.0
+responsavel_pela_revisao: Mantenedor(a) da Esteira
+gatilho_de_revisao: Toda mudança do produto que alcance a etapa de documentação e afete pipe.yml, contextos de agente, colunas, gitevents ou o fluxo de ponta a ponta.
+diferenca_em_relacao_ao_minimalista: Em vez de uma única coluna de execução, há as colunas Planejamento, Desenvolvimento e Revisão, cada uma com um agente próprio (planejador, desenvolvedor e revisor), para mostrar a passagem de trabalho entre agentes, a criação de branch e a abertura de pull request.

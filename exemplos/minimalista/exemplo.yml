@@ -1,0 +1,13 @@
+# Exemplo Minimalista — cenário hipotético. Nenhum dado real.
+objetivo: Demonstrar, com a menor configuração possível, uma issue sendo processada por um agente de ponta a ponta.
+publico: Pessoas técnicas externas avaliando o que a Esteira faz, como se configura e qual resultado produz.
+caso_de_uso: Equipe hipotética pequena que quer que um agente leia uma tarefa e devolva um resumo curto na própria issue.
+pre_requisitos:
+  - PIPE_SSH_KEY_FILE definida
+  - GitHub Project de teste
+  - kiro-cli instalado
+resultado_esperado: A issue de exemplo criada na coluna Entrada recebe um comentário do agente com resumo de três linhas e termina na coluna Final.
+limites: Um único board, um único agente e uma única coluna de execução; não cria branch nem pull request; não mede custo universal nem desempenho.
+versao_suportada: 1.29.0
+responsavel_pela_revisao: Mantenedor(a) da Esteira
+gatilho_de_revisao: Toda mudança do produto que alcance a etapa de documentação e afete pipe.yml, contextos de agente, colunas ou o fluxo de ponta a ponta.

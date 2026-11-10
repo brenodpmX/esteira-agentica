@@ -1,0 +1,71 @@
+# Exemplo de Referência — cenário hipotético. Nenhum dado real.
+sleep: 60
+
+log:
+  dir: logs
+  ttl: 10
+  level: INFO
+
+project:
+  name: Vitrine de Referência (cenário hipotético)
+  summary: Cenário hipotético de uma empresa fictícia de software que usa agentes de IA para planejar, desenvolver e revisar uma tarefa em sequência.
+  humans:
+    - name: Pessoa Exemplo A
+      role: Responsável hipotético pelo produto e pela aprovação do escopo
+
+git:
+  repo:
+    main: git@github.com:exemplo-org/vitrine-referencia-hipotetico.git
+  flow:
+    base: main
+    feature:
+      prefix: feature/
+      branch_pattern: feature/{id}-{slug}
+      create: main
+      merge: main
+
+agents:
+  kiro-cli:
+    planejador:
+      name: Planejador Exemplo
+      model: claude-sonnet-5
+    desenvolvedor:
+      name: Desenvolvedor Exemplo
+      model: claude-sonnet-5
+    revisor:
+      name: Revisor Exemplo
+      model: claude-sonnet-5
+
+boards:
+  platform: github
+  exemplo:
+    name: Vitrine de Referência
+    priority: 0
+    flow: feature
+    columns:
+      entrada:
+        name: Entrada
+      planejamento:
+        name: Planejamento
+        agent: planejador
+        gitevents: no-branch
+        target-prompt: Leia a issue, escreva no corpo um plano curto com escopo e critérios de aceitação e avance a issue.
+        change:
+          advance: desenvolvimento
+      desenvolvimento:
+        name: Desenvolvimento
+        agent: desenvolvedor
+        gitevents: create
+        target-prompt: Implemente o plano da issue em uma branch de trabalho, registre o que foi feito no comentário e avance a issue.
+        change:
+          advance: revisao
+      revisao:
+        name: Revisão
+        agent: revisor
+        gitevents: merge
+        target-prompt: Revise a branch de trabalho contra os critérios de aceitação, abra o pull request e registre o parecer no comentário.
+        change:
+          advance: final
+      final:
+        name: Final
+        archive: true
