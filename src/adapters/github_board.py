@@ -742,8 +742,9 @@ class GitHubBoardAdapter(BoardPort):
         exclusiva do núcleo de decisão via `contract_column`, após drenar e
         confirmar a origem vazia.
 
-        A lista efetiva publicada passa a ser: opções existentes (na ordem
-        remota, com ids preservados) seguida das colunas desejadas ainda ausentes.
+        A lista efetiva publicada passa a ser: colunas desejadas na ordem da
+        config (ids preservados, ausentes criadas) seguida das opções remotas
+        retiradas ainda retidas. A ordem remota é sempre realinhada à config.
         """
         self._penalty_check()
 
@@ -778,14 +779,13 @@ class GitHubBoardAdapter(BoardPort):
             else:
                 existing = {o["name"]: o["id"] for o in status_field.get("options", [])}
                 current_order = [o["name"] for o in status_field.get("options", [])]
-                # União aditiva: preserva TODAS as opções remotas (ordem/ids) e
-                # acrescenta ao final apenas as colunas desejadas ainda ausentes.
                 missing = [c for c in columns if c not in existing]
-                if missing:
-                    effective = current_order + missing
+                retained = [c for c in current_order if c not in columns]
+                effective = list(columns) + retained
+                if effective != current_order:
                     log.info("GitHub",
                              f"Preparando colunas de '{board_name}' | criadas: {missing} "
-                             f"| preservadas: {current_order}")
+                             f"| retidas: {retained} | ordem: {effective}")
                     self._update_status_options(
                         status_field["id"], effective, existing, board_name)
                     status_field = self._get_status_field(project["id"], board_name)

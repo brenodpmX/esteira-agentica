@@ -29,6 +29,17 @@ Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
   anexos de issue/PR do repositório); um link comum para outro arquivo do
   repositório ou site não é tratado como anexo.
 
+## [1.28.1] - 2026-11-10
+
+### Corrigido
+
+- **Ordem das colunas do board voltou a ser sincronizada**: desde a 1.17.0
+  (#305) a preparação estrutural era apenas aditiva e mantinha a ordem remota,
+  então reordenar `columns` no `pipe.yml` não reordenava o Status no GitHub.
+  `prepare_structure` agora sempre realinha as opções à ordem da config
+  (ids preservados, colunas ausentes criadas) e mantém ao final as colunas
+  retiradas ainda retidas, que continuam sendo removidas apenas pela contração.
+
 ## [1.28.0] - 2026-11-06
 
 ### Adicionado
