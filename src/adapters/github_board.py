@@ -1,10 +1,13 @@
 """GitHub Board Adapter - implementa BoardPort para GitHub Projects V2."""
 
 import json
+import os
 import subprocess
 import time
 import re
+import urllib.request
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from src.core.board import BoardPort, Issue, PenaltyException
 from src.core.log import log
@@ -13,6 +16,23 @@ from src.core.log import log
 # Sentinela para diferenciar "não informado" (buscar do board) de None
 # (valor conhecido = sem parent). Usado nos setters que aceitam estado conhecido.
 _UNSET = object()
+
+_ATTACHMENT_URL = re.compile(
+    r"^https://(?:github\.com/user-attachments/(?:assets|files)/"
+    r"|(?:private-)?user-images\.githubusercontent\.com/"
+    r"|github\.com/[^/\s]+/[^/\s]+/(?:files|assets)/)",
+    re.IGNORECASE,
+)
+_ATTACHMENT_AUTH_HOSTS = {"github.com"}
+_ATTACHMENT_TIMEOUT = 60
+
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urlparse(newurl).hostname not in _ATTACHMENT_AUTH_HOSTS:
+            new.remove_header("Authorization")
+        return new
 
 
 class GitHubBoardAdapter(BoardPort):
@@ -830,6 +850,44 @@ class GitHubBoardAdapter(BoardPort):
         if not status_field:
             return []
         return [o["name"] for o in status_field.get("options", [])]
+
+    def is_attachment(self, url: str) -> bool:
+        return bool(_ATTACHMENT_URL.match(url or ""))
+
+    def _attachment_token(self) -> str | None:
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        if token:
+            return token
+        result = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
+    def _open_attachment(self, url: str, method: str):
+        headers = {"User-Agent": "esteira-agentica"}
+        if urlparse(url).hostname in _ATTACHMENT_AUTH_HOSTS:
+            token = self._attachment_token()
+            if token:
+                headers["Authorization"] = f"token {token}"
+        request = urllib.request.Request(url, method=method, headers=headers)
+        opener = urllib.request.build_opener(_StripAuthOnRedirect)
+        return opener.open(request, timeout=_ATTACHMENT_TIMEOUT)
+
+    def attachment_metadata(self, url: str) -> dict:
+        try:
+            with self._open_attachment(url, "HEAD") as response:
+                length = response.headers.get("Content-Length")
+                return {
+                    "size": int(length) if length and length.isdigit() else None,
+                    "content_type": response.headers.get("Content-Type"),
+                }
+        except Exception as exc:
+            log.trace("GitHub", f"{self._tp}HEAD de anexo falhou: {exc}", url=url)
+            return {}
+
+    def download_attachment(self, url: str) -> bytes:
+        with self._open_attachment(url, "GET") as response:
+            return response.read()
 
     def list_issues(self, board_id: str) -> list[Issue]:
         self._penalty_check()

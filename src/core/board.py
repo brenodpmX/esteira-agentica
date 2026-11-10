@@ -268,6 +268,15 @@ class BoardPort(ABC):
         log.warning("Board", "remote_columns não implementado neste adapter")
         return []
 
+    def is_attachment(self, url: str) -> bool:
+        return False
+
+    def attachment_metadata(self, url: str) -> dict:
+        return {}
+
+    def download_attachment(self, url: str) -> bytes:
+        raise NotImplementedError("download_attachment não implementado neste adapter")
+
 
 class Board:
     """Core de boards - usa port para operações."""
@@ -371,6 +380,15 @@ class Board:
     def remote_columns(self, board_id: str) -> list[str]:
         """Nomes das opções de Status publicadas no board remoto (ordenadas)."""
         return self._port.remote_columns(board_id)
+
+    def is_attachment(self, url: str) -> bool:
+        return self._port.is_attachment(url)
+
+    def attachment_metadata(self, url: str) -> dict:
+        return self._port.attachment_metadata(url)
+
+    def download_attachment(self, url: str) -> bytes:
+        return self._port.download_attachment(url)
 
     @staticmethod
     def _boards_from_config(config: dict) -> list[dict]:

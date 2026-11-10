@@ -15,6 +15,7 @@ from src.core.commands import (apply_events_to_commands,
                                split_body)
 from src.core.config import resolve_max_attempts
 from src.core.dead_letter import DeadLetterEntry, DeadLetterQueue, sanitize_reason
+from src.core.file_sync import relocate_files_dir, remove_files_dir, sync_issue_files
 from src.core.log import log
 from src.core.snapshot import BOARDS_DIR, Snapshot
 from src.core.sync_circuit_breaker import SyncCircuitBreaker, SyncEscalation
@@ -1297,11 +1298,12 @@ def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue:
     # Body
     files["body"].write_text(_compose_down_body(issue), encoding="utf-8")
 
-    # History
     comments = board_obj.list_comments(board_id, item.id)
     files["history"].write_text(_format_history(comments), encoding="utf-8")
 
-    # Addcomment vazio
+    if sync_issue_files(board_id, issue, comments, files["body"], board_obj, config):
+        files["body"].write_text(_compose_down_body(issue), encoding="utf-8")
+
     files["addcomment"].write_text("", encoding="utf-8")
 
     log.info("Sync", f"[{board_id}] create-down #{item.id} '{issue.title}' -> {column}",
@@ -1384,6 +1386,7 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
         board_obj.move_issue(board_id, item.id, current_col, from_column=old_col)
         _fire_column_events(board_id, item.id, board_obj, config, old_col, current_col)
         issue_data["column"] = current_col
+    relocate_files_dir(board_id, body_path)
 
     # Addcomment: processa o arquivo de QUALQUER coluna (simétrico à detecção
     # em detect_local_changes, que varre `rglob(slug-addcomment)`). Um addcomment
@@ -1481,7 +1484,6 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
         new_files = _issue_files(board_id, remote_col, item.id, slug.split("-", 1)[1] if "-" in slug else slug)
         new_files["body"].parent.mkdir(parents=True, exist_ok=True)
         body_path.rename(new_files["body"])
-        # Mover history e addcomment
         old_hist = body_path.parent / f"{slug}-history.md"
         old_ac = body_path.parent / f"{slug}-addcomment.md"
         if old_hist.exists():
@@ -1489,19 +1491,17 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
         if old_ac.exists():
             old_ac.rename(new_files["addcomment"])
         body_path = new_files["body"]
+        relocate_files_dir(board_id, body_path)
         current_col = remote_col
-        # Sem move_issue aqui: no down quem manda é o board. Escrever de volta a
-        # coluna que ele já tem custa 2 chamadas GraphQL por movimentação manual.
-        # A única escrita legítima no board é a reaplicação de coluna perdida,
-        # tratada acima.
 
-    # Atualizar history
     slug = body_path.stem.removesuffix("-body")
     comments = board_obj.list_comments(board_id, item.id)
     history_file = body_path.parent / f"{slug}-history.md"
     history_file.write_text(_format_history(comments), encoding="utf-8")
 
-    # Limpar addcomment
+    if sync_issue_files(board_id, issue, comments, body_path, board_obj, config):
+        body_path.write_text(_compose_down_body(issue), encoding="utf-8")
+
     ac_file = body_path.parent / f"{slug}-addcomment.md"
     ac_file.write_text("", encoding="utf-8")
 
@@ -1599,7 +1599,6 @@ def _apply_delete_down(board_id: str, item: ChangeItem, board_obj: Board,
     # Captura as relações da issue ANTES de removê-la do snapshot (Remédio 2).
     deleted_data = snap.issue(item.id)
 
-    # Remover arquivos
     body_path = _find_issue_files(board_id, item.id)
     if body_path:
         slug = body_path.stem.removesuffix("-body")
@@ -1607,6 +1606,7 @@ def _apply_delete_down(board_id: str, item: ChangeItem, board_obj: Board,
             f = body_path.parent / f"{slug}{suffix}"
             if f.exists():
                 f.unlink()
+        remove_files_dir(body_path)
 
     # Remédio 2: remover bloqueios recíprocos nas issues apontadas + fullsync.
     _cleanup_block_relations_on_delete(item.id, deleted_data, board_obj, queue)
