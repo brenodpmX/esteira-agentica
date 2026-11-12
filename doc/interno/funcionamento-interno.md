@@ -1,0 +1,1150 @@
+# Funcionamento interno da Esteira Agêntica
+
+> Documento **interno**: descreve a mecânica de desenvolvimento do motor
+> (orquestração, sincronização, proteções e histórico de incidentes). Foi
+> remanejado do `README.md`, que passou a ser a porta de entrada pública do
+> produto. A classificação e o responsável deste documento estão em
+> [`doc/governanca-editorial/inventario-conteudo-publico.md`](../governanca-editorial/inventario-conteudo-publico.md).
+> A referência pública de cada chave do `pipe.yml` vive em
+> [`doc/configuracao/referencia.md`](../configuracao/referencia.md).
+
+## Estrutura
+
+```
+src/
+├── core/                   # Domínio
+│   ├── log.py              # Logging dual (terminal + arquivo)
+│   ├── config.py           # Validação do pipe.yml
+│   ├── agent.py            # AgentPort + build_prompt + PROTECTED_PATHS
+│   ├── composition.py      # Camadas do prompt/contexto + medição por execução
+│   ├── context_generator.py # Gera CONTEXT.md + agente pipe_context no startup
+│   ├── board.py            # Board core + BoardPort + ChangeItem
+│   ├── commands.py         # Comandos @--- no body (parse/serialize)
+│   ├── change_queue.py     # Fila persistente de sincronismo
+│   ├── snapshot.py         # Snapshot por board
+│   ├── session.py          # Índice de sessões do agente
+│   ├── file_sync.py        # Download de arquivo embutido/anexado (board → local)
+│   └── sync.py             # Sincronização local ↔ board
+├── adapters/               # Implementações
+│   ├── github_board.py     # Adapter para GitHub Projects V2
+│   └── kiro_cli_agent.py   # Adapter para execução via kiro-cli
+└── __main__.py             # Entrada principal (orquestração)
+
+.pipe/boards/<id>/          # Diretórios de boards e snapshots
+.pipe/sessions.json         # Índice (board/issue/agente) → session_id
+.pipe/CONTEXT.md            # Contexto do sistema gerado no startup (protegido)
+.kiro/agents/pipe_context.json  # Agente kiro-cli gerado com o contexto do sistema
+contexts/<platform>/<agent>.md  # Contextos dos agentes
+repo/                       # Repositórios clonados
+logs/                       # Logs diários (JSON) + logs de agente (MD)
+pipe.yml                    # Configuração
+```
+
+## Loop Principal
+
+```
+main()
+├── check_config()         # Valida pipe.yml, SSH, contexts
+├── startup()              # Configura SSH, gera CONTEXT.md, clona repos
+├── board_startup_sync()   # Estrutura local + 1ª sincronização de cada board
+│
+└── while running:
+    ├── detect_local_all()  # Descoberta local (up) em TODOS os boards → bool
+    ├── sync_remote_board() # Sincronização (down) do board atual → bool
+    ├── process_queue()     # Aplica a fila global de mudanças
+    ├── keep_task()         # Seleciona próxima tarefa → task | AUTO_ADVANCED | None
+    ├── call_agent()        # Executa agente com prompt construído
+    └── sleep_time()        # Intervalo entre ciclos (condicional)
+```
+
+> **Sincronização única:** a descoberta remota (`down`) tem um único caminho
+> (`sync_remote`) que, a cada acionamento, reconcilia o board inteiro contra o
+> estado local — criações, modificações, poda por ausência e dependências de
+> bloqueio —, sem corte por data da última atualização e sem um acionamento
+> diário separado. Não há mais distinção entre sincronização "completa" e
+> "reduzida/incremental".
+
+### sleep_time (controle de ociosidade)
+
+Ativado apenas quando **ambas** as condições são verdadeiras:
+- a descoberta não movimentou nada (`detect_local_all()` e `sync_remote_board()` retornaram `False`)
+- `keep_task()` retornou `None` (nenhuma tarefa elegível)
+
+Quando ativado, dorme pelo tempo definido em `sleep` no `pipe.yml` (em segundos).
+Se houve qualquer atividade (sync movimentou algo OU existe tarefa para executar), o loop prossegue imediatamente sem pausa.
+
+## Seleção de Tarefas (keep_task)
+
+- Boards ordenados por prioridade (menor = mais prioritário)
+- Dentro do board, varre coluna a coluna da última para a primeira (`backlog`/`todo` por último)
+- Dentro de cada coluna, pega a issue elegível mais antiga (por data)
+- Retorno tri-estado: `task` (executa), `AUTO_ADVANCED` (avançou uma issue do `todo`; loop mantém o board e força novo sync), `None` (nada a fazer; loop avança de board)
+- Auto-advance de coluna `todo` para próxima coluna (só ocorre se nenhuma coluna posterior tiver tarefa pronta); move os arquivos, atualiza o snapshot e enfileira o `change-up` para o sync propagar ao board
+- `parallel: false` → bloqueia auto-advance se já existe issue ativa
+- Issues com `/need_human` ou `/blocked_by` no body são ignoradas
+- Issues reexecutadas há menos de `boards.rerun_cooldown` segundos são puladas
+  (ver abaixo)
+
+### Cooldown de reexecução (`boards.rerun_cooldown`)
+
+Impede que a mesma issue seja reentregue ao agente em loop apertado quando falha
+repetidamente. Sem isso, uma issue que não avança consome quota do modelo a cada
+ciclo sem progresso.
+
+- Cache interno em memória: `(board, coluna, id)` → instante da última entrega.
+- A chave **inclui a coluna** de propósito: se a issue avança no board, é
+  trabalho novo e fica elegível imediatamente, sem esperar o cooldown.
+- Entradas expiradas são purgadas a cada acionamento do `keep_task`, para o cache
+  não crescer indefinidamente com issues que saíram do board.
+- `0` ou ausente desabilita e esvazia o cache.
+
+O cooldown é por processo (não persiste entre reinícios): reiniciar a esteira
+libera todas as issues imediatamente.
+
+> **Atenção ao atualizar de 1.8.x:** nas versões 1.8.0–1.8.3 essa chave era
+> validada mas **não tinha efeito** (regressão do merge `c27f813`, corrigida na
+> 1.9.0). Se o seu `pipe.yml` já a declara, o comportamento muda ao atualizar.
+> Para manter o comportamento anterior, remova a chave ou defina `0`.
+
+### Limitador de reexecuções por contexto (`agent_circuit_break`)
+
+Mecanismo **opt-in e distinto do cooldown**: enquanto o cooldown apenas **espaça**
+reexecuções (sem teto), o limitador impõe um **teto** de execuções por janela de
+tempo. Conta toda entrega ao agente por contexto `(board, coluna, issue)` no
+instante da entrega (independe do resultado) e, com a política configurada,
+**bloqueia a execução excedente antes de iniciar**, marca a issue com
+`need_human`, publica um comentário acionável idempotente e **zera a franquia**
+do contexto (a remoção de `need_human` concede uma nova franquia completa de `N`).
+
+```yaml
+agent_circuit_break:    # opcional, na RAIZ (fora de 'boards'); ausente = inativo
+  executions: 5         # N: máximo de execuções no contexto (inteiro >= 1)
+  window: 3600          # T: janela em segundos (inteiro >= 1)
+```
+
+- **Opt-in estrito:** sem o bloco, nada é bloqueado e o comportamento atual é
+  preservado — a contagem interna continua ocorrendo.
+- **Identidade do contexto:** `(board, coluna, issue)`. Mudar de coluna reinicia
+  a contagem (contexto novo, sem herança), inclusive ao revisitar coluna já usada.
+- **Janela (bordas):** contam só ocorrências com idade **estritamente menor que
+  `T`** (idade igual a `T` já expira).
+- **Isolamento:** uma issue bloqueada **não trava a fila** — é pulada por
+  `keep_task` (via `need_human`) e as demais seguem sendo processadas.
+- **Persistente:** o estado sobrevive a reinício (ao contrário do cooldown, que é
+  por processo). O arquivo `.pipe/agentCircuitBreak.json` é estado interno
+  protegido (nunca exposto a agente/comentário/log), gravado atomicamente.
+- **Validação na inicialização:** configuração parcial/inválida falha na
+  verificação de configuração, antes de qualquer alteração de estado, citando o
+  caminho do campo. Com a política ativa, o adaptador de board precisa ter
+  capacidade real de aplicar label (`need_human`); caso contrário, a esteira
+  falha na inicialização.
+
+> **Cooldown × Limitador:** o cooldown **desacelera**; o limitador **contém e
+> pede ajuda humana**. Os dois coexistem sem interferência. Runbook completo:
+> [`doc/runbook/limitador-reexecucoes-agente.md`](../runbook/limitador-reexecucoes-agente.md).
+
+### Resolução automática de bloqueios
+
+Uma issue com `/blocked_by`/`/blocks` no body não avança. Como o GitHub mantém
+a dependência mesmo com a bloqueadora fechada — e removê-la no board não altera
+o `updated_at` (logo não vira `change-down`) —, bloqueios obsoletos são limpos
+automaticamente em três situações:
+
+1. **Ao arquivar** (`/archive` no body ou coluna com `on_in:[archive]`): os
+   bloqueios da issue são removidos antes de arquivar, e cada issue vinculada
+   recebe um `change-down fullsync` para reconciliar (desbloquear).
+2. **Ao deletar** (up ou down): as issues apontadas pela deletada têm o vínculo
+   de bloqueio removido no board e recebem `change-down fullsync`.
+3. **Na inicialização**: toda mudança detectada/recuperada sobe como fullsync,
+   reconciliando as dependências.
+
+## Execução de Agentes
+
+### Composição em camadas do prompt e do contexto
+
+O conteúdo entregue ao agente é separado em quatro camadas por
+responsabilidade, cada uma com **origem única**. Cada execução recebe apenas o
+que é relevante à tarefa, sem repetir material invariável e sem remover nenhum
+guardrail:
+
+| Camada | Conteúdo | Origem | Sempre carregada? |
+|--------|----------|--------|-------------------|
+| Política invariável | Guardrails, manual `@---`, estrutura do `-body.md`, criação de issues, git flow | steering `.kiro/steering/esteira.md` | sim |
+| Contexto do projeto | Metadados do projeto e papéis humanos | steering | sim |
+| Workflow da etapa | Objetivo/passos/git da coluna + transição | prompt dinâmico (`build_prompt`) | não |
+| Dados da tarefa | Título, caminhos dos arquivos, branch resolvido | prompt dinâmico | não |
+
+O que muda no comportamento para quem opera:
+
+- **Prompt dinâmico enxuto:** o manual completo dos comandos `@---` deixou de
+  ser embutido em toda execução; agora vive **exclusivamente** no steering. O
+  prompt dinâmico não contém mais nenhum ponteiro ou menção ao manual `@---` —
+  nem completo, nem sob demanda.
+- **Contrato de carregamento (fail-closed):** antes de acionar o agente, a
+  esteira verifica que o contexto obrigatório (steering) está carregado e emite
+  um **registro de medição por execução** no log (`composicao_medicao`), com
+  caracteres/palavras/linhas por camada, `total_sempre_carregado`,
+  `tokens_entrada` e `instrucoes_obrigatorias_carregadas`. Sem o contexto
+  obrigatório, o agente **não** é acionado
+  (`instrucoes_obrigatorias_carregadas: false` + motivo; evento
+  `composicao_fail_closed`).
+- **Adapter sem tokens:** o `kiro-cli` não expõe contagem de tokens de entrada;
+  o registro usa `tokens_entrada: null`, sem falhar.
+- **Nome de branch único:** o nome é resolvido **uma única vez** por execução a
+  partir do `branch_pattern` do flow e reutilizado idêntico em todos os blocos
+  (criação e merge/PR). Marcador não resolvível com os dados da tarefa é um erro
+  de configuração sinalizado (`ConfigError`), sem gerar nome parcial.
+
+Contrato técnico completo e tabela de chaves:
+[`doc/architecture/composicao-camadas-prompt-contexto/contrato.md`](../architecture/composicao-camadas-prompt-contexto/contrato.md).
+
+### Timeout de execução (`agent_timeout_seg`)
+
+O timeout máximo de **uma** execução do agente (kiro-cli) é configurável por
+pipe via a chave opcional `agent_timeout_seg`, na raiz do `pipe.yml` (inteiro
+`> 0`, em segundos). Ausente ⇒ default `3600` (1h), o mesmo valor que já era
+fixo no motor — um `pipe.yml` sem a chave mantém o comportamento atual sem
+qualquer mudança.
+
+O valor configurado é usado tanto no `timeout` do `subprocess.run` que
+executa o agente quanto na mensagem registrada quando o tempo se esgota
+(`[TIMEOUT] Agente excedeu Ns`), que agora reflete o valor efetivamente em
+vigor — não mais um número fixo. Valor inválido (`<= 0`, não inteiro,
+booleano) é rejeitado na validação do `pipe.yml` com `ConfigError` citando a
+chave `agent_timeout_seg`, antes de qualquer execução de agente. O valor é
+único e global ao pipe — não há timeout diferente por board, coluna ou etapa.
+
+### gitevents (controle de branches)
+
+| Valor | Comportamento |
+|-------|--------------|
+| `create` | Cria branch a partir da origem |
+| `use` | Usa branch existente |
+| `merge` | Usa branch existente + cria PR |
+| `create-merge` | Cria branch + cria PR |
+| `no-branch` | Sem operações de git |
+
+### Roteamento de agente por hub (`agent-hub`)
+
+Cada coluna define um agente default no atributo `agent`. O valor de
+roteamento de uma issue é armazenado como label `agent-hub-<valor>` no GitHub
+(ex.: `agent-hub-low`, `agent-hub-senior`, `agent-hub-deep`). O sufixo é livre —
+pode representar nível, função, profundidade ou qualquer critério. Essa label é
+sincronizada nativamente pelo board, garantindo que o valor persista entre
+ciclos de sync.
+
+Se a issue possuir uma label `agent-hub-<valor>` e esse `<valor>` for uma
+chave do mapa `agent-hub` da coluna, a esteira usa o agente indicado no
+valor. Caso contrário, usa o `agent` default.
+
+No fluxo do planning-poker, o agente escreve `/agent-hub-<valor>` no bloco
+`@---` do body — um token único, no mesmo formato do label. O sync-up lê esse
+campo via `all_labels()` e grava a label `agent-hub-<valor>` no GitHub
+automaticamente. A resolução de agente em `resolve_agent_id()` lê diretamente
+`issue["labels"]` — sem dependência de arquivo local.
+
+Como cada agente carrega o próprio `model`, trocar o agente por hub troca
+também o model efetivo da execução.
+
+```yaml
+columns:
+  desenvolvimento:
+    agent: engineering          # default
+    agent-hub:
+      low: generic              # agent-hub-low  -> generic
+      high: senior-engineering  # agent-hub-high -> senior-engineering
+```
+
+Validação (`config.py`): `agent-hub` deve ser um mapa `<valor>: <agente>`,
+a coluna precisa ter um `agent` default, e todo agente referenciado deve existir
+em `agents`.
+
+### Detecção de falha (apenas canais estruturados)
+
+A classificação de uma execução como sucesso ou falha considera **apenas** os
+canais estruturados emitidos pela ferramenta de execução — **nunca** a narrativa
+(texto livre) escrita pelo próprio agente. É o mesmo princípio já adotado na
+detecção de rate limit (não escanear o corpo textual da resposta).
+
+Sinais que afirmam **falha**:
+
+| Canal estruturado | Marcador |
+|-------------------|----------|
+| Código de saída diferente de zero | `[exit-code: N≠0]` |
+| Timeout | `[TIMEOUT]` |
+| Erro interno (falha ao iniciar a ferramenta) | `[ERRO]` |
+| Saída de erro estruturada da própria ferramenta | bloco/marcador de erro |
+
+A **ausência de sinal estruturado é sucesso**: um output vazio, curto ou cuja
+prosa cita uma frase associada a erro (ex.: "Kiro is having trouble responding")
+é classificado como **sucesso**. Isso elimina o falso positivo histórico em que
+a narrativa do agente inflava a métrica de falha. A causa real da falha continua
+sendo extraída dos canais estruturados e registrada no log, com a origem do
+canal (ex.: distinguir `exit-code` de `timeout` de `erro interno`).
+
+### Recuperação de interrupção transitória
+
+A ferramenta de execução pode abortar o turno no meio, de forma transitória,
+quando o streaming da requisição/resposta quebra. Esse aborto é tratado com a
+política de segurança da ADR #217 (fail-closed), **sem** retry inline cego de
+uma execução possivelmente parcial. O resultado da execução é classificado em:
+
+| Classe | Significado | Tratamento |
+|--------|-------------|------------|
+| `sucedido` | sem sinal estruturado de falha | segue o fluxo normal |
+| `falha` | falha definitiva por canal estruturado | registrada; sem retry inline |
+| `UNKNOWN_OUTCOME` | resultado ambíguo (dispatch failure / `InternalServerError` após output parcial / timeout) | **fail-closed**: uma única invocação por entrega, sem backoff; output, request ID, causa e `session_id` preservados; reconciliação e eventual retomada ficam a cargo do loop normal |
+| `DEFINITE_NOT_STARTED` | não-inicialização comprovada mecanicamente (ex.: `kiro-cli` ausente no PATH) | **único** caso de retry inline, com backoff crescente até o limite |
+| `falha persistente` | retry seguro esgotado | encerra sem laço infinito; log registra total de tentativas e última causa |
+
+O retry inline atua **somente** sobre `DEFINITE_NOT_STARTED` — quando há
+evidência estruturada de que o subprocesso **não começou**, situação em que
+nenhum efeito colateral (branch, commit, push, movimentação de coluna) pôde ser
+aplicado. Ausência de tool call em output parcial **não** é evidência de
+não-inicialização: é `UNKNOWN_OUTCOME`. O resultado ambíguo é registrado de
+forma acionável (causa + evidência preservada), distinto de sucesso e de falha
+definitiva.
+
+Os parâmetros do retry seguro vêm da chave opcional `retry` do `pipe.yml`,
+aplicáveis **apenas** a `DEFINITE_NOT_STARTED`:
+
+| Parâmetro | Restrição | Default |
+|-----------|-----------|---------|
+| `retry.max_tentativas` | inteiro > 0 | `3` |
+| `retry.backoff_inicial_seg` | inteiro ≥ 0 | `30` |
+| `retry.backoff_fator` | número ≥ 1.0 | `2.0` |
+
+A ausência da chave `retry` (ou de qualquer subchave) aplica os defaults.
+Valores fora das restrições são rejeitados na validação do `pipe.yml`
+(`ConfigError` nomeando a chave).
+
+> **Fora de escopo desta entrega:** a fronteira idempotente completa da seção 4
+> da ADR #217 (chave estável, journal/outbox durável, interposição real de
+> commit/push/movimento de coluna, verificação de pós-condição) e, por
+> consequência, o retry automático de uma execução possivelmente parcial
+> (`UNKNOWN_OUTCOME`). Ficam para entrega dedicada futura.
+
+### Caminhos de apoio (templates)
+
+Os modelos de documento/issue referenciados pela configuração e pelos contextos
+de agente são resolvidos a partir de uma **fonte única**, `contexts/templates/`
+— tanto os caminhos dirigidos por configuração quanto os derivados por código
+apontam para o mesmo diretório. A resolução é feita **por item**: um caminho
+inexistente é sinalizado isoladamente e **não cancela** as demais chamadas de
+ferramenta válidas do lote, evitando o desperdício de turnos e crédito que
+ocorria quando um único caminho ausente invalidava o lote inteiro.
+
+### Log de execução
+
+Cada execução gera um arquivo em `logs/<issue_id>/<timestamp>.md` com:
+- **Parâmetros**: plataforma, agente, model, agent_hub, board, coluna, issue e,
+  quando disponíveis, `participation_intent` e `origin_board` (ver "Integridade
+  de participação entre quadros") — correlacionam a execução à intenção de
+  participação da issue no momento do despacho
+- **Prompt**: prompt completo enviado ao agente
+- **Chat**: diálogo da execução (preenchido pelo adapter)
+
+### Registro de execução de agentes (`registro.retencao_dias`)
+
+Além do log detalhado em Markdown (acima, efêmero por `log.ttl`), ao final de
+**cada** execução de agente e em **qualquer** desfecho a esteira grava um
+**registro de negócio estruturado e persistente** (issue #307). Esse registro é
+a base durável para responder, em lote e **sem abrir nenhum log individual**:
+quantas execuções uma issue exigiu, quanto tempo e consumo cada etapa demandou,
+quais desfechos ocorreram, quanto esforço foi repetido sem a issue progredir e
+qual o esforço agregado de uma issue principal somada a todos os seus
+descendentes históricos conhecidos.
+
+O que muda para quem opera:
+
+- **Sempre existe um registro por execução**, mesmo depois que o log detalhado
+  correspondente tiver expirado por TTL. O armazenamento durável fica em
+  `.pipe/executionRecords.json` (estado interno protegido — ver tabela de
+  `PROTECTED_PATHS`), nunca exposto ao agente.
+- **Desfecho técnico e avanço da issue são coisas distintas.** O registro guarda
+  o `resultado` técnico — exatamente um de `concluída`, `falha terminal`,
+  `timeout`, `interrompida` ou `desconhecida` (nunca vazio) — e, em separado, se
+  a issue **avançou** de etapa. Uma falha recuperada e uma execução que não fez a
+  issue progredir ficam visíveis, não ocultas.
+- **Repetição sem avanço é identificada.** Reexecutar a mesma issue na mesma
+  etapa (mesmo board e mesma coluna) depois de uma execução que não a fez
+  progredir é marcado como repetição sem avanço; mudar de etapa descaracteriza.
+- **Consumo com proveniência.** Cada registro guarda `valor`, `unidade`,
+  `origem` e `disponibilidade`. **Consumo não informado** (a plataforma não
+  reportou) é distinto de **consumo zero reportado** — nunca se confundem.
+  "Tokens" é apenas o rótulo geral; cada plataforma preserva sua unidade nativa
+  (ex.: créditos), sem conversão. O `kiro-cli` não expõe contagem de tokens, logo
+  o consumo fica `indisponível` — comportamento correto, não falha.
+- **Linhagem histórica resiliente à limpeza local.** A consulta por issue raiz
+  consolida a raiz e todos os seus descendentes **conhecidos** (aqueles cuja
+  existência e parentesco foram capturados por algum registro de execução),
+  reconstruindo a árvore **só** dos registros próprios — nunca dos arquivos
+  locais nem dos logs. Mesmo depois que a esteira **arquiva** uma issue (apagando
+  seus `-body.md`/`-history.md`/`-addcomment.md`) e/ou **expurga** os logs por
+  TTL, o descendente continua aparecendo na linhagem com existência, parentesco e
+  métricas preservados. Descendente conhecido que nunca executou aparece
+  sinalizado como "sem registro", nunca omitido; ciclos e múltiplos caminhos não
+  geram dupla contagem.
+- **Retenção própria, desacoplada do log.** A chave **opcional**
+  `registro.retencao_dias` (na raiz do `pipe.yml`, inteiro `> 0`) controla por
+  quantos dias um registro vive. **Ausente ⇒ nenhum expurgo automático** (estado
+  seguro por padrão). Presente ⇒ registro com idade `>= retencao_dias` fica
+  elegível a expurgo, executado pela esteira no startup (após a limpeza dos
+  logs). É o **único** caminho de remoção: **não há exclusão manual** de registro
+  por nenhum papel, e **excluir uma issue não apaga** seus registros.
+
+```yaml
+registro:               # opcional, na RAIZ do pipe.yml
+  retencao_dias: 30     # dias (inteiro > 0); ausente = sem expurgo automático
+```
+
+Valores inválidos (`retencao_dias` não inteiro ou `<= 0`, campo desconhecido sob
+`registro`) são rejeitados na validação do `pipe.yml` (`ConfigError` citando o
+caminho), antes de qualquer alteração de estado.
+
+> A contagem de "quantas execuções houve no contexto `(board, coluna, issue)`"
+> continua tendo **fonte única** em `agent_circuit_break` (ver "Limitador de
+> reexecuções por contexto"): este registro **adere** a ela e **não** cria
+> contador paralelo — grava um artefato de negócio por execução. Contrato técnico
+> completo (campos, taxonomia, mapeamento e saída da consulta de linhagem):
+> [`doc/architecture/registro-execucao-agentes-linhagem-historica/contrato.md`](../architecture/registro-execucao-agentes-linhagem-historica/contrato.md).
+
+### Limitador opcional de consumo de IA por plataforma (`agents.<plataforma>.limits`)
+
+Uma mesma conta de plataforma de IA pode ser usada por várias instâncias da
+esteira, e uma mesma instância pode acionar mais de uma plataforma. Sem uma
+cota independente por plataforma, um trabalho de menor prioridade pode
+consumir a capacidade reservada para outro. O limitador (issue #311) permite
+declarar, **por plataforma**, tetos opcionais de consumo para os períodos
+diário, semanal e mensal — combináveis entre si — usando como insumo o
+consumo por execução já capturado pela issue #307
+(`.pipe/executionRecords.json`).
+
+- **Opt-in estrito:** sem o bloco `limits` sob a plataforma, nada é acumulado
+  nem verificado — comportamento idêntico ao atual.
+- **Decisão antes do agente:** quando o consumo acumulado de **qualquer**
+  período configurado atinge ou ultrapassa o limite, a **próxima** tentativa
+  de acionar aquela plataforma é impedida antes do despacho. Uma execução que
+  já começou **nunca** é interrompida, mesmo que ultrapasse o limite durante a
+  execução — por isso o controle não é um teto absoluto, e sim um bloqueio da
+  próxima chamada.
+- **Isolamento:** o bloqueio afeta somente a combinação instância/plataforma.
+  Outras plataformas da mesma instância e a mesma plataforma em outra
+  instância seguem operando normalmente (cada instância tem o seu próprio
+  `.pipe/`).
+- **Falha aberta:** quando a plataforma não reporta consumo ao fim da
+  execução, o acionamento continua normalmente e a indisponibilidade é
+  registrada à parte, nunca confundida com consumo zero.
+
+```yaml
+agents:
+  <plataforma>:
+    <agente>:
+      name: <string>
+    limits:                      # OPCIONAL — ausente = sem controle
+      timezone: <string|null>    # OPCIONAL; ex.: "America/Sao_Paulo"; ausente = fuso local da máquina
+      daily:
+        limit: <inteiro >= 1>
+      weekly:
+        limit: <inteiro >= 1>
+        reset_weekday: <0-6>      # 0 = segunda, 6 = domingo
+      monthly:
+        limit: <inteiro >= 1>
+        reset_day: <1-28|"last">
+```
+
+- **Validação na verificação de configuração:** limite `<= 0`, dia fora de
+  faixa ou fuso inexistente falham o startup com `ConfigError` apontando a
+  chave; `limits` não é confundido com uma entrada de agente (não exige
+  `name`/contexto).
+- **Retomada sem reinício:** o `pipe.yml` em disco é relido a cada avaliação
+  (cache por `mtime`), então aumentar ou remover um limite retoma o
+  acionamento imediatamente. Um bloco inválido editado em runtime mantém a
+  configuração carregada no startup, com aviso.
+- **Reset automático:** cada período reinicia no seu marco (diário na virada
+  do dia, semanal no `reset_weekday`, mensal no `reset_day`, incluindo
+  `"last"` para meses com menos dias), no fuso configurado ou no fuso local da
+  máquina.
+- **Estado persistente:** o acumulado por plataforma/período fica em
+  `.pipe/consumptionLimit.json` (estado interno protegido — ver tabela de
+  `PROTECTED_PATHS`), sobrevivendo a ciclos ociosos e reinícios do processo.
+  Estado ausente ou corrompido é zerado com segurança (nunca bloqueia por
+  falta de dado) e a recuperação é registrada.
+- **Registro estruturado de cada tentativa impedida** (`consumo_limite_bloqueio`,
+  nível `WARNING`), com instância, plataforma, unidade, consumo do período,
+  limite, período e condição de retomada — a base para auditoria e para o
+  baseline do primeiro ciclo. Indisponibilidade de medição gera
+  `consumo_indisponivel`; retomada gera `consumo_limite_retomada`.
+
+Runbook completo (como configurar, diagnosticar um bloqueio e ler os
+registros):
+[`doc/runbook/limitador-consumo-ia-plataforma.md`](../runbook/limitador-consumo-ia-plataforma.md).
+
+### Continuidade de sessão
+
+A esteira mantém a continuidade do raciocínio do agente entre execuções da
+mesma issue. Quando um agente pausa (ex.: `/need_human` ou `/blocked_by`) e a
+tarefa retorna depois, ele retoma de onde parou em vez de recomeçar.
+
+- Índice em `.pipe/sessions.json` mapeia `<board>/<issue>/<agente>` →
+  `session_id` do kiro-cli (chave **por agente**: agentes distintos não herdam
+  a sessão um do outro; o mesmo agente reusado retoma o próprio raciocínio).
+- Antes de executar, se a sessão ainda existir, retoma via `--resume-id`.
+- Após executar, captura o id da sessão (mais recente do cwd) e atualiza o
+  índice.
+- A esteira **não** gerencia o ciclo de vida das sessões do kiro-cli — apenas
+  aponta enquanto existirem. Sessão inexistente vira sessão nova sem erro.
+
+### Contexto do sistema (`CONTEXT.md` gerado no startup)
+
+No startup, a esteira gera automaticamente um contexto de sistema a partir do
+`pipe.yml` e o injeta em toda execução de agente. O objetivo é dar ao agente
+instruções explícitas derivadas da configuração real, em vez de deixá-lo
+inferir comportamento (origem do incidente "Issue Fantasma").
+
+- `generate_context(config)` (em `src/core/context_generator.py`) roda no
+  `startup()` e escreve dois arquivos:
+  - `.pipe/CONTEXT.md` — instruções em Markdown.
+  - `.kiro/agents/pipe_context.json` — arquivo de agente do kiro-cli com o
+    mesmo conteúdo.
+- O conteúdo é injetado via `--agent pipe_context` (argumento de CLI), **nunca
+  embutido inline no prompt**. O adapter usa `KIRO_HOME` apontando para o
+  `.kiro` da esteira para que o kiro-cli encontre o agente gerado.
+- **Regeneração:** recria se o arquivo não existir OU se o `pipe.yml` for mais
+  novo que o `CONTEXT.md`. Caso contrário, mantém o arquivo atual.
+
+O `CONTEXT.md` gerado contém quatro blocos derivados do `pipe.yml`:
+
+1. **Restrições de sistema** — lista de arquivos de estado interno que o agente
+   nunca deve ler ou escrever (ver "Proteção de estado interno" abaixo).
+2. **Criação de issues** — obriga o padrão `<slug>-body.md` **sem prefixo
+   numérico**. O ID real é atribuído pelo GitHub no sync; antes disso o arquivo
+   não tem (e não deve ter) prefixo numérico. Foi justamente o prefixo numérico
+   inventado pelo agente que disparou o incidente "Issue Fantasma".
+3. **Boards e colunas** — tabela de boards/colunas/agentes configurados.
+4. **Git flow e branches** — prefixos de branch por flow e branch base.
+
+> **Atenção:** o `.pipe/CONTEXT.md` gerado é diferente do `CONTEXT.md` da raiz
+> do projeto (documentação técnica escrita à mão). O arquivo gerado é protegido
+> e **não deve ser editado manualmente** — será sobrescrito no próximo restart.
+
+### Proteção de estado interno
+
+Os arquivos de estado interno da esteira (`snapshot.json`, `changeQueue.json`,
+`throttle`) são memória exclusiva do core. O agente **não pode** acessá-los. A
+proteção age em duas frentes:
+
+- **No prompt:** `src/core/agent.py` mantém a lista `PROTECTED_PATHS` e a função
+  `build_prompt` valida que nenhum desses padrões aparece no prompt enviado ao
+  agente. Se aparecer, levanta `ValueError` identificando o arquivo — o path do
+  snapshot nunca é entregue ao agente.
+- **No contexto:** o `CONTEXT.md` gerado instrui explicitamente o agente a nunca
+  ler, escrever, criar ou modificar esses arquivos.
+
+Padrões protegidos (`PROTECTED_PATHS`):
+
+| Padrão | Conteúdo |
+|--------|----------|
+| `.pipe/boards/*/snapshot.json` | Snapshot interno de cada board |
+| `.pipe/changeQueue.json` | Fila persistente de sincronismo |
+| `.pipe/throttle.json` | Estado do throttle de rate limit |
+| `.pipe/throttle-*.json` | Estado do throttle por escopo |
+| `.pipe/agentCircuitBreak.json` | Estado do limitador de reexecuções por contexto (#306) |
+| `.pipe/executionRecords.json` | Registros de execução de agentes + linhagem histórica (#307) |
+| `.pipe/participationPending.json` | Participações entre quadros pendentes de reconciliação e próxima tentativa (#310) |
+| `.pipe/syncCircuitBreaker.json` | Estado do circuit-breaker de sincronismo (#309) |
+| `.pipe/consumptionLimit.json` | Acumulado de consumo por plataforma e período do limitador opcional (#311) |
+
+## Anotações no body (comandos `@---`)
+
+O body de cada issue pode conter um bloco de comandos no final, separado do
+conteúdo real por uma linha contendo apenas `@---`. O core lê esse bloco e
+aplica as relações/atributos no board; o body enviado ao board é sempre limpo
+(sem o bloco). No fluxo down, o core reescreve o bloco a partir do estado real
+da issue no board.
+
+Desambiguação: se houver mais de um `@---`, o último vence e os anteriores são
+removidos.
+
+Filosofia presença/ausência: o que estiver escrito é o estado final. Comando
+presente garante a relação/atributo; ausente, remove. Não há comandos de
+"remover".
+
+| Comando | Efeito |
+|---------|--------|
+| `/parent #N` | esta issue é sub-issue (filha) de N |
+| `/children #N, #M` | N e M são sub-issues desta |
+| `/blocked_by #N, #M` | esta issue está bloqueada por N e M |
+| `/blocks #N, #M` | esta issue bloqueia N e M |
+| `/labels a, b, c` | define (SET) as labels da issue |
+| `/agent-hub-<valor>` | roteamento de agente por hub (chave do mapa `agent-hub`); `<valor>` livre |
+| `/need_human` | marca intervenção humana (label especial) |
+| `/close [completed\|not_planned]` | fecha a issue |
+| `/reopen` | reabre a issue |
+| `/archive` | arquiva a issue no board |
+
+A label `need_human` é especial: é tratada em campo próprio e não aparece em
+`/labels`, embora no board seja uma label comum.
+
+Exemplo de body completo:
+
+```markdown
+# Implementar login
+
+Validar credenciais e retornar JWT.
+
+@---
+/parent #10
+/blocked_by #42, #58
+/labels backend, security
+/agent-hub-high
+```
+
+### Incidente: sub-issues propagadas entre boards (#88/#98/#99/#106)
+
+Ao vincular uma sub-issue a um parent presente em outro GitHub Project, o
+GitHub Projects V2 pode propagar a filha para o project do parent sem
+preencher o campo `Status`. O sync então pode interpretar o item sem coluna
+como uma issue nova daquele board, criar arquivos locais duplicados e
+executar o agente no contexto errado.
+
+A correção é composta por cinco proteções:
+
+1. operação `remove_from_board` via GraphQL `deleteProjectV2Item`;
+2. pós-hook de `_add_sub_issue` (`_remove_propagated_items_without_status`)
+   que consulta `projectItems`/`fieldValues` via GraphQL (mesmo padrão de
+   `_belongs_to_board`/`get_issue`) e remove propagação sem `Status`;
+3. guard em `create-down` que exige prova de propagação — a issue já
+   registrada em outro board **configurado** com coluna conhecida — antes de
+   descartar o evento e remover o item; `parent` isolado, sem essa prova, não
+   basta (evita remover sub-issue legítima e nova);
+4. fallback de coluna para issues realmente novas ou já rastreadas; e
+5. detecção de coluna vazia como divergência a reconciliar.
+
+**Histórico:** a primeira tentativa (PR #102 original) usava endpoints REST
+inexistentes para Projects V2 e um teste que fazia `monkeypatch` do próprio
+método sob teste, mascarando a ausência de cobertura real — reprovada em code
+review (issue #106). Uma segunda tentativa concorrente (sub-issue #98, PR
+#103) foi cancelada pela decisão do débito #110, que definiu #88/PR #102 como
+veículo único da correção. A implementação corrigida (GraphQL real, guard com
+prova de propagação, suíte sem monkeypatch do código sob teste) foi entregue
+no commit `a00ba7c` e integrada à branch do PR #102.
+
+**Estado da entrega:** homologação aprovada em 19/08/2026. O merge do PR #102
+e o deploy continuam sendo necessários para disponibilizar a correção em
+produção. A correção previne novas duplicações, mas não remove resíduos
+anteriores (#84/#85/#86), que exigem limpeza manual com a esteira parada.
+
+Documentação: [change #88](../changes/88-sub-issues-propagadas-entre-boards.md),
+[registro da tentativa cancelada #98](../changes/98-sub-issues-propagadas-entre-boards.md)
+e [post mortem #99](../incidente/sub-issues-propagadas/ticket.md).
+
+## Integridade de participação entre quadros (`participation_intent`)
+
+As proteções do incidente #88/#98/#99/#106 (seção anterior) cobrem a janela
+imediatamente após o vínculo pai/filho ser criado, mas uma presença automática
+pode chegar depois dessa consulta, ou já chegar com uma coluna preenchida — o
+que, até a issue #310, bastava para a esteira tratá-la como issue legítima do
+quadro e despachar um agente no fluxo errado (ex.: uma tarefa processada como
+história). A partir desta entrega, toda presença de uma issue em um quadro é
+classificada e só se torna elegível a despacho com intenção confirmada.
+
+### Classificação de intenção
+
+Cada participação (presença de uma issue em um quadro, com ou sem coluna) é
+classificada por uma função pura, sem chamadas de rede, em um dos quatro
+estados:
+
+| Estado | Significado | Elegível a despacho? |
+|--------|-------------|------------------------|
+| `origin` | presença original, intencional, do quadro | sim |
+| `authorized` | participação em quadro adicional, autorizada explicitamente | sim |
+| `propagated` | efeito colateral automático da plataforma (sem autorização) | não — é removida do quadro indevido |
+| `unresolved` | evidência ambígua ou falha transitória de consulta | não — fica pendente e é reavaliada depois |
+
+A coluna (Status) preenchida ou vazia **não** prova intenção — é exatamente
+isso que permitia a brecha anterior. A classificação é determinística: o
+mesmo estado de configuração, rótulos e presenças produz sempre o mesmo
+resultado, independente da ordem em que as issues são avaliadas.
+
+### Autorização de participação em mais de um quadro
+
+Para que uma issue participe legitimamente de mais de um quadro (sem ser
+tratada como propagação), aplique a ela o rótulo reservado:
+
+```
+board-intent-<id-do-quadro>
+```
+
+onde `<id-do-quadro>` deve corresponder exatamente ao id de um quadro
+configurado no `pipe.yml` (ex.: `board-intent-entrega`). O rótulo autoriza
+somente o quadro nomeado — não existe curinga, e ele não é necessário para o
+quadro de origem da issue. Um rótulo que nomeia um quadro inexistente na
+configuração é ignorado para fins de autorização e gera um aviso no log;
+nenhuma presença é removida nem autorizada por engano nesse caso.
+
+### Reconciliação automática
+
+A presença classificada como `propagated` é removida do quadro indevido sem
+intervenção manual, em dois momentos: imediatamente após a criação do vínculo
+pai/filho, e — como rede de segurança para o caso de a plataforma materializar
+a presença depois dessa primeira verificação — na descoberta remota seguinte.
+A relação pai/filho nativa nunca é alterada por essa reconciliação. Falhas de
+consulta ou remoção não são silenciadas: o item fica pendente para nova
+tentativa em um ciclo posterior, sem bloquear o processamento das demais
+issues da fila.
+
+### Barreira final na seleção de tarefas
+
+Mesmo que uma presença indevida escape das reconciliações acima, a seleção de
+tarefas (`keep_task`) nunca escolhe para execução ou avanço automático uma
+issue sem intenção confirmada (`origin`/`authorized`); issues `propagated` ou
+`unresolved` são ignoradas, e essa verificação não faz nenhuma chamada de
+rede. Issues já existentes antes desta entrega recebem o campo de intenção
+automaticamente no início do processo (presença em um único quadro vira
+`origin`; presença duplicada sem autorização vira `unresolved`).
+
+### Suspender novos vínculos entre quadros (`safety.cross_board_parent_links`)
+
+Em caso de incidente ou investigação, um operador pode recusar temporariamente
+a criação de **novos** vínculos pai/filho entre issues de quadros distintos,
+sem reiniciar a esteira:
+
+```yaml
+safety:
+  cross_board_parent_links: suspended   # enabled (padrão) | suspended
+```
+
+A chave é relida do `pipe.yml` a cada vínculo avaliado (sem cache em
+memória) — alterar o valor em disco tem efeito a partir da próxima tentativa
+de vínculo, sem reiniciar nem reimplantar o processo. Vínculos dentro do
+mesmo quadro e vínculos já existentes nunca são afetados pela suspensão.
+Qualquer valor diferente de `enabled`/`suspended` é rejeitado na validação do
+`pipe.yml`, citando a chave e o valor recebido.
+
+### Observabilidade
+
+Os eventos `participation_classified`, `participation_reconciled`,
+`participation_reconcile_failed`, `participation_removed_externally`,
+`dispatch_blocked_unconfirmed_intent` e `cross_board_link_blocked` são
+registrados no log diário da esteira (sem segredos, body de issue ou conteúdo
+protegido), permitindo apurar presenças propagadas, reconciliações e
+despachos bloqueados sem abrir arquivos internos. No início do processo, o
+evento `rollout_evidence` registra versão, commit, ambiente e instante de
+início — a prova de que a correção está de fato em execução no ambiente,
+pré-requisito para contabilizar qualquer janela de observação.
+
+Além do log diário, o log de execução de cada agente (ver "Log de execução")
+é enriquecido com `participation_intent` e `origin_board` quando disponíveis,
+correlacionando o despacho à intenção de participação vigente da issue no
+momento da execução.
+
+## Eventos de coluna (`on_in` / `on_out`)
+
+Cada coluna pode declarar arrays `on_in` (disparado ao entrar) e `on_out`
+(disparado ao sair). Quando uma issue muda de coluna, o core dispara o
+`on_out` da coluna de origem e o `on_in` da coluna de destino.
+
+```yaml
+columns:
+  concluido:
+    name: Concluído
+    on_in:
+      - close
+      - done
+    on_out:
+      - -done
+```
+
+Tokens suportados:
+
+| Token | Efeito |
+|-------|--------|
+| `close` | fecha a issue |
+| `open` | reabre (se fechada) e desarquiva (se arquivada) |
+| `archive` | arquiva o item no board |
+| `-archive` | desarquiva o item no board |
+| `need_human` | adiciona a label `need_human` |
+| `-need_human` | remove a label `need_human` |
+| `<label>` | adiciona a label |
+| `-<label>` | remove a label |
+
+Os eventos disparam tanto em movimentação local quanto manual no board. Numa
+movimentação manual no GitHub, o sync reescreve o `-body.md` aplicando os
+eventos no bloco `@---` (sem tocar no snapshot); como o arquivo fica mais novo
+que o `body_mtime` salvo, o ciclo seguinte gera um `change-up` que sobe os
+status/labels resultantes — mantendo tudo sincronizado.
+
+## Retirada segura de colunas (`column-migrations`)
+
+Retirar uma coluna da configuração de um board nunca pode deixar issues sem
+classificação. A reconciliação estrutural (no startup / full sync) trata a
+retirada de coluna como uma operação protegida: detecta colunas publicadas no
+board remoto ausentes da configuração e, para cada uma, decide por
+**validar → drenar → confirmar vazio → contrair**.
+
+- Uma coluna **vazia** é retirada diretamente, após uma leitura remota
+  imediatamente anterior confirmar zero issues (não exige destino).
+- Uma coluna **ocupada** só é retirada depois que todas as suas issues forem
+  migradas para um único destino explícito **do mesmo board** e uma leitura
+  remota confirmar a origem vazia.
+- Destino **ausente ou inválido bloqueia** a retirada sem mover nenhuma issue nem
+  remover a opção — a classificação atual é preservada.
+- Qualquer falha no meio (indisponibilidade, rate limit, encerramento) preserva o
+  estado parcial (issues já movidas no destino, restantes na origem, origem ainda
+  publicada); a próxima execução retoma movendo apenas o que faltava, derivando o
+  trabalho **do estado remoto** (sem journal paralelo).
+
+> Esta é uma **proteção para mudança estrutural de board**, não uma regra geral
+> de movimentação de trabalho entre colunas.
+
+### Declaração do destino
+
+O destino de migração é declarado por board, no mapa opcional
+`boards.<board>.column-migrations`, associando cada coluna retirada a exatamente
+uma coluna de destino do mesmo board (chaves e valores são **ids** de coluna):
+
+```yaml
+boards:
+  entrega:
+    name: Entrega
+    columns:
+      backlog:
+        name: Backlog
+      done:
+        name: Done
+    column-migrations:
+      revisao: done        # issues da coluna 'revisao' (removida) vão para 'done'
+```
+
+A declaração é **opcional**: boards sem `column-migrations` mantêm o
+comportamento estrutural vigente. A validação de forma (em `pipe.yml`) exige um
+**mapa de strings não-vazias**; tipo diferente, chave/valor vazio, nulo ou
+não-string é rejeitado com `ConfigError` citando
+`boards.<board>.column-migrations` e a entrada que falhou. A validação
+**semântica** (destino existir no mesmo board, ser diferente da origem e não ser
+outra coluna também em retirada no mesmo ciclo) ocorre em tempo de reconciliação.
+
+### Ciclo de vida do mapa
+
+1. **Antes de remover a coluna da config:** declare a entrada
+   `<origem>: <destino>` em `column-migrations` e, no mesmo commit, remova a
+   coluna de origem da lista `columns`. A coluna de destino deve existir em
+   `columns`.
+2. **Enquanto a origem tem issues:** a origem permanece publicada no board
+   remoto; a esteira migra as issues ao destino a cada ciclo até a origem
+   esvaziar e então contrai a opção.
+3. **Depois de concluída:** a entrada em `column-migrations` pode ser removida —
+   a origem já não existe remotamente, então não há mais o que migrar. Deixá-la
+   declarada é inofensivo (sem origem publicada, nada é acionado).
+
+> **Atenção:** remover a entrada de destino **antes** de uma origem ocupada
+> concluir faz a próxima tentativa **bloquear** (`destino_ausente`), sem alterar
+> nenhuma issue; os logs apontam a correção necessária na configuração.
+
+### Evidência (observabilidade)
+
+Cada tentativa (por origem) emite exatamente um evento
+`column_migration_attempt` no log diário da esteira (`logs/<data>.json`), com os
+campos `board`, `source`, `destination`, `initial_count`, `moved_count`,
+`remaining_count`, `result` e `reason`. `completed` é registrado em nível
+**INFO**; `blocked`/`interrupted` em **WARNING**, com mensagem auto-contida
+(board, origem e motivo). A evidência é consultável **sem** abrir arquivos
+internos protegidos (`.pipe/...`) e não contém corpo de issue, credenciais nem
+estado protegido.
+
+Motivos padronizados: bloqueio — `destino_ausente`, `destino_inexistente`,
+`destino_mesmo_board_invalido`, `destino_e_origem`, `destino_tambem_retirado`;
+interrupção — `sem_progresso`.
+
+Runbook detalhado: [`doc/runbook/retirada-colunas.md`](../runbook/retirada-colunas.md).
+
+## Sincronização de arquivos embutidos e em anexos (`boards.<board_id>.file-sync`)
+
+Além do texto do corpo e dos comentários, a sincronização descendente (board →
+local) baixa os arquivos **embutidos** (ex.: imagem colada no texto) ou
+**anexados** (upload) referenciados em markdown (`![]()`, `[]()`) ou HTML
+(`<img src>`, `<a href>`) — no corpo da issue e em qualquer comentário,
+inclusive comentários novos chegando numa issue já sincronizada. O board não
+distingue embutido de anexado na API: ambos chegam como um link no texto; quem
+decide se um link é de fato um anexo do board é o adapter.
+
+- **Onde os arquivos ficam:** diretório `<coluna>/<id>-<slug>-files/`, com o
+  mesmo prefixo (`<id>-<slug>`) de `-body.md`/`-history.md`/`-addcomment.md`.
+  A pipe cria e move esse diretório junto com os 3 arquivos quando a issue
+  muda de coluna (`change-down`, `change-up` e auto-advance) e o remove ao
+  excluir a issue — o agente não precisa (nem deve) gerenciar esse ciclo de
+  vida.
+- **Política de segurança (por board, opcional):** antes de baixar, cada
+  arquivo passa por tipo e tamanho. Uma recusa nunca bloqueia a sincronização
+  do texto — só o arquivo recusado não é baixado.
+  - `allowed-types`: lista de extensões aceitas. Ausente = default do motor
+    (`png`, `jpg`, `jpeg`, `gif`, `webp`, `pdf`, `txt`, `md`, `csv`, `json`,
+    `log`, `zip`). Quando declarada, **substitui** a default para aquele
+    board (não soma).
+  - `max-size`: tamanho máximo em bytes por arquivo. Ausente = sem limite.
+  - `on-reject`: comportamento na recusa — `silencioso` | `aviso` (default) |
+    `bloqueante`.
+    - **silencioso**: nenhuma mensagem na issue; a recusa fica só em log
+      (`log.trace`), com o arquivo, a URL e o motivo.
+    - **aviso** (default): publica um único comentário na issue listando os
+      arquivos recusados e o motivo; o mesmo aviso não se repete em
+      sincronizações seguintes enquanto o conjunto de arquivos recusados não
+      mudar.
+    - **bloqueante**: além do aviso, adiciona automaticamente a label
+      `need_human` pedindo a remoção dos arquivos não permitidos; a recusa e a
+      label voltam em toda sincronização enquanto o(s) mesmo(s) arquivo(s)
+      continuar(em) referenciado(s), e cessam quando deixam de ser
+      referenciados.
+- **O que conta como anexo é decisão do adapter**, não do formato do link. No
+  GitHub, só URLs de upload do próprio board (`user-attachments`,
+  `user-images.githubusercontent.com` e anexos de issue/PR do repositório)
+  são tratadas como arquivo; um link comum para outro arquivo do repositório
+  ou para um site externo não dispara download nem passa pela política de
+  recusa.
+- Corpo ou comentário sem nenhum arquivo embutido/anexado sincroniza só o
+  texto, exatamente como antes desta funcionalidade.
+- A sincronização local → board (o agente anexar um arquivo de volta) e a
+  varredura retroativa de issues/comentários anteriores a esta entrega não
+  fazem parte deste mecanismo.
+
+> O diretório `-files` é previsível pelo prefixo da issue, mas o prompt do
+> agente não o cita explicitamente hoje — o agente que precisar dos arquivos
+> sincronizados deve localizá-lo pela mesma convenção de nome do `-body.md`.
+
+## Otimização de Sincronização
+
+Para reduzir o número de requisições ao board por issue, o sync combina duas
+estratégias:
+
+- **Down (chamada única):** `get_issue` traz numa só query GraphQL título,
+  body, estado, labels, parent, filhos, coluna e arquivamento. As dependências
+  (`blocked_by`/`blocks`) só existem via REST e são buscadas junto, pois a
+  descoberta remota enfileira sempre itens `fullsync`.
+- **Up (comparar antes de escrever):** o estado desejado (comandos do arquivo)
+  é comparado com o estado conhecido no snapshot; só a diferença gera chamada.
+  Um `change-up` de "só body" cai de ~12 requisições para 1.
+
+### fullsync
+
+Cada item da fila tem um booleano `fullsync`. A descoberta remota (down) sempre
+enfileira itens `fullsync=True` — toda reconciliação vinda do board inclui as
+dependências de bloqueio (não existe mais reconciliação "só propriedades"). O
+`fullsync` sobrevive apenas como atributo do item que indica que as dependências
+(`blocked_by`/`blocks`, só disponíveis via REST) devem ser buscadas; não é um
+seletor de escopo de sincronização. Se um item `fullsync` e um não-`fullsync`
+coincidem no mesmo alvo, a fila promove o existente (sem duplicar).
+
+### Gatilho de par recíproco
+
+Relações são bidirecionais (`parent`↔`children`, `blocked_by`↔`blocks`). Ao
+detectar uma relação adicionada/removida numa issue, o sync enfileira um
+`change-down fullsync` do alvo **apenas se o snapshot do alvo ainda não
+refletir o par recíproco**. Essa checagem é a condição de parada e evita
+reação em cadeia infinita.
+
+### Sub-issues propagadas entre boards sem coluna
+
+Ao vincular uma sub-issue a um parent que está em outro GitHub Project, o
+GitHub Projects V2 pode adicionar automaticamente a filha aos projects do pai
+sem preencher o campo `Status`. Sem tratamento, esse item seria interpretado
+como uma nova issue do board e criaria arquivos locais duplicados.
+
+A sincronização trata esse efeito colateral em duas camadas:
+
+1. **Prevenção após o vínculo:** depois de criar a relação parent/child, o
+   adapter consulta via GraphQL os `projectItems` da sub-issue (com o `Status`
+   de cada item em `fieldValues`) e remove, por `deleteProjectV2Item`, os itens
+   de **outros** projects cujo `Status` está vazio. Dados de Projects V2 não
+   existem na REST API — a consulta usa o mesmo padrão de `get_issue` e
+   `_belongs_to_board`. Itens com coluna definida são preservados, inclusive
+   participações multi-board intencionais.
+2. **Defesa no `create-down`:** se um item sem coluna já está registrado em
+   outro board configurado com coluna conhecida, o core o remove do board atual
+   via `deleteProjectV2Item`, descarta o evento e não cria arquivos locais. A
+   simples presença de `parent` não basta para remover: sem prova de presença em
+   outro board, a issue pode ser uma sub-issue legítima e nova do board atual, e
+   segue o fluxo normal com o fallback da primeira coluna.
+
+O project informado ao pós-hook é sempre preservado, mesmo temporariamente sem
+`Status`; se esse project não puder ser resolvido, nada é removido. Como
+`set_children` informa o project do pai — justamente onde o item propagado
+aparece —, esse caminho é coberto deliberadamente pela camada 2, que tem a prova
+de presença no snapshot.
+
+A remoção precisa concluir antes de o evento ser descartado; falhas propagam e
+são reprocessadas pela fila. Snapshots de boards ausentes do `pipe.yml` não
+servem como prova. Além disso, uma coluna remota vazia passa a ser detectada
+como divergência: em issues já rastreadas, o `change-down` reaplica no board a
+coluna conhecida do snapshot (evitando que a mesma divergência retorne em todo
+full sync), e `create_issue` nunca deixa uma issue nascer sem `Status` — coluna
+inexistente cai na primeira opção do project com warning.
+
+> A correção previne novas duplicações, mas não remove automaticamente resíduos
+> que já haviam sido materializados localmente antes da atualização. Esses itens
+> devem ser removidos manualmente do project indevido, com a esteira parada.
+
+### Incidente resolvido: parent recursivo (#97/#104)
+
+Em 01/08/2026, um arquivo órfão com prefixo numérico foi associado à issue
+`#76` após o caminho salvo para seu body ficar obsoleto. O sync substituiu o
+conteúdo da issue, tentou aplicar `set_parent(76, 76)` e repetiu a rejeição 225
+vezes, deixando todos os boards sem processamento útil por 2h37.
+
+O caso concreto foi reparado no mesmo dia. As cinco salvaguardas preventivas
+foram posteriormente implementadas, integradas em `main` e homologadas em
+conjunto em 20/08/2026. O incidente está **resolvido na versão 1.10.0**:
+
+1. **Associação segura (C1):** `_find_issue_files` resolve o body por identidade
+   inequívoca e isola zero/múltiplos candidatos sem alterar o board.
+2. **Relações válidas (C2):** auto-referências em `parent`, `children`,
+   `blocked_by` e `blocks` são descartadas antes de qualquer chamada externa.
+3. **Falha isolada (C3):** erros definitivos e tentativas transitórias esgotadas
+   saem da fila ativa para dead-letter; um item inválido não monopoliza os
+   demais boards.
+4. **Estado protegido (C4):** `SnapshotGuard` detecta e restaura atomicamente
+   alterações indevidas no snapshot durante a execução do agente.
+5. **Instância única (C5):** `InstanceLock` é adquirido antes de `startup()` e
+   recusa uma segunda instância sobre o mesmo estado.
+
+As regras operacionais de criar issues como `<slug>-body.md`, não editar a
+memória interna e investigar itens isolados continuam válidas. Os limites
+residuais conhecidos são: o lock coordena apenas processos que compartilham o
+mesmo filesystem; a guarda desta entrega cobre snapshots, não constitui um
+sandbox completo; e dead-letter não possui replay automático.
+
+Documentação:
+
+- [ticket e causa raiz](../incidente/parent-recursivo/ticket.md)
+- [resultado da homologação](../incidente/parent-recursivo/homologacao.md)
+- [post-mortem de Produto](../product/confiabilidade-parent-recursivo/post-mortem.md)
+- [change file da versão 1.10.0](../changelogs/104-pre-producao-c1-c5-integradas.md)
+
+### Issues fantasmas (erro irrecuperável)
+
+Quando o sync tenta aplicar uma mudança (`change-up` ou `delete-up`) sobre uma
+issue que **não existe** no GitHub, a API responde com
+`Could not resolve to an issue or pull request`. Antes, esse erro era tratado
+como transitório e, como a fila é *at-least-once*, o evento voltava a cada
+ciclo — travando a esteira num loop (ou, na base atual, num crash-loop). Foi a
+causa central do incidente "Issue Fantasma".
+
+Agora `_apply_change_up` e `_apply_delete_up` (em `src/core/sync.py`) tratam
+esse erro específico: registram um warning
+(`removendo do snapshot (issue fantasma)`), removem a entrada correspondente do
+snapshot e **descartam** o evento em vez de re-enfileirá-lo. Qualquer outra
+exceção continua propagando normalmente.
+
+### Incidente resolvido: duplicidade ao criar sub-issue (#339)
+
+Ao criar uma issue nova (`create-up`) que já nasce com algum comando no bloco
+`@---` (`/parent #N` era o caso mais comum — uma Task criada a partir de uma
+Story no fluxo planning-poker, mas qualquer comando não vazio disparava o
+mesmo problema), `_apply_create_up` (`src/core/sync.py`) chamava
+`_filter_suspended_cross_board_parent(board_id, created.id, cmds, config)`
+sem receber `config` como parâmetro. A issue já havia sido criada com sucesso
+no GitHub nesse ponto; a chamada lançava `NameError: name 'config' is not
+defined`, capturado pelo tratamento genérico de `apply_changes` e classificado
+como erro transitório — o item voltava para a fila e a mesma issue local era
+recriada do zero, repetindo `create_issue` contra o GitHub a cada tentativa
+(até `retry.max_tentativas`, default 3). Resultado: cada issue criada com
+algum comando no `@---` podia ser materializada em duplicidade (até
+triplicidade, com os defaults) no board antes de a fila esgotar as tentativas.
+
+O mecanismo de `participation_intent` (issue #310) foi investigado e descartado
+como causa: ele só age sobre vínculo pai/filho entre boards distintos, e a
+duplicação ocorria mesmo com a issue mãe e as filhas no mesmo board.
+
+A correção propaga `config` de `apply_changes` até `_apply_create_up`
+(parâmetro opcional, `config: dict = None`, retrocompatível), eliminando o
+`NameError`: a issue passa a ser criada exatamente uma vez por item da fila,
+independente do conteúdo do bloco `@---`.
+
+Documentação: [casos de teste](../quality/duplicidade-ao-criar-sub-issue/test-cases.md),
+[resultado da execução de testes](../quality/duplicidade-ao-criar-sub-issue/test-results.md).
+
+### Isolamento de IDs entre boards
+
+O espaço de números de issues do GitHub é **compartilhado** entre todos os
+boards de um mesmo repositório (epic, story, task…). Sem validação, uma
+operação destrutiva num board poderia fechar/alterar uma issue de outro board
+que coincidisse no número — foi o que fechou os épicos #1, #2, #3 no incidente.
+
+Antes de qualquer operação destrutiva (`update_issue`, `close_issue`), o adapter
+`github_board.py` valida a pertinência via `_belongs_to_board`: uma query
+GraphQL lista os `projectItems` da issue e confirma que o projeto do board alvo
+está entre eles. Se não pertencer, a operação é **abortada** com um warning
+(`não pertence a este board — operação abortada`).
+
+- **Custo:** +1 chamada GraphQL por operação destrutiva. Em um board ativo
+  (~10 closes/min) isso adiciona ~10 chamadas/min — dentro da quota padrão de
+  5000 pontos/hora do GraphQL do GitHub.
+
+## Circuit-breaker de sincronismo (`sync.circuit_breaker`)
+
+Dono único das proteções contra falha repetida de sincronismo (issue #309),
+incluindo a antiga remediação E4. Todos os campos são opcionais.
+
+```yaml
+sync:
+  circuit_breaker:
+    persistence: file          # file (padrão, .pipe/syncCircuitBreaker.json) | memory
+    escalation_agent: correcao-esteira   # agente dedicado; deve existir em 'agents'
+    issue:
+      max_failures: 3          # falhas consecutivas para bloquear a issue
+      block_duration: 300      # segundos de bloqueio da issue
+      max_blocks: 3            # bloqueios consecutivos antes de escalar ao agente
+    platform:
+      max_blocked_issues: 5    # issues distintas bloqueadas para bloquear a plataforma
+      block_window: 600        # janela (s) para contar as issues bloqueadas
+      block_duration: 900      # segundos de bloqueio da plataforma
+    half_open:
+      success_threshold: 2     # sucessos em meio-aberto para fechar o circuito
+```
+
+- Só falhas de sincronismo com a plataforma contam; rate limit/penalty segue no
+  throttle e nunca incrementa contadores.
+- Issue bloqueada: as mudanças ficam na fila sem tentativa. Plataforma
+  bloqueada: subida e descida dela são puladas no ciclo, sem parar a esteira.
+- Expirado o bloqueio, o circuito fica meio-aberto: `success_threshold` sucessos
+  fecham; uma falha reabre.
+- Após `max_blocks` bloqueios consecutivos (ou de imediato em erro de validação
+  422), o agente `escalation_agent` é acionado uma única vez com o fato da falha,
+  o log de erro completo e a instrução de corrigir a issue. Se o sync falhar de
+  novo, a esteira encerra com código de saída 1 (evento
+  `sync_circuit_breaker_fatal`: issue, board, erro, tentativas, agente).
+- O agente dedicado precisa estar em `agents` (com contexto em
+  `contexts/<plataforma>/<agente>.md`); sem ele a escalação encerra a esteira.
+- A descida sempre traz o estado completo da plataforma (sem modo parcial) e
+  relação de bloqueio já existente é tratada como sucesso idempotente.
+
+## Rate Limit (GitHub)
+
+Toda requisição respeita o throttle, inclusive dentro de loops de
+sincronização.
+
+### Detecção
+
+O rate limit é detectado **apenas por sinais de transporte**, nunca pelo corpo
+da resposta:
+
+- **Status HTTP** `403`/`429` (linha de status capturada via `gh api -i`).
+- **stderr** do `gh` mencionando rate limit.
+- **GraphQL**: resposta `200` com `errors[].type == RATE_LIMITED` (a seção
+  estruturada de erros, não o conteúdo das issues).
+
+O corpo da resposta **não** é escaneado em busca da expressão "rate limit". Se
+fosse, o título/body de uma issue contendo esse texto (ex.: uma issue sobre
+custo de API) provocaria falso-positivo em toda listagem, escalando throttle e
+penalty indevidamente.
+
+### Throttle
+- Sleep antes de cada chamada (em segundos; escala `0, 1, 2, 4, ... 64`)
+- Ao receber secondary rate limit, dobra (até 64s); se estiver em `0`, sobe para `1`
+- Regride após 1h sem problemas: divide por 2; ao chegar em `1`, cai para `0` (sem espera)
+
+### Penalty
+- Ativado quando throttle atinge 64s e ainda falha
+- Bloqueia chamadas por N horas (dobra a cada ativação)
+- Regride após 1h sem problemas
+
