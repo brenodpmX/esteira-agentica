@@ -115,4 +115,4 @@ Em 2026-08-03 foram validados:
   maior exigência de segurança devem usar um mecanismo externo de secrets.
 
 O procedimento operacional e a solução de problemas estão no
-[`README.md`](../../../README.md#execução-via-docker-compose-recomendado-para-produção).
+[`doc/runbook/docker.md`](../../runbook/docker.md).

@@ -34,7 +34,7 @@ cp .env.example .env
 # Edite .env e preencha: GH_TOKEN, KIRO_API_KEY, SSH_KEY_FILE_HOST (e as demais variáveis)
 
 # 3. Criar o pipe.yml com a configuração da esteira
-# Crie manualmente na raiz do repositório conforme o README (não há arquivo de exemplo)
+# Crie manualmente na raiz a partir do exemplo mínimo do README (ver doc/configuracao/referencia.md)
 
 # 4. Construir a imagem
 docker compose build
@@ -102,8 +102,9 @@ KIRO_API_KEY=
 
 ### Passo 3 — Criar o `pipe.yml`
 
-A esteira precisa de um `pipe.yml` configurado na raiz do repositório. Consulte o
-`README.md` para a estrutura completa. O arquivo é montado como volume somente-leitura
+A esteira precisa de um `pipe.yml` configurado na raiz do repositório. Parta do
+exemplo mínimo da seção Configuração do `README.md`; a descrição de cada chave está
+em [`doc/configuracao/referencia.md`](../configuracao/referencia.md). O arquivo é montado como volume somente-leitura
 no container — alterar o `pipe.yml` no host e executar `docker compose up -d` aplica
 a nova configuração **sem necessidade de rebuild da imagem**.
 
@@ -312,12 +313,53 @@ Quando a chave de API do kiro-cli expirar ou precisar ser trocada:
 
 ---
 
+## Estado acessível no host (bind mounts)
+
+Por padrão o estado fica em **named volumes** (geridos pelo Docker, em
+`/var/lib/docker/volumes/`). Para ter logs e estado **acessíveis no host** — e
+com posse do seu usuário, não do root — use o override `compose.dev.yml`, que
+troca esses volumes por bind mounts configuráveis:
+
+```bash
+docker compose -f docker-compose.yml -f compose.dev.yml up -d
+```
+
+Para que o `docker compose up` normal já use os dois arquivos, defina no `.env`:
+
+```env
+COMPOSE_FILE=docker-compose.yml:compose.dev.yml
+```
+
+Os caminhos no host são configuráveis (`PIPE_STATE_DIR`, `PIPE_REPO_DIR`,
+`PIPE_LOGS_DIR`; padrão `./.pipe`, `./repo`, `./logs`). Crie os diretórios com o
+seu usuário antes do `up` (`mkdir -p .pipe repo logs`) — se não existirem, o
+Docker os cria como root.
+
+---
+
+## Solução de problemas
+
+| Sintoma | Verificação / correção |
+|---------|------------------------|
+| Build falha ao instalar `gh` (`Version 'X.Y.Z' for 'gh' was not found`) | O repo APT do `gh` serve apenas a última versão; atualize `GH_VERSION` em `docker/versions.env` e o `Dockerfile`. |
+| Build falha no kiro-cli (`sha256 … did NOT match`) | A URL `/latest/` mudou de build; atualize `KIRO_CLI_VERSION`/`KIRO_CLI_SHA256` em `docker/versions.env` e no `Dockerfile`. |
+| Falha de autenticação do agente | Confirme `KIRO_API_KEY` no `.env` e recrie o serviço. |
+| Falha de API/projeto do GitHub | Confirme os escopos `repo` e `project` de `GH_TOKEN`. |
+| Falha ao clonar via SSH | Confirme `SSH_KEY_FILE_HOST` (caminho absoluto) e o cadastro da chave no GitHub. |
+| Configuração ou contexto inválido | Consulte `docker compose logs`; o startup encerra com mensagem explícita. |
+
+> A imagem é construída para Linux `amd64`: o Dockerfile baixa o GitHub CLI e o
+> Kiro CLI (binário nativo glibc `x86_64`) para essa arquitetura.
+
+---
+
 ## Referências
 
 - `Dockerfile` — imagem da esteira (BuildKit secret, usuário `pipe`, PYTHONUNBUFFERED)
 - `docker-compose.yml` — serviço `pipe`, volumes nomeados, Docker secret SSH
 - `.env.example` — modelo de variáveis de ambiente com comentários detalhados
 - `docker/versions.env` — versões pinadas dos pacotes (ADR-04)
-- `README.md` — estrutura da esteira e configuração do `pipe.yml`
+- `README.md` — porta de entrada e exemplo mínimo do `pipe.yml`
+- `doc/configuracao/referencia.md` — referência de cada chave do `pipe.yml`
 - `doc/product/rodar-no-docker/` — decisões de produto e arquitetura (US-03 a US-06)
 - `CONTEXT.md` — decisões técnicas e estado atual do projeto
