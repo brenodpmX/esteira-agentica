@@ -43,6 +43,13 @@ PERIODS = (DAILY, WEEKLY, MONTHLY)
 
 PERIOD_LABEL = {DAILY: "diario", WEEKLY: "semanal", MONTHLY: "mensal"}
 
+def _fmt_num(valor) -> str:
+    """Formata número para mensagem de log com no máximo 2 casas decimais."""
+    if isinstance(valor, float):
+        return f"{valor:.2f}".rstrip("0").rstrip(".")
+    return str(valor)
+
+
 EVENT_BLOCK = "consumo_limite_bloqueio"
 EVENT_UNAVAILABLE = "consumo_indisponivel"
 EVENT_ACCUMULATED = "consumo_limite_acumulado"
@@ -484,7 +491,7 @@ class ConsumptionLimiter:
         log.warning(
             "ConsumoLimite",
             f"[{platform_id}] acionamento impedido — consumo {PERIOD_LABEL[period]} "
-            f"{entry['consumo']} {record['unidade']} >= limite {pp.limit}; "
+            f"{_fmt_num(entry['consumo'])} {record['unidade']} >= limite {_fmt_num(pp.limit)}; "
             f"retomada: {record['condicao_retomada']}",
             **record,
         )
@@ -524,7 +531,7 @@ class ConsumptionLimiter:
             log.error(
                 "ConsumoLimite",
                 f"[{platform_id}] unidade divergente ({unidade!r} ≠ {known_unit!r}) "
-                f"— valor {consumo.valor} não somado ao acumulado",
+                f"— valor {_fmt_num(consumo.valor)} não somado ao acumulado",
                 event=EVENT_UNIT_MISMATCH, instancia=self._instance,
                 plataforma=platform_id, unidade=unidade, unidade_acumulada=known_unit,
                 valor=consumo.valor, timestamp=_iso_now(ts, tz),
@@ -545,7 +552,7 @@ class ConsumptionLimiter:
 
         log.trace(
             "ConsumoLimite",
-            f"[{platform_id}] consumo de {consumo.valor} {unidade} acumulado",
+            f"[{platform_id}] consumo de {_fmt_num(consumo.valor)} {unidade} acumulado",
             event=EVENT_ACCUMULATED, instancia=self._instance, plataforma=platform_id,
             unidade=unidade, valor=consumo.valor, periodos=periodos,
             timestamp=_iso_now(ts, tz),

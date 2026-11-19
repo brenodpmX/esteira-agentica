@@ -2,6 +2,14 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.29.1] - 2026-11-09
+
+### Corrigido
+
+- **Log do limitador de consumo**: valores de consumo e limite nas mensagens
+  do `ConsumoLimite` passam a exibir no máximo 2 casas decimais (ex.:
+  `144.32`); os campos estruturais do registro permanecem com o valor exato.
+
 ## [1.29.0] - 2026-11-09
 
 ### Adicionado

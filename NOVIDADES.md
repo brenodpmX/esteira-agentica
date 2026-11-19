@@ -4,6 +4,13 @@ O que muda em cada versão da Esteira Agêntica, em poucas linhas. O campo
 `acao` diz o que você precisa fazer ao atualizar; `nenhuma` quer dizer que
 basta atualizar. A versão mais recente fica no topo.
 
+## 1.29.1
+
+versao: 1.29.1
+data: 2026-11-09
+destaques: As mensagens do limitador de consumo no log agora mostram o consumo e o limite com no máximo duas casas decimais, por exemplo 144.32, em vez de números longos.
+acao: nenhuma.
+
 ## 1.29.0
 
 versao: 1.29.0
