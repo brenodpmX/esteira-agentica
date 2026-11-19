@@ -4,6 +4,13 @@ O que muda em cada versão da Esteira Agêntica, em poucas linhas. O campo
 `acao` diz o que você precisa fazer ao atualizar; `nenhuma` quer dizer que
 basta atualizar. A versão mais recente fica no topo.
 
+## 1.30.0
+
+versao: 1.30.0
+data: 2026-11-20
+destaques: Agora dá para acompanhar a esteira em painéis de qualquer ferramenta compatível com OpenTelemetry. Execuções de agentes, fila de sincronismo, limites de consumo e o estado do board chegam ao seu coletor, e um coletor fora do ar nunca atrasa o trabalho das issues.
+acao: nenhuma. Para ligar, defina OTEL_EXPORTER_OTLP_ENDPOINT e siga o guia de telemetria.
+
 ## 1.29.0
 
 versao: 1.29.0

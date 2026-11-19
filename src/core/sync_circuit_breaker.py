@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.core import telemetry
 from src.core.log import log
 
 STATE_FILE = Path(".pipe/syncCircuitBreaker.json")
@@ -152,6 +153,18 @@ def platform_of(config: dict, board_id: str | None = None) -> str:
     return str(boards.get("platform") or "default")
 
 
+def _emit_transition(scope: str, platform: str, previous: str, new: str,
+                     board_id: str | None = None, issue_id=None) -> None:
+    telemetry.emit(telemetry.EV_SYNC_BREAKER, {
+        "esteira.breaker.escopo": scope,
+        "esteira.board.plataforma": platform,
+        "esteira.board": board_id,
+        "esteira.issue": str(issue_id) if issue_id is not None else None,
+        "esteira.breaker.estado_anterior": previous,
+        "esteira.breaker.estado_novo": new,
+    })
+
+
 def _key(board_id: str, issue_id) -> str:
     return f"{board_id}/{issue_id}"
 
@@ -238,6 +251,7 @@ class SyncCircuitBreaker:
         log.info("SyncCircuitBreaker", f"plataforma {platform} meio-aberta",
                  event="sync_circuit_breaker_transition", plataforma=platform,
                  estado_anterior=OPEN, estado_novo=HALF_OPEN)
+        _emit_transition("plataforma", platform, OPEN, HALF_OPEN)
         return False
 
     def issue_blocked(self, board_id: str, issue_id) -> bool:
@@ -254,6 +268,8 @@ class SyncCircuitBreaker:
         log.info("SyncCircuitBreaker", f"[{board_id}] #{issue_id} meio-aberto",
                  event="sync_circuit_breaker_transition", board=board_id,
                  issue=str(issue_id), estado_anterior=OPEN, estado_novo=HALF_OPEN)
+        _emit_transition("issue", self.platform_of(board_id), OPEN, HALF_OPEN,
+                         board_id, issue_id)
         return False
 
     def record_success(self, board_id: str, issue_id, platform: str | None = None) -> None:
@@ -273,6 +289,8 @@ class SyncCircuitBreaker:
                              event="sync_circuit_breaker_transition",
                              board=board_id, issue=str(issue_id),
                              estado_anterior=HALF_OPEN, estado_novo=CLOSED)
+                    _emit_transition("issue", platform, HALF_OPEN, CLOSED,
+                                     board_id, issue_id)
                 dirty = True
             elif entry["state"] == CLOSED and entry["failures"]:
                 entry["failures"] = 0
@@ -286,6 +304,7 @@ class SyncCircuitBreaker:
                 log.info("SyncCircuitBreaker", f"plataforma {platform} circuito fechado",
                          event="sync_circuit_breaker_transition", plataforma=platform,
                          estado_anterior=HALF_OPEN, estado_novo=CLOSED)
+                _emit_transition("plataforma", platform, HALF_OPEN, CLOSED)
             dirty = True
 
         if dirty:
@@ -293,13 +312,19 @@ class SyncCircuitBreaker:
 
     def release(self, board_id: str, issue_id) -> None:
         state = self._load()
-        if state["issues"].pop(_key(board_id, issue_id), None) is not None:
+        entry = state["issues"].pop(_key(board_id, issue_id), None)
+        if entry is not None:
             self._save(state)
+            previous = entry.get("state") or CLOSED
+            if previous != CLOSED:
+                _emit_transition("issue", self.platform_of(board_id), previous, CLOSED,
+                                 board_id, issue_id)
 
     def record_failure(self, board_id: str, issue_id, error: str,
                        correctable: bool = False,
                        platform: str | None = None,
-                       error_log: str | None = None) -> SyncEscalation | None:
+                       error_log: str | None = None,
+                       error_type: str | None = None) -> SyncEscalation | None:
         platform = platform or self.platform_of(board_id)
         state = self._load()
         key = _key(board_id, issue_id)
@@ -323,7 +348,8 @@ class SyncCircuitBreaker:
         self._reopen_platform_if_half_open(state, platform)
 
         if correctable:
-            return self._escalate(state, entry, board_id, issue_id, error_log or error)
+            return self._escalate(state, entry, board_id, issue_id, error_log or error,
+                                  error_type)
 
         if entry["state"] == HALF_OPEN:
             self._block_issue(state, entry, board_id, issue_id, platform, reopened=True)
@@ -340,7 +366,8 @@ class SyncCircuitBreaker:
                 self._block_issue(state, entry, board_id, issue_id, platform)
 
         if entry["state"] == OPEN and entry["blocks"] >= self._cfg.issue_max_blocks:
-            return self._escalate(state, entry, board_id, issue_id, error_log or error)
+            return self._escalate(state, entry, board_id, issue_id, error_log or error,
+                                  error_type)
 
         self._save(state)
         return None
@@ -354,6 +381,7 @@ class SyncCircuitBreaker:
                      platform: str, reopened: bool = False) -> None:
         now = self._clock()
         failures = entry["failures"] if not reopened else 1
+        previous = entry["state"]
         entry["state"] = OPEN
         entry["failures"] = 0
         entry["half_open_successes"] = 0
@@ -369,6 +397,8 @@ class SyncCircuitBreaker:
             bloqueios_consecutivos=entry["blocks"],
             bloqueado_ate=entry["blocked_until"], reaberto=reopened,
         )
+        if previous != OPEN:
+            _emit_transition("issue", platform, previous, OPEN, board_id, issue_id)
         pentry = state["platforms"].setdefault(platform, _new_platform_entry())
         window = self._cfg.platform_block_window
         pentry["blocked"] = {
@@ -381,6 +411,7 @@ class SyncCircuitBreaker:
 
     def _block_platform(self, pentry: dict, platform: str, reopened: bool = False) -> None:
         now = self._clock()
+        previous = pentry["state"]
         pentry["state"] = OPEN
         pentry["half_open_successes"] = 0
         pentry["blocked_until"] = now + self._cfg.platform_block_duration
@@ -392,10 +423,13 @@ class SyncCircuitBreaker:
             janela=self._cfg.platform_block_window,
             bloqueado_ate=pentry["blocked_until"], reaberto=reopened,
         )
+        if previous != OPEN:
+            _emit_transition("plataforma", platform, previous, OPEN)
 
     def _escalate(self, state: dict, entry: dict, board_id: str, issue_id,
-                  error: str) -> SyncEscalation:
+                  error: str, error_type: str | None = None) -> SyncEscalation:
         agent_id = self._cfg.escalation_agent
+        previous = entry["state"]
         entry["escalated"] = True
         entry["agent"] = agent_id
         entry["state"] = HALF_OPEN
@@ -409,6 +443,13 @@ class SyncCircuitBreaker:
             issue=str(issue_id), agente_dedicado=agent_id,
             bloqueios_consecutivos=entry["blocks"],
         )
+        if previous != HALF_OPEN:
+            _emit_transition("issue", self.platform_of(board_id), previous, HALF_OPEN,
+                             board_id, issue_id)
+        telemetry.emit(telemetry.EV_SYNC_ESCALACAO, {
+            **telemetry.contexto(board=board_id, issue=issue_id),
+            "error.type": error_type,
+        })
         return SyncEscalation(
             board_id=board_id, issue_id=str(issue_id), error_log=error,
             blocks=entry["blocks"], agent_id=agent_id,

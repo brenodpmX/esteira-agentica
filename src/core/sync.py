@@ -3,11 +3,13 @@
 import hashlib
 import json
 import re
+import time
 import traceback
 from dataclasses import asdict, dataclass, fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.core import telemetry
 from src.core.board import Board, ChangeItem, Issue, PenaltyException, SyncEvent
 from src.core.change_queue import ChangeQueue
 from src.core.commands import (apply_events_to_commands,
@@ -1070,77 +1072,212 @@ def apply_changes(board_obj: Board, queue: ChangeQueue, config: dict = None,
             queue.requeue(item)
             continue
 
-        try:
-            if item.event == SyncEvent.CREATE_UP.value:
-                _apply_create_up(board_id, item, board_obj, queue, config)
-            elif item.event == SyncEvent.CREATE_DOWN.value:
-                _apply_create_down(board_id, item, board_obj, queue, config)
-            elif item.event == SyncEvent.CHANGE_UP.value:
-                _apply_change_up(board_id, item, board_obj, queue, config)
-            elif item.event == SyncEvent.CHANGE_DOWN.value:
-                _apply_change_down(board_id, item, board_obj, queue, config)
-            elif item.event == SyncEvent.DELETE_UP.value:
-                _apply_delete_up(board_id, item, board_obj, queue)
-            elif item.event == SyncEvent.DELETE_DOWN.value:
-                _apply_delete_down(board_id, item, board_obj, queue)
-
-            queue.remove(item.uuid)
-            breaker.record_success(board_id, issue_key, platform)
-        except PenaltyException:
-            log.warning("Sync", f"[{board_id}] Penalty - abandonando apply_changes")
+        outcome = _ItemOutcome(item)
+        with telemetry.span(f"esteira.sync.item {item.event}", outcome.attributes()) as span:
+            try:
+                stop = _process_item(item, board_obj, queue, config, breaker, platform,
+                                     max_attempts, escalations, outcome)
+            finally:
+                outcome.finish(span)
+        if stop:
             return escalations
-        except Exception as exc:
-            category = classify_error(exc)
-            if category in ("definitivo", "definitivo_cli"):
-                log.warning(
-                    "Sync",
-                    f"[{board_id}] #{item.id} erro {category} em {item.event} - "
-                    f"removendo da fila: {exc}",
-                    board_id=board_id, issue_id=item.id, event=item.event,
-                    reason=sanitize_reason(str(exc)), attempts=item.attempts,
-                    category=category, next_step=_NEXT_STEP[category],
-                )
-                _isolate_in_dead_letter(board_id, item, category, exc)
-                queue.remove(item.uuid)
-                breaker.release(board_id, issue_key)
-                continue
 
-            escalation = breaker.record_failure(
-                board_id, issue_key, sanitize_reason(str(exc)),
-                correctable=(category == "corrigivel_pelo_agente"),
-                platform=platform,
-                error_log="".join(traceback.format_exception(exc)),
-            )
-            if escalation or breaker.issue_blocked(board_id, issue_key):
-                if escalation:
-                    escalations.append(escalation)
-                item.attempts = 0
-                queue.requeue(item)
-                continue
 
-            item.attempts += 1
-            if item.attempts >= max_attempts:
-                category = "transitorio_esgotado"
-                log.warning(
-                    "Sync",
-                    f"[{board_id}] #{item.id} esgotou tentativas ({item.attempts}) "
-                    f"em {item.event} - removendo da fila: {exc}",
-                    board_id=board_id, issue_id=item.id, event=item.event,
-                    reason=sanitize_reason(str(exc)), attempts=item.attempts,
-                    category=category, next_step=_NEXT_STEP[category],
-                )
-                _isolate_in_dead_letter(board_id, item, category, exc)
-                queue.remove(item.uuid)
-                breaker.release(board_id, issue_key)
-                continue
+class _ItemOutcome:
+    def __init__(self, item: ChangeItem):
+        self.item = item
+        self.attempt = (item.attempts or 0) + 1
+        self.started = time.monotonic()
+        self.desfecho = "reenfileirado"
+        self.category = None
+        self.exc = None
+        self.issue_id = item.id
 
+    def attributes(self) -> dict:
+        return {
+            "esteira.sync.uuid": self.item.uuid,
+            "esteira.sync.evento": self.item.event,
+            "esteira.sync.fullsync": bool(self.item.fullsync),
+            "esteira.board.plataforma": telemetry.board_platform(),
+            "esteira.board": self.item.board,
+            "esteira.issue": str(self.issue_id) if self.issue_id is not None else None,
+            "esteira.sync.tentativa": self.attempt,
+        }
+
+    def finish(self, span) -> None:
+        if not telemetry.enabled():
+            return
+        try:
+            self._finish(span)
+        except Exception:
+            return
+
+    def _finish(self, span) -> None:
+        enqueued = _parse_queue_ts(self.item.timestamp)
+        attrs = {
+            **self.attributes(),
+            "esteira.sync.desfecho": self.desfecho,
+            "esteira.sync.dead_letter.categoria": (
+                self.category if self.desfecho == "dead_letter" else None),
+            "esteira.sync.lag_s": max(0.0, time.time() - enqueued) if enqueued else None,
+            "esteira.sync.duracao_s": time.monotonic() - self.started,
+        }
+        if self.exc is not None:
+            attrs["error.type"] = type(self.exc).__name__
+            attrs["esteira.erro.mensagem"] = telemetry.sanitize_message(self.exc)
+            span.set_error(type(self.exc).__name__)
+        span.set_attributes(attrs)
+        telemetry.emit(telemetry.EV_SYNC_ITEM, attrs)
+
+
+def _parse_queue_ts(value) -> float | None:
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _process_item(item: ChangeItem, board_obj: Board, queue: ChangeQueue, config: dict,
+                  breaker: SyncCircuitBreaker, platform: str, max_attempts: int,
+                  escalations: list, outcome: "_ItemOutcome") -> bool:
+    board_id = item.board
+    issue_key = item.id or item.identifier
+    try:
+        if item.event == SyncEvent.CREATE_UP.value:
+            outcome.issue_id = _apply_create_up(board_id, item, board_obj, queue, config)
+        elif item.event == SyncEvent.CREATE_DOWN.value:
+            _apply_create_down(board_id, item, board_obj, queue, config)
+        elif item.event == SyncEvent.CHANGE_UP.value:
+            _apply_change_up(board_id, item, board_obj, queue, config)
+        elif item.event == SyncEvent.CHANGE_DOWN.value:
+            _apply_change_down(board_id, item, board_obj, queue, config)
+        elif item.event == SyncEvent.DELETE_UP.value:
+            _apply_delete_up(board_id, item, board_obj, queue)
+        elif item.event == SyncEvent.DELETE_DOWN.value:
+            _apply_delete_down(board_id, item, board_obj, queue)
+
+        queue.remove(item.uuid)
+        breaker.record_success(board_id, issue_key, platform)
+        outcome.desfecho = "aplicado"
+        _emit_applied_upsert(board_id, item.event, outcome.issue_id)
+        return False
+    except PenaltyException as exc:
+        outcome.exc = exc
+        log.warning("Sync", f"[{board_id}] Penalty - abandonando apply_changes")
+        return True
+    except Exception as exc:
+        outcome.exc = exc
+        category = classify_error(exc)
+        if category in ("definitivo", "definitivo_cli"):
             log.warning(
                 "Sync",
-                f"[{board_id}] #{item.id} erro transitório em {item.event} "
-                f"(tentativa {item.attempts}/{max_attempts}) - reenfileirando: {exc}",
-                issue_id=item.id, event=item.event, attempts=item.attempts,
+                f"[{board_id}] #{item.id} erro {category} em {item.event} - "
+                f"removendo da fila: {exc}",
+                board_id=board_id, issue_id=item.id, event=item.event,
+                reason=sanitize_reason(str(exc)), attempts=item.attempts,
+                category=category, next_step=_NEXT_STEP[category],
             )
+            _isolate_in_dead_letter(board_id, item, category, exc)
+            queue.remove(item.uuid)
+            breaker.release(board_id, issue_key)
+            outcome.desfecho, outcome.category = "dead_letter", category
+            return False
+
+        escalation = breaker.record_failure(
+            board_id, issue_key, sanitize_reason(str(exc)),
+            correctable=(category == "corrigivel_pelo_agente"),
+            platform=platform,
+            error_log="".join(traceback.format_exception(exc)),
+            error_type=type(exc).__name__,
+        )
+        if escalation or breaker.issue_blocked(board_id, issue_key):
+            if escalation:
+                escalations.append(escalation)
+            item.attempts = 0
             queue.requeue(item)
+            return False
+
+        item.attempts += 1
+        if item.attempts >= max_attempts:
+            category = "transitorio_esgotado"
+            log.warning(
+                "Sync",
+                f"[{board_id}] #{item.id} esgotou tentativas ({item.attempts}) "
+                f"em {item.event} - removendo da fila: {exc}",
+                board_id=board_id, issue_id=item.id, event=item.event,
+                reason=sanitize_reason(str(exc)), attempts=item.attempts,
+                category=category, next_step=_NEXT_STEP[category],
+            )
+            _isolate_in_dead_letter(board_id, item, category, exc)
+            queue.remove(item.uuid)
+            breaker.release(board_id, issue_key)
+            outcome.desfecho, outcome.category = "dead_letter", category
+            return False
+
+        log.warning(
+            "Sync",
+            f"[{board_id}] #{item.id} erro transitório em {item.event} "
+            f"(tentativa {item.attempts}/{max_attempts}) - reenfileirando: {exc}",
+            issue_id=item.id, event=item.event, attempts=item.attempts,
+        )
+        queue.requeue(item)
+        return False
+
+
+_UPSERT_EVENTS = (SyncEvent.CREATE_UP.value, SyncEvent.CREATE_DOWN.value,
+                  SyncEvent.CHANGE_UP.value, SyncEvent.CHANGE_DOWN.value)
+
+
+def issue_upsert_attributes(board_id: str, issue_data: dict, origem: str) -> dict:
+    return {
+        **telemetry.contexto(board=board_id, coluna=issue_data.get("column"),
+                             issue=issue_data.get("id"), pai=issue_data.get("parent"),
+                             body_path=issue_data.get("body_path")),
+        "esteira.issue.filhos": list(issue_data.get("children") or []),
+        "esteira.issue.bloqueada_por": list(issue_data.get("blocked_by") or []),
+        "esteira.issue.bloqueia": list(issue_data.get("blocks") or []),
+        "esteira.issue.labels": list(issue_data.get("labels") or []),
+        "esteira.issue.estado": issue_data.get("state") or "open",
+        "esteira.issue.arquivada": bool(issue_data.get("archived")),
+        "esteira.issue.origem": origem,
+    }
+
+
+def _emit_applied_upsert(board_id: str, event: str, issue_id) -> None:
+    if not telemetry.enabled() or event not in _UPSERT_EVENTS or issue_id is None:
+        return
+    try:
+        issue_data = Snapshot(board_id).load().issue(issue_id)
+    except (OSError, ValueError):
+        return
+    if issue_data:
+        telemetry.emit(telemetry.EV_ISSUE_UPSERT,
+                       issue_upsert_attributes(board_id, issue_data, "incremental"))
+
+
+def emit_full_snapshot(board_ids: list[str]) -> None:
+    if not telemetry.enabled():
+        return
+    for board_id in board_ids:
+        try:
+            issues = Snapshot(board_id).load().issues
+        except (OSError, ValueError):
+            continue
+        for issue_data in issues:
+            if issue_data.get("id"):
+                telemetry.emit(telemetry.EV_ISSUE_UPSERT,
+                               issue_upsert_attributes(board_id, issue_data, "full_sync"))
+
+
+def _emit_transicao(board_id: str, issue_id, old_col: str | None, new_col: str | None) -> None:
+    if not old_col or not new_col or old_col == new_col:
+        return
+    telemetry.emit(telemetry.EV_ISSUE_TRANSICAO, {
+        **telemetry.contexto(board=board_id, coluna=new_col, issue=issue_id),
+        "esteira.coluna.de": old_col,
+        "esteira.coluna.para": new_col,
+    })
 
 
 def _isolate_in_dead_letter(board_id: str, item: ChangeItem, category: str,
@@ -1241,9 +1378,9 @@ def _apply_create_up(board_id: str, item: ChangeItem, board_obj: Board, queue: C
     _write_state_from_cmds(issue_data, cmds)
     snap.save()
 
-    # Gatilho de par recíproco sobre as relações recém-criadas.
     if queue is not None and deltas:
         _trigger_reciprocal_downs(created.id, deltas, queue)
+    return created.id
 
 
 def _apply_create_down(board_id: str, item: ChangeItem, board_obj: Board, queue: ChangeQueue = None,
@@ -1385,6 +1522,7 @@ def _apply_change_up(board_id: str, item: ChangeItem, board_obj: Board,
     if current_col != old_col:
         board_obj.move_issue(board_id, item.id, current_col, from_column=old_col)
         _fire_column_events(board_id, item.id, board_obj, config, old_col, current_col)
+        _emit_transicao(board_id, item.id, old_col, current_col)
         issue_data["column"] = current_col
     relocate_files_dir(board_id, body_path)
 
@@ -1529,6 +1667,7 @@ def _apply_change_down(board_id: str, item: ChangeItem, board_obj: Board,
     # O snapshot NÃO é alterado aqui; reescrevemos o arquivo APÓS o body_mtime
     # já registrado, de modo que o próximo sync detecte a modificação local e
     # dispare um change-up — garantindo que status/labels subam para o board.
+    _emit_transicao(board_id, item.id, old_col, current_col)
     if config and old_col and current_col and old_col != current_col:
         _bake_column_events(board_id, body_path, config, old_col, current_col)
 

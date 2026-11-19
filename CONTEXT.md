@@ -17,6 +17,34 @@ A versão é exibida no log ao iniciar a esteira.
 
 ## Changelog
 
+### Envio de telemetria OpenTelemetry — contrato v1 (v1.30.0 — #355)
+
+A esteira passa a publicar eventos crus, métricas de estado e traces no padrão
+OTLP, para que qualquer ferramenta compatível monte dashboards. Monitorar é
+secundário: a telemetria nunca atrasa, trava ou derruba o processamento.
+
+- Bump: `1.29.0` → `1.30.0` (MINOR — funcionalidade nova, opt-in, sem chave
+  nova no `pipe.yml`).
+- Port no núcleo: `src/core/telemetry.py` (`TelemetryPort`, `NoopTelemetry`,
+  helpers fail-open `emit`/`span`/`register_gauge`/`shutdown`, atributos de
+  recurso e de contexto). Nenhum módulo de `src/core/` importa `opentelemetry`.
+- Leitores das métricas (gauges) em `src/core/telemetry_metrics.py`; o adapter de
+  board expõe throttle/penalty por `BoardPort.rate_state()`.
+- Adapter OTel: `src/adapters/otel_telemetry.py` (SDK 1.45.2, BatchProcessor em
+  memória com fila ≤ 2048, `schedule_delay` 5 s, `export_timeout` 2 s, shutdown
+  com teto de 2 s em thread daemon, aviso de falha de export no máximo 1 por 10
+  min). Sem `OTEL_EXPORTER_OTLP_ENDPOINT` ou com `OTEL_SDK_DISABLED=true` é no-op
+  e o SDK nem é carregado.
+- Pontos de emissão: `call_agent` (span `invoke_agent` + `esteira.agente.execucao`
+  e admissões negadas), `Board._call` (span/evento `esteira.board.api` de toda
+  chamada ao provider), `apply_changes` (span/evento `esteira.sync.item`,
+  `esteira.issue.upsert` incremental), snapshot completo diário, transições de
+  coluna, circuit breakers, limitador de consumo, throttle/penalty do GitHub,
+  ciclo e ciclo de vida do loop e incidentes.
+- Infra: dependências pinadas no `Dockerfile`/`docker/versions.env`;
+  `compose.telemetria.yml` liga o `dind` à rede externa `esteira-telemetria`.
+- Contrato completo e operação: `doc/runbook/telemetria.md`.
+
 ### Restauração das mudanças perdidas no merge `c27f813` (v1.9.0 — #181)
 
 Recupera funcionalidade que existia apenas em `main` e foi descartada na
@@ -159,10 +187,13 @@ src/
 │   ├── change_queue.py # Fila persistente de sincronismo (at-least-once)
 │   ├── snapshot.py     # Snapshot por board
 │   ├── session.py      # Índice de sessões do agente (.pipe/sessions.json)
+│   ├── telemetry.py    # TelemetryPort + no-op + contrato de telemetria v1
+│   ├── telemetry_metrics.py # Leitores das métricas de estado (gauges)
 │   └── sync.py         # Sincronização local ↔ board (detect + apply)
 ├── adapters/           # Implementações de ports
 │   ├── github_board.py # Adapter para GitHub Projects V2
-│   └── kiro_cli_agent.py # Adapter para execução via kiro-cli
+│   ├── kiro_cli_agent.py # Adapter para execução via kiro-cli
+│   └── otel_telemetry.py # Adapter OpenTelemetry (OTLP) do TelemetryPort
 └── __main__.py         # Orquestração
 ```
 
@@ -172,6 +203,8 @@ src/
 - **Board** — core que usa o port para operações
 - **AgentPort** — interface abstrata para execução de agentes
 - **KiroCliAgent** — adapter que executa via kiro-cli
+- **TelemetryPort** — interface de telemetria; default no-op
+- **OtelTelemetry** — adapter OpenTelemetry/OTLP do TelemetryPort
 
 ## Fluxo Principal
 

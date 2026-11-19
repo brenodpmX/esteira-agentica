@@ -25,6 +25,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from src.core import telemetry
 from src.core.log import log
 from src.core.participation import (
     Classification,
@@ -127,6 +128,7 @@ def event_cross_board_link_blocked(parent, child, parent_board, child_board,
         parent_board=parent_board, child_board=child_board,
         config_version=config_version,
     )
+    telemetry.incidente("cross_board_bloqueado", board=child_board, issue=child)
 
 
 # ── Estado de pendências (retentativa sem bloqueio) ────────────────────────────

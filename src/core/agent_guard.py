@@ -37,6 +37,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from src.core import telemetry
 from src.core.log import log
 
 BOARDS_DIR = Path(".pipe/boards")
@@ -97,6 +98,7 @@ def fix_phantom_files(board_id: str, col_id: str, known_ids: set[str]) -> list[t
             )
             body_file.rename(new_path)
             renamed.append((body_file.name, new_name))
+            telemetry.incidente("arquivo_fantasma", board=board_id)
 
     return renamed
 
@@ -174,6 +176,7 @@ class AgentGuard:
             if self._backup and self._backup.exists():
                 restore_snapshot(self._board_id, self._backup)
                 self.snapshot_restored = True
+                telemetry.incidente("snapshot_restaurado", board=self._board_id)
 
     def _check_phantom_files(self) -> None:
         self.renamed_files = fix_phantom_files(

@@ -1,5 +1,6 @@
 """Board core - gerencia boards via port."""
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -277,12 +278,45 @@ class BoardPort(ABC):
     def download_attachment(self, url: str) -> bytes:
         raise NotImplementedError("download_attachment não implementado neste adapter")
 
+    def rate_state(self) -> dict | None:
+        return None
+
 
 class Board:
     """Core de boards - usa port para operações."""
 
     def __init__(self, port: BoardPort):
         self._port = port
+
+    def _call(self, operation: str, board_id, issue_id, fn, *args):
+        from src.core import telemetry
+
+        if not telemetry.enabled():
+            return fn(*args)
+        started = time.monotonic()
+        attrs = {
+            "esteira.board.plataforma": telemetry.board_platform(),
+            "esteira.board.operacao": operation,
+            "esteira.board": board_id,
+            "esteira.issue": str(issue_id) if issue_id is not None else None,
+        }
+        status, error_type = "ok", None
+        with telemetry.span(f"esteira.board.api {operation}", attrs) as span:
+            try:
+                return fn(*args)
+            except PenaltyException:
+                status, error_type = "rate_limit", "PenaltyException"
+                raise
+            except Exception as exc:
+                status, error_type = "erro", type(exc).__name__
+                raise
+            finally:
+                final = {**attrs, "esteira.board.duracao_s": time.monotonic() - started,
+                         "esteira.board.status": status, "error.type": error_type}
+                span.set_attributes(final)
+                if error_type:
+                    span.set_error(error_type)
+                telemetry.emit(telemetry.EV_BOARD_API, final)
 
     def connect(self, config: dict):
         self._port.connect(config)
@@ -292,74 +326,75 @@ class Board:
 
         Levanta BoardAccessError quando o token não pode operar o board.
         """
-        self._port.check_access(config)
+        self._call("check_access", None, None, self._port.check_access, config)
 
     def sync_boards(self, config: dict):
         """Extrai boards do config e sincroniza via port."""
-        self._port.sync_boards(self._boards_from_config(config))
+        self._call("sync_boards", None, None, self._port.sync_boards,
+                   self._boards_from_config(config))
 
     def list_issues(self, board_id: str) -> list[Issue]:
-        return self._port.list_issues(board_id)
+        return self._call("list_issues", board_id, None, self._port.list_issues, board_id)
 
     def get_issue(self, board_id: str, issue_id: str) -> Issue:
-        return self._port.get_issue(board_id, issue_id)
+        return self._call("get_issue", board_id, issue_id, self._port.get_issue, board_id, issue_id)
 
     def create_issue(self, board_id: str, title: str, body: str, column: str) -> Issue:
-        return self._port.create_issue(board_id, title, body, column)
+        return self._call("create_issue", board_id, None, self._port.create_issue, board_id, title, body, column)
 
     def move_issue(self, board_id: str, issue_id: str, column: str, from_column: str = None):
-        self._port.move_issue(board_id, issue_id, column, from_column)
+        self._call("move_issue", board_id, issue_id, self._port.move_issue, board_id, issue_id, column, from_column)
 
     def update_issue(self, board_id: str, issue_id: str, title: str = None, body: str = None):
-        self._port.update_issue(board_id, issue_id, title, body)
+        self._call("update_issue", board_id, issue_id, self._port.update_issue, board_id, issue_id, title, body)
 
     def add_comment(self, board_id: str, issue_id: str, comment: str):
-        self._port.add_comment(board_id, issue_id, comment)
+        self._call("add_comment", board_id, issue_id, self._port.add_comment, board_id, issue_id, comment)
 
     def list_comments(self, board_id: str, issue_id: str) -> list[dict]:
-        return self._port.list_comments(board_id, issue_id)
+        return self._call("list_comments", board_id, issue_id, self._port.list_comments, board_id, issue_id)
 
     def close_issue(self, board_id: str, issue_id: str):
-        self._port.close_issue(board_id, issue_id)
+        self._call("close_issue", board_id, issue_id, self._port.close_issue, board_id, issue_id)
 
     def set_labels(self, board_id: str, issue_id: str, labels: list[str]):
-        self._port.set_labels(board_id, issue_id, labels)
+        self._call("set_labels", board_id, issue_id, self._port.set_labels, board_id, issue_id, labels)
 
     def add_label(self, board_id: str, issue_id: str, label: str):
-        self._port.add_label(board_id, issue_id, label)
+        self._call("add_label", board_id, issue_id, self._port.add_label, board_id, issue_id, label)
 
     def remove_label(self, board_id: str, issue_id: str, label: str):
-        self._port.remove_label(board_id, issue_id, label)
+        self._call("remove_label", board_id, issue_id, self._port.remove_label, board_id, issue_id, label)
 
     def set_parent(self, board_id: str, issue_id: str, parent_id: str | None,
                    known_current=None):
-        self._port.set_parent(board_id, issue_id, parent_id, known_current)
+        self._call("set_parent", board_id, issue_id, self._port.set_parent, board_id, issue_id, parent_id, known_current)
 
     def set_children(self, board_id: str, issue_id: str, children_ids: list[str],
                      known_current: list[str] | None = None):
-        self._port.set_children(board_id, issue_id, children_ids, known_current)
+        self._call("set_children", board_id, issue_id, self._port.set_children, board_id, issue_id, children_ids, known_current)
 
     def set_blocked_by(self, board_id: str, issue_id: str, blocker_ids: list[str],
                        known_current: list[str] | None = None):
-        self._port.set_blocked_by(board_id, issue_id, blocker_ids, known_current)
+        self._call("set_blocked_by", board_id, issue_id, self._port.set_blocked_by, board_id, issue_id, blocker_ids, known_current)
 
     def set_blocks(self, board_id: str, issue_id: str, blocked_ids: list[str],
                    known_current: list[str] | None = None):
-        self._port.set_blocks(board_id, issue_id, blocked_ids, known_current)
+        self._call("set_blocks", board_id, issue_id, self._port.set_blocks, board_id, issue_id, blocked_ids, known_current)
 
     def archive_issue(self, board_id: str, issue_id: str):
-        self._port.archive_issue(board_id, issue_id)
+        self._call("archive_issue", board_id, issue_id, self._port.archive_issue, board_id, issue_id)
 
     def unarchive_issue(self, board_id: str, issue_id: str):
-        self._port.unarchive_issue(board_id, issue_id)
+        self._call("unarchive_issue", board_id, issue_id, self._port.unarchive_issue, board_id, issue_id)
 
     def remove_from_board(self, board_id: str, issue_id: str):
         """Remove um item de um project (via deleteProjectV2Item)."""
-        self._port.remove_from_board(board_id, issue_id)
+        self._call("remove_from_board", board_id, issue_id, self._port.remove_from_board, board_id, issue_id)
 
     def list_participations(self, issue_id: str) -> list:
         """Lista as participações (presenças em projects) de uma issue (#310)."""
-        return self._port.list_participations(issue_id)
+        return self._call("list_participations", None, issue_id, self._port.list_participations, issue_id)
 
     # ── Operações estruturais de retirada segura de coluna (#305) ─────────────
 
@@ -371,24 +406,25 @@ class Board:
         TODAS as opções remotas existentes, inclusive as em vias de retirada.
         """
         boards = self._boards_from_config(config)
-        self._port.prepare_structure(boards)
+        self._call("prepare_structure", None, None, self._port.prepare_structure, boards)
 
     def contract_column(self, board_id: str, final_columns: list[str]):
         """Contrai o Status do board para a lista final informada (remove opções)."""
-        self._port.contract_column(board_id, final_columns)
+        self._call("contract_column", board_id, None, self._port.contract_column,
+                   board_id, final_columns)
 
     def remote_columns(self, board_id: str) -> list[str]:
         """Nomes das opções de Status publicadas no board remoto (ordenadas)."""
-        return self._port.remote_columns(board_id)
+        return self._call("remote_columns", board_id, None, self._port.remote_columns, board_id)
 
     def is_attachment(self, url: str) -> bool:
         return self._port.is_attachment(url)
 
     def attachment_metadata(self, url: str) -> dict:
-        return self._port.attachment_metadata(url)
+        return self._call("attachment_metadata", None, None, self._port.attachment_metadata, url)
 
     def download_attachment(self, url: str) -> bytes:
-        return self._port.download_attachment(url)
+        return self._call("download_attachment", None, None, self._port.download_attachment, url)
 
     @staticmethod
     def _boards_from_config(config: dict) -> list[dict]:

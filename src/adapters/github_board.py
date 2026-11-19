@@ -9,6 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
+from src.core import telemetry
 from src.core.board import BoardPort, Issue, PenaltyException
 from src.core.log import log
 
@@ -77,6 +78,7 @@ class GitHubBoardAdapter(BoardPort):
             else:
                 self._in_penalty = False
                 log.info("GitHub", "Penalty desativado")
+                self._emit_penalty("inativo")
                 self._penalty_cooldown = datetime.now() + timedelta(hours=1)
 
         if self._penalty_cooldown is None:
@@ -93,6 +95,8 @@ class GitHubBoardAdapter(BoardPort):
         self._in_penalty = True
         back_at = self._penalty_ttl.strftime('%H:%M:%S')
         log.warning("GitHub", f"Penalty ativado por {self._penalty_value // 2}h - retorna às {back_at}")
+        self._emit_penalty("ativo", horas=self._penalty_value // 2,
+                           retorno_em=self._penalty_ttl.astimezone().isoformat())
         remaining = int((self._penalty_ttl - datetime.now()).total_seconds())
         return PenaltyException(remaining)
 
@@ -101,15 +105,17 @@ class GitHubBoardAdapter(BoardPort):
             self._throttle_cooldown = datetime.now() + timedelta(hours=1)
 
         if self._throttle_cooldown < datetime.now():
+            previous = self._throttle_value
             if self._throttle_value > 1:
                 self._throttle_value //= 2
                 self._save_throttle()
                 log.info("GitHub", f"Throttle reduzido para {self._throttle_value}s (cooldown)")
             elif self._throttle_value == 1:
-                # Último degrau: de 1 vai direto para 0 (sem throttle).
                 self._throttle_value = 0
                 self._save_throttle()
                 log.info("GitHub", f"Throttle reduzido para {self._throttle_value}s (cooldown)")
+            if previous != self._throttle_value:
+                self._emit_throttle(previous, "cooldown")
             self._throttle_cooldown = datetime.now() + timedelta(hours=1)
 
         time.sleep(self._throttle_value)
@@ -118,14 +124,41 @@ class GitHubBoardAdapter(BoardPort):
         if self._throttle_value >= 64:
             raise self._penalty_hit()
 
+        previous = self._throttle_value
         if self._throttle_value == 0:
-            # Saindo do "sem throttle": primeiro degrau é 1.
             self._throttle_value = 1
         else:
             self._throttle_value = min(self._throttle_value * 2, 64)
         self._throttle_cooldown = datetime.now() + timedelta(hours=1)
         self._save_throttle()
         log.info("GitHub", f"Throttle aumentado para {self._throttle_value}s")
+        if previous != self._throttle_value:
+            self._emit_throttle(previous, "aumento")
+
+    def _emit_throttle(self, previous: int, motivo: str) -> None:
+        telemetry.emit(telemetry.EV_BOARD_THROTTLE, {
+            "esteira.board.plataforma": "github",
+            "esteira.board.throttle.valor_anterior_s": previous,
+            "esteira.board.throttle.valor_novo_s": self._throttle_value,
+            "esteira.board.throttle.motivo": motivo,
+        })
+
+    def _emit_penalty(self, estado: str, horas: int | None = None,
+                      retorno_em: str | None = None) -> None:
+        telemetry.emit(telemetry.EV_BOARD_PENALTY, {
+            "esteira.board.plataforma": "github",
+            "esteira.board.penalty.estado": estado,
+            "esteira.board.penalty.horas": horas,
+            "esteira.board.penalty.retorno_em": retorno_em,
+        })
+
+    def rate_state(self) -> dict:
+        active = bool(self._in_penalty and self._penalty_ttl
+                      and self._penalty_ttl > datetime.now())
+        return {
+            "throttle_s": self._throttle_value,
+            "penalty_h": (self._penalty_value // 2) if active else 0,
+        }
 
     def _save_throttle(self):
         """Persiste throttle_value em arquivo para sobreviver a reinícios."""

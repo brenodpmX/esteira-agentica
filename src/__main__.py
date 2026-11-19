@@ -14,9 +14,12 @@ from src.core.agent import (AgentParams, build_prompt, build_continuation_prompt
 from src.core.context_generator import generate_context, ensure_steering_integrity, STEERING_FILE
 from src.core import composition
 from src.core import participation
+from src.core import telemetry
+from src.core import telemetry_metrics
 from src.core.lock import InstanceLock, LockHeldError
 from src.adapters.github_board import GitHubBoardAdapter
 from src.adapters.kiro_cli_agent import KiroCliAgent
+from src.adapters import otel_telemetry
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import NoReturn
@@ -25,6 +28,7 @@ import shutil
 import os
 import signal
 import time
+import uuid
 
 REPO_DIR = Path("repo")
 SSH_DIR = Path.home() / ".ssh"
@@ -576,6 +580,8 @@ def keep_task(board_id: str, config: dict) -> dict | object | None:
         if _is_blocked(issue):
             continue
         if _in_rerun_cooldown(board_id, col_id, issue["id"], cooldown):
+            _emit_admission_denied(config, board_id, col_id, issue,
+                                   resolve_agent_id(col, issue), "cooldown")
             continue
         if not _consumption_allows(config, board_cfg, board_id, col_id, issue,
                                    resolve_agent_id(col, issue)):
@@ -723,12 +729,8 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
     if ensure_steering_integrity(config):
         log.warning("Steering", "steering divergente detectado - reescrito antes "
                     "de despachar o agente", event="steering_integrity_rewrite")
+        telemetry.incidente("steering_reescrito", board=board_id, issue=issue["id"])
 
-    # ── Composição em camadas (#308): medição + gate de instruções obrigatórias ──
-    # Emitimos o registro de medição POR EXECUÇÃO antes de acionar o agente e
-    # verificamos o contrato de carregamento das instruções obrigatórias (o
-    # steering, contexto SEMPRE carregado). Fail-closed (CA-5): sem as instruções
-    # obrigatórias, NÃO acionamos o agente e sinalizamos a falha de composição.
     record = compose_execution_record(adapter, prompt, continuation_prompt, col, issue)
     log.trace(
         "Composicao",
@@ -744,12 +746,15 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
             instrucoes_obrigatorias_carregadas=False,
             motivo=record.get("motivo", ""),
         )
+        _emit_admission_denied(config, board_id, col_id, issue, agent_id,
+                               "composicao_recusada")
         return None
 
     if not _consumption_allows(config, board_cfg, board_id, col_id, issue, agent_id):
         return None
 
     if not _admit_circuit_break(config, board_id, col_id, issue):
+        _emit_admission_denied(config, board_id, col_id, issue, agent_id, "circuit_break")
         return None
 
     # ── Correlação de despacho (#310 / RF-15) ─────────────────────────────────
@@ -764,23 +769,127 @@ def call_agent(config: dict, task: dict | None, escalation_errors: str | None = 
         origin_board=board_id,
     )
 
-    # ── Execução + registro de negócio por execução (#307) ────────────────────
-    # Capturamos início/fim para a duração e observamos o avanço de etapa (RN-01:
-    # dimensão independente do resultado). O registro é gravado ao FINAL de
-    # qualquer desfecho (CA-1), SEM nunca derrubar a esteira por falha de
-    # persistência (fail-safe: a execução já ocorreu).
+    base_attrs = _execution_base_attributes(params, issue, record)
     inicio = time.time()
-    result = _dispatch_with_recovery(config, adapter, params, board_id, col_id)
-    fim = time.time()
+    with telemetry.span(f"invoke_agent {params.agent_name}", base_attrs) as span:
+        try:
+            result = _dispatch_with_recovery(config, adapter, params, board_id, col_id)
+        except (Exception, KeyboardInterrupt) as exc:
+            _emit_execution(span, base_attrs, params, issue, None, None, False,
+                            inicio, time.time(), error=exc)
+            raise
+        fim = time.time()
 
-    avancou = _issue_advanced(board_id, col_id, issue)
-    _write_execution_record(
-        config, result=result, params=params, issue=issue,
-        board_id=board_id, col_id=col_id, avancou=avancou,
-        inicio=inicio, fim=fim,
-    )
+        avancou = _issue_advanced(board_id, col_id, issue)
+        exec_record = _write_execution_record(
+            config, result=result, params=params, issue=issue,
+            board_id=board_id, col_id=col_id, avancou=avancou,
+            inicio=inicio, fim=fim,
+        )
+        _emit_execution(span, base_attrs, params, issue, result, exec_record, avancou,
+                        inicio, fim)
     _record_consumption(config, board_cfg, params, result)
     return result
+
+
+def _iso(ts: float | None) -> str | None:
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts).astimezone().isoformat()
+
+
+def _execution_base_attributes(params, issue: dict, composition_record: dict) -> dict:
+    if not telemetry.enabled():
+        return {}
+    contexto = composition_record.get("contexto_sempre_carregado") or {}
+    return {
+        "gen_ai.operation.name": "invoke_agent",
+        **telemetry.contexto(board=params.board_id, coluna=params.col_id,
+                             issue=params.issue_id, pai=issue.get("parent"),
+                             titulo=params.title or None),
+        "esteira.ia.plataforma": params.platform,
+        "gen_ai.agent.id": params.agent_id,
+        "gen_ai.agent.name": params.agent_name,
+        "gen_ai.request.model": params.model or None,
+        "esteira.execucao.timeout_s": params.timeout_seg,
+        "esteira.composicao.tokens_entrada": composition_record.get("tokens_entrada"),
+        "esteira.composicao.caracteres_sempre_carregado": contexto.get("caracteres"),
+    }
+
+
+def _current_column(board_id: str, issue_id, fallback: str) -> str:
+    from src.core.sync import _find_issue_files
+
+    try:
+        body = _find_issue_files(board_id, str(issue_id))
+    except Exception:
+        body = None
+    return body.parent.name if body else fallback
+
+
+def _emit_execution(span, base_attrs: dict, params, issue: dict, result, exec_record,
+                    avancou: bool, inicio: float, fim: float, error=None) -> None:
+    if not telemetry.enabled():
+        return
+    try:
+        from src.core import execution, execution_record
+
+        if error is not None:
+            interrupted = isinstance(error, (KeyboardInterrupt, _Shutdown))
+            resultado = (execution_record.INTERROMPIDA if interrupted
+                         else execution_record.DESCONHECIDA)
+        elif exec_record is not None:
+            resultado = exec_record.resultado
+        elif result is None:
+            resultado = execution_record.CONCLUIDA
+        else:
+            resultado = execution_record.map_resultado(result.classe, result.origem)
+        consumo = getattr(result, "consumo", None) or \
+            execution_record.Consumo.indisponivel(origem=params.platform)
+        attrs = {
+            **base_attrs,
+            "esteira.execucao.id": (exec_record.execucao_id if exec_record is not None
+                                    else uuid.uuid4().hex),
+            "esteira.coluna.destino": _current_column(params.board_id, params.issue_id,
+                                                      params.col_id),
+            "esteira.execucao.resultado": resultado,
+            "esteira.execucao.avancou": bool(avancou),
+            "esteira.execucao.repeticao_sem_avanco": bool(
+                exec_record.repeticao_sem_avanco if exec_record is not None else False),
+            "esteira.execucao.classe": (result.classe if result is not None
+                                        else (None if error is not None else execution.SUCEDIDO)),
+            "esteira.execucao.origem": getattr(result, "origem", None),
+            "esteira.execucao.tentativas": getattr(result, "tentativas", None) or 1,
+            "esteira.execucao.sessao": getattr(result, "sessao", None) or "nova",
+            "esteira.execucao.inicio": _iso(inicio),
+            "esteira.execucao.fim": _iso(fim),
+            "esteira.execucao.duracao_s": max(0.0, fim - inicio),
+            "esteira.consumo.disponivel": bool(consumo.disponivel),
+            "esteira.consumo.valor": consumo.valor if consumo.disponivel else None,
+            "esteira.consumo.unidade": consumo.unidade,
+            "esteira.consumo.origem": consumo.origem,
+            "error.type": type(error).__name__ if error is not None else None,
+        }
+        span.set_attributes(attrs)
+        if error is not None:
+            span.set_error(type(error).__name__)
+        telemetry.emit(telemetry.EV_EXECUCAO, attrs)
+    except Exception:
+        return
+
+
+def _emit_admission_denied(config: dict, board_id: str, col_id: str, issue: dict,
+                           agent_id: str, motivo: str, periodo: str | None = None) -> None:
+    if not telemetry.enabled():
+        return
+    platform, _ = _resolve_platform(config, agent_id)
+    telemetry.emit(telemetry.EV_ADMISSAO_NEGADA, {
+        **telemetry.contexto(board=board_id, coluna=col_id, issue=issue.get("id"),
+                             pai=issue.get("parent"), body_path=issue.get("body_path")),
+        "esteira.ia.plataforma": platform,
+        "esteira.admissao.motivo": motivo,
+        "esteira.consumo.periodo": periodo if motivo == "limite_consumo" else None,
+    })
 
 
 def _resolve_platform(config: dict, agent_id: str) -> tuple[str | None, dict]:
@@ -817,6 +926,9 @@ def _consumption_allows(config: dict, board_cfg: dict, board_id: str, col_id: st
         platform, policy, board=board_id, coluna=col_id, issue=issue.get("id"),
         agente=agent_id,
     )
+    if not decision.admitted:
+        _emit_admission_denied(config, board_id, col_id, issue, agent_id, "limite_consumo",
+                               consumption_limit.PERIOD_LABEL.get(decision.period))
     return decision.admitted
 
 
@@ -853,7 +965,7 @@ def _issue_advanced(board_id: str, col_id: str, issue: dict) -> bool:
 
 
 def _write_execution_record(config, *, result, params, issue, board_id, col_id,
-                            avancou: bool, inicio: float, fim: float) -> None:
+                            avancou: bool, inicio: float, fim: float):
     """Grava o registro de negócio da execução (#307), fail-safe.
 
     O `issue_parent` capturado é o parentesco OBSERVADO no momento da execução
@@ -872,7 +984,7 @@ def _write_execution_record(config, *, result, params, issue, board_id, col_id,
         # indisponível preservando a proveniência da plataforma.
         consumo = getattr(result, "consumo", None) or \
             execution_record.Consumo.indisponivel(origem=params.platform)
-        execution_record.record_from_execution_result(
+        return execution_record.record_from_execution_result(
             result=result,
             issue_id=issue_id,
             board=board_id,
@@ -888,14 +1000,14 @@ def _write_execution_record(config, *, result, params, issue, board_id, col_id,
             log_ref=log_ref,
         )
     except execution_record.ExecutionRecordStoreError as exc:
-        # Fail-safe: a execução já ocorreu; não derruba a esteira por falha de
-        # persistência do registro. Evidência acionável no log.
         log.error(
             "ExecutionRecord",
             f"[{board_id}] #{issue_id} falha ao gravar registro de execução: {exc}",
             event="execution_record_write_error",
             board_id=board_id, issue_id=str(issue_id),
         )
+        telemetry.incidente("registro_execucao_falha", board=board_id, issue=issue_id)
+        return None
 
 
 def _admit_circuit_break(config: dict, board_id: str, col_id: str, issue: dict) -> bool:
@@ -1095,6 +1207,74 @@ def sleep_time(config: dict):
     back_at = (datetime.now() + timedelta(seconds=seconds)).strftime('%H:%M:%S')
     log.info("Sleep", f"Nenhuma atividade - dormindo {seconds}s (retorna às {back_at})")
     time.sleep(seconds)
+    return seconds
+
+
+_telemetry_state: dict = {"revision": None, "snapshot_day": None}
+
+
+def setup_telemetry(config: dict) -> None:
+    port = otel_telemetry.build(config)
+    telemetry.configure(port, board_platform=(config.get("boards") or {}).get("platform"))
+    if port is None:
+        log.trace("Telemetria", "telemetria desligada (sem OTEL_EXPORTER_OTLP_ENDPOINT "
+                  "ou OTEL_SDK_DISABLED=true)", event="telemetria_desligada")
+        return
+    attrs = port.resource_attributes
+    log.info(
+        "Telemetria",
+        f"telemetria ligada - service.instance.id={attrs.get(telemetry.INSTANCE_ATTR)} "
+        f"esteira.pipe.nome={attrs.get(telemetry.PIPE_NOME_ATTR)} "
+        f"endpoint={telemetry.endpoint_for_log()}",
+        event="telemetria_ligada",
+    )
+
+
+def _revision() -> str | None:
+    if _telemetry_state["revision"] is None and telemetry.enabled():
+        try:
+            _telemetry_state["revision"] = participation._resolve_commit() or ""
+        except Exception:
+            _telemetry_state["revision"] = ""
+    return _telemetry_state["revision"] or None
+
+
+def emit_lifecycle(fase: str) -> None:
+    if not telemetry.enabled():
+        return
+    telemetry.emit(telemetry.EV_PIPE_CICLO_VIDA, {
+        "esteira.pipe.fase": fase,
+        "vcs.ref.head.revision": _revision(),
+    })
+
+
+def emit_cycle(started: float, had_changes: bool, slept) -> None:
+    if not telemetry.enabled():
+        return
+    slept = slept if isinstance(slept, (int, float)) else 0
+    telemetry.emit(telemetry.EV_PIPE_CICLO, {
+        "esteira.ciclo.duracao_s": max(0.0, time.monotonic() - started - slept),
+        "esteira.ciclo.houve_mudanca": bool(had_changes),
+        "esteira.ciclo.dormiu_s": slept,
+    })
+
+
+def emit_daily_snapshot(config: dict, today=None) -> bool:
+    if not telemetry.enabled():
+        return False
+    from src.core.sync import emit_full_snapshot
+
+    today = today or datetime.now().date()
+    if _telemetry_state["snapshot_day"] == today:
+        return False
+    _telemetry_state["snapshot_day"] = today
+    emit_full_snapshot(get_board_ids(config))
+    return True
+
+
+def shutdown_telemetry() -> None:
+    emit_lifecycle("shutdown")
+    telemetry.shutdown(otel_telemetry.SHUTDOWN_TIMEOUT_S)
 
 
 _BANNER = r"""
@@ -1114,11 +1294,9 @@ def main():
     log.info("Pipe", f"Iniciando esteira agêntica v{VERSION}")
 
     config = check_config()
+    setup_telemetry(config)
+    emit_lifecycle("startup")
 
-    # Aquisição do lock de instância única — ANTES de qualquer alteração do
-    # estado persistido (startup() remove QUEUE_FILE). Recusa fail-fast se
-    # outra instância já detém o lock, evitando o incidente #97 (uma 2ª
-    # instância chegando a rodar startup() e destruindo a fila da 1ª).
     lock = InstanceLock()
     try:
         lock.acquire()
@@ -1130,6 +1308,8 @@ def main():
             holder_pid=e.holder_pid,
             holder_started_at=e.holder_started_at,
         )
+        telemetry.incidente("instance_lock_recusado")
+        shutdown_telemetry()
         raise SystemExit(1)
 
     try:
@@ -1143,8 +1323,8 @@ def main():
         adapter = ADAPTERS[platform]()
         board = Board(adapter)
         board.connect(config)
+        telemetry_metrics.register(config, adapter)
 
-        # Gate de permissões: não inicia a esteira sem poder operar o repositório.
         try:
             board.check_access(config)
         except BoardAccessError as e:
@@ -1165,8 +1345,8 @@ def main():
             raise SystemExit(1)
 
         board_startup_sync(config)
+        emit_daily_snapshot(config)
 
-        # Array fixo de boards ordenados por prioridade
         board_ids = get_board_ids(config)
         index = 0
 
@@ -1180,7 +1360,11 @@ def main():
 
         running = True
         while running:
+            cycle_started = time.monotonic()
+            had_changes = False
+            slept = 0
             try:
+                emit_daily_snapshot(config)
                 current_board = board_ids[index]
 
                 # Fase 1: Descoberta
@@ -1219,14 +1403,14 @@ def main():
                     # Nenhuma tarefa neste board, avança para o próximo
                     index += 1
                     if index >= len(board_ids):
-                        # Percorreu todos sem encontrar trabalho — sleep
                         index = 0
-                        sleep_time(config)
+                        slept = sleep_time(config)
 
             except PenaltyException as e:
                 back_at = (datetime.now() + timedelta(seconds=e.wait_seconds)).strftime('%H:%M:%S')
                 log.warning("Pipe", f"Penalty - aguardando até {back_at}")
                 time.sleep(e.wait_seconds)
+                slept = e.wait_seconds
             except KeyboardInterrupt:
                 log.info("Pipe", "Interrompido pelo usuário")
                 running = False
@@ -1245,7 +1429,11 @@ def main():
             except Exception as e:
                 log.error("Pipe", f"Erro no ciclo (não fatal): {e}")
                 time.sleep(config.get("sleep", 60))
+                slept = config.get("sleep", 60)
+            finally:
+                emit_cycle(cycle_started, had_changes, slept)
     finally:
+        shutdown_telemetry()
         lock.release()
 
 

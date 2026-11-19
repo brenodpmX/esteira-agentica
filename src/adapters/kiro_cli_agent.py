@@ -65,6 +65,7 @@ class KiroCliAgent(AgentPort):
         # Consumo medido nesta execução (preenchido por _run ao parsear o
         # stream-json). Reset por execução para não vazar valor de uma anterior.
         self._last_consumo = None
+        self._last_sessao = None
         title_part = f" {params.title}" if params.title else ""
         col_part = f" [{params.col_name}]" if params.col_name else ""
         log.info("Kiro", f"[{params.board_id}]{col_part} #{params.issue_id}{title_part}"
@@ -80,6 +81,7 @@ class KiroCliAgent(AgentPort):
 
             result = self._classify(params, output)
             result.consumo = self._last_consumo
+            result.sessao = self._last_sessao
             self._log_outcome(params, result, log_path)
             return result
         except Exception as e:
@@ -237,6 +239,7 @@ class KiroCliAgent(AgentPort):
         index = SessionIndex()
         known_id = index.get(params.issue_id, params.col_id)
         resuming = bool(known_id and self._session_exists(known_id, work_dir, env))
+        self._last_sessao = "retomada" if resuming else "nova"
         if resuming:
             cmd += ["--resume-id", known_id]
             log.info("Kiro", f"[{params.board_id}] #{params.issue_id} "

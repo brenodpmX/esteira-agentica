@@ -42,10 +42,11 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL \
 RUN gh --version
 
 # ---------------------------------------------------------------------------
-# Camada 4 — PyYAML
-# Versão pinada conforme docker/versions.env (ADR-04)
+# Camada 4 — PyYAML + OpenTelemetry (telemetria opcional, doc/runbook/telemetria.md)
+# Versões pinadas conforme docker/versions.env (ADR-04)
 # ---------------------------------------------------------------------------
 RUN pip install --no-cache-dir pyyaml==6.0.2
+RUN pip install --no-cache-dir opentelemetry-sdk==1.45.2 opentelemetry-exporter-otlp==1.45.2
 
 # ---------------------------------------------------------------------------
 # Camada 4.5 — Toolchain de dev/test para agentes (Opção B: Docker-in-Docker)

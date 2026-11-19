@@ -61,6 +61,7 @@ class ExecutionResult:
     request_id: str | None = None
     tentativas: int = 1
     consumo: object | None = None
+    sessao: str | None = None
 
     @property
     def sucesso(self) -> bool:

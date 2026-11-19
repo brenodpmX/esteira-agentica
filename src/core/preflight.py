@@ -12,6 +12,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from src.core import telemetry
 from src.core.log import log
 
 _MODULE = "Preflight"
@@ -205,4 +206,5 @@ def preflight() -> None:
         return
 
     log.error(_MODULE, f"{ok_count}/3 credenciais OK — arranque abortado")
+    telemetry.incidente("preflight_falha")
     raise SystemExit(1)

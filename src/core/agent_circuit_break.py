@@ -39,6 +39,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.core import telemetry
 from src.core.commands import NEED_HUMAN_LABEL
 from src.core.log import log
 
@@ -393,6 +394,7 @@ class CircuitBreaker:
         # (1) Esvaziar as ocorrências ANTES de qualquer chamada externa (RN-06).
         ctx["occurrences"] = []
         save_state(data)
+        _emit_step(board_id, issue_id, ctx["trip"])
 
         log.warning(
             "CircuitBreak",
@@ -422,6 +424,7 @@ class CircuitBreaker:
                 self._board.add_label(board_id, issue_id, NEED_HUMAN_LABEL)
                 trip["step"] = STEP_LABELED
                 save_state(data)
+                _emit_step(board_id, issue_id, trip)
 
             # (3) Publicar comentário só se o marcador do evento ainda não existe.
             if trip["step"] == STEP_LABELED:
@@ -432,6 +435,7 @@ class CircuitBreaker:
                     )
                 trip["step"] = STEP_SIGNALED
                 save_state(data)
+                _emit_step(board_id, issue_id, trip)
         except Exception as exc:  # falha externa por issue — não trava o loop
             log.error(
                 "CircuitBreak",
@@ -474,6 +478,16 @@ class CircuitBreaker:
             f"{n} execução(ões).\n\n"
             f"<!-- {COMMENT_MARKER_PREFIX}{trip['event_id']} -->"
         )
+
+
+def _emit_step(board_id: str, issue_id, trip: dict) -> None:
+    telemetry.emit(telemetry.EV_CIRCUIT_BREAK, {
+        **telemetry.contexto(board=board_id, coluna=trip.get("column"), issue=issue_id),
+        "esteira.circuit_break.contagem": trip.get("executions"),
+        "esteira.circuit_break.limite": trip.get("executions"),
+        "esteira.circuit_break.janela_s": trip.get("window"),
+        "esteira.circuit_break.passo": trip.get("step"),
+    })
 
 
 def _format_duration(seconds: int) -> str:

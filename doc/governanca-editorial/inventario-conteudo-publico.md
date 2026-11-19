@@ -114,6 +114,17 @@ responsavel: Engenharia (quem altera o motor)
 gatilho_atualizacao: mudança no comportamento ou nas chaves de agent_circuit_break
 ```
 
+### `doc/runbook/telemetria.md`
+
+```text
+documento: doc/runbook/telemetria.md
+audiencia: publico
+sensibilidade: baixa
+fonte_canonica: doc/runbook/telemetria.md
+responsavel: Engenharia (quem altera o motor)
+gatilho_atualizacao: mudança no contrato de telemetria, nas variáveis OTEL_* ou em compose.telemetria.yml
+```
+
 ### `doc/runbook/retirada-colunas.md`
 
 ```text

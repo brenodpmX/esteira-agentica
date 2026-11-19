@@ -1,0 +1,10 @@
+services:
+  dind:
+    networks:
+      - default
+      - esteira-telemetria
+
+networks:
+  esteira-telemetria:
+    external: true
+    name: esteira-telemetria

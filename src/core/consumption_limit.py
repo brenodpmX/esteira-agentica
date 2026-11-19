@@ -29,6 +29,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from src.core import telemetry
 from src.core.log import log
 
 STATE_FILE = Path(".pipe/consumptionLimit.json")
@@ -408,13 +409,48 @@ def ensure_state_initialized(policy: LimitPolicy) -> None:
         log.error("ConsumoLimite", str(exc), event=EVENT_PERSIST_ERROR)
 
 
-def _period_entry(plat: dict, period: str, start: datetime) -> dict:
+def _period_entry(plat: dict, period: str, start: datetime, platform_id: str | None = None,
+                  pp: "PeriodPolicy | None" = None, nxt: datetime | None = None) -> dict:
     periods = plat.setdefault("periods", {})
     entry = periods.get(period)
     if not isinstance(entry, dict) or entry.get("inicio") != start.isoformat():
+        rolled = isinstance(entry, dict)
         entry = {"inicio": start.isoformat(), "consumo": 0}
         periods[period] = entry
+        if rolled and platform_id is not None and pp is not None:
+            _emit_limite(platform_id, "virada_periodo", period, plat, entry, pp, start, nxt)
     return entry
+
+
+def _emit_limite(platform_id: str, tipo: str, period: str | None, plat: dict,
+                 entry: dict | None, pp: "PeriodPolicy | None",
+                 start: datetime | None, nxt: datetime | None,
+                 unidade: str | None = None) -> None:
+    telemetry.emit(telemetry.EV_CONSUMO_LIMITE, {
+        "esteira.ia.plataforma": platform_id,
+        "esteira.consumo.periodo": PERIOD_LABEL.get(period) if period else None,
+        "esteira.consumo.tipo": tipo,
+        "esteira.consumo.acumulado": (entry or {}).get("consumo"),
+        "esteira.consumo.limite": pp.limit if pp is not None else None,
+        "esteira.consumo.unidade": unidade or plat.get("unidade") or "desconhecida",
+        "esteira.consumo.periodo_inicio": start.isoformat() if start else None,
+        "esteira.consumo.periodo_fim": nxt.isoformat() if nxt else None,
+    })
+
+
+def _emit_each_period(platform_id: str, tipo: str, policy: "LimitPolicy", plat: dict,
+                      now: datetime, tz, unidade: str | None = None,
+                      only: str | None = None) -> None:
+    if not telemetry.enabled():
+        return
+    for period, pp in policy.periods.items():
+        if only is not None and period != only:
+            continue
+        start, nxt = period_bounds(pp, now, tz)
+        entry = (plat.get("periods") or {}).get(period)
+        if not isinstance(entry, dict) or entry.get("inicio") != start.isoformat():
+            entry = {"consumo": 0}
+        _emit_limite(platform_id, tipo, period, plat, entry, pp, start, nxt, unidade)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -456,12 +492,12 @@ class ConsumptionLimiter:
         hits = []
         for period, pp in policy.periods.items():
             start, nxt = period_bounds(pp, now, tz)
-            entry = _period_entry(plat, period, start)
+            entry = _period_entry(plat, period, start, platform_id, pp, nxt)
             if entry["consumo"] >= pp.limit:
                 hits.append((nxt, period, pp, entry))
 
         if not hits:
-            self._log_resumed(data, plat, platform_id, ts, tz)
+            self._log_resumed(data, plat, platform_id, ts, tz, policy)
             return Decision(admitted=True)
 
         nxt, period, pp, entry = max(hits, key=lambda h: h[0])
@@ -490,6 +526,8 @@ class ConsumptionLimiter:
         )
         if not plat.get("bloqueado_desde"):
             plat["bloqueado_desde"] = ts
+            plat["bloqueado_periodo"] = period
+            _emit_each_period(platform_id, "bloqueio", policy, plat, now, tz, only=period)
         self._save(data, platform_id)
         return Decision(admitted=False, period=period, record=record)
 
@@ -529,13 +567,15 @@ class ConsumptionLimiter:
                 plataforma=platform_id, unidade=unidade, unidade_acumulada=known_unit,
                 valor=consumo.valor, timestamp=_iso_now(ts, tz),
             )
+            _emit_each_period(platform_id, "unidade_divergente", policy, plat, now, tz,
+                              unidade=unidade)
             return
         plat["unidade"] = unidade
 
         periodos = {}
         for period, pp in policy.periods.items():
-            start, _ = period_bounds(pp, now, tz)
-            entry = _period_entry(plat, period, start)
+            start, nxt = period_bounds(pp, now, tz)
+            entry = _period_entry(plat, period, start, platform_id, pp, nxt)
             entry["consumo"] = entry["consumo"] + consumo.valor
             periodos[PERIOD_LABEL[period]] = {
                 "consumo_periodo": entry["consumo"],
@@ -553,11 +593,17 @@ class ConsumptionLimiter:
         )
         self._save(data, platform_id, valor=consumo.valor, unidade=unidade)
 
-    def _log_resumed(self, data: dict, plat: dict, platform_id: str, ts: float, tz):
+    def _log_resumed(self, data: dict, plat: dict, platform_id: str, ts: float, tz,
+                     policy: LimitPolicy | None = None):
         since = plat.get("bloqueado_desde")
         if not since:
             return
         plat["bloqueado_desde"] = None
+        blocked_period = plat.pop("bloqueado_periodo", None)
+        if policy is not None:
+            only = blocked_period if blocked_period in policy.periods else None
+            _emit_each_period(platform_id, "retomada", policy, plat, _now_in(ts, tz), tz,
+                              only=only)
         log.info(
             "ConsumoLimite",
             f"[{platform_id}] acionamento retomado após {int(ts - since)}s bloqueado",

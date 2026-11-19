@@ -16,6 +16,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from src.core import telemetry
 from src.core.log import log
 
 BOARDS_DIR = Path(".pipe/boards")
@@ -180,6 +181,7 @@ class SnapshotGuard:
                 self._path.unlink()
         except OSError as exc:
             raise SnapshotIntegrityError(self._board_id, exc) from exc
+        telemetry.incidente("snapshot_restaurado", board=self._board_id)
 
     def _atomic_write(self, content: bytes) -> None:
         """Escreve `content` atomicamente no path do snapshot.

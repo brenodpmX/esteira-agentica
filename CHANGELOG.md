@@ -2,6 +2,24 @@
 
 Todas as mudanças relevantes deste projeto serão registradas neste arquivo.
 
+## [1.30.0] - 2026-11-20
+
+### Adicionado
+
+- **Envio de telemetria OpenTelemetry (#355)**: a esteira publica eventos crus,
+  métricas de estado e traces no padrão OTLP (gRPC `4317` ou HTTP `4318`), para
+  dashboards em qualquer ferramenta compatível. Liga só com
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (padrão recomendado `http://esteira-otlp:4318`);
+  sem ela, ou com `OTEL_SDK_DISABLED=true`, nada é enviado e o comportamento é
+  o de antes. Fila só em memória com descarte, exportação com teto de 2 s,
+  falha do coletor nunca afeta o processamento e gera no máximo um aviso a cada
+  10 minutos. Contrato v1 (`esteira.contrato=1`) com 15 eventos, 11 métricas e
+  3 spans, `service.instance.id` para distinguir pipes, sem prompt, conversa,
+  body, comentários, credenciais nem mensagem de erro bruta; título da issue só
+  com `ESTEIRA_TELEMETRIA_TITULO=true`. Novo override `compose.telemetria.yml`
+  liga o serviço `dind` à rede externa `esteira-telemetria`. Guia em
+  `doc/runbook/telemetria.md`.
+
 ## [1.29.0] - 2026-11-09
 
 ### Adicionado
