@@ -1,0 +1,30 @@
+# Configuração do dashboard. Relido a cada CONFIG_SYNC_INTERVALO segundos (sem rebuild).
+#
+# boards_raiz:    boards cujas issues viram barras do gráfico "Custo por árvore" (G1).
+#                 Vazio = issues sem pai são raiz.
+# colunas_finais: colunas que contam como concluída (além de issue closed/arquivada).
+# ordem_colunas:  ordem do fluxo; transição para coluna anterior conta como retrabalho.
+#
+# Chave de cada pipe = service.instance.id (aparece no rodapé da aba da pipe).
+# Pipe sem bloco usa `padrao`; chave ausente no bloco herda do `padrao`.
+
+padrao:
+  boards_raiz: []
+  colunas_finais: []
+  ordem_colunas: []
+
+pipes:
+  # Pipes do gerador de exemplo (docker compose --profile exemplo up -d)
+  https://github.com/exemplo/loja-ficticia.git:
+    boards_raiz: [epicos]
+    colunas_finais: [done]
+    ordem_colunas: [todo, planejamento, dev, testes, revisao, done]
+  https://github.com/exemplo/escrevas-ficticio.git:
+    boards_raiz: [epicos]
+    colunas_finais: [done]
+    ordem_colunas: [todo, planejamento, dev, testes, revisao, done]
+  # Pipe dos eventos manuais (./enviar-eventos.sh)
+  teste-manual:
+    boards_raiz: [epicos]
+    colunas_finais: [done]
+    ordem_colunas: [todo, planejamento, dev, testes, revisao, done]

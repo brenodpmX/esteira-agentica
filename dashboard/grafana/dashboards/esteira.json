@@ -1,0 +1,4646 @@
+{
+  "uid": "esteira-pipes",
+  "title": "Esteira — acompanhamento",
+  "tags": [
+    "esteira",
+    "telemetria"
+  ],
+  "timezone": "America/Sao_Paulo",
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
+  },
+  "schemaVersion": 41,
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "pipe",
+        "label": "Pipe",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "query": "SELECT pipe AS __value, pipe_nome AS __text FROM v_pipes ORDER BY ultima_atividade DESC",
+        "definition": "SELECT pipe AS __value, pipe_nome AS __text FROM v_pipes ORDER BY ultima_atividade DESC",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "sort": 0,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "unidade",
+        "label": "Unidade",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "query": "SELECT unidade FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND consumo_disponivel GROUP BY unidade ORDER BY count() DESC",
+        "definition": "SELECT unidade FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND consumo_disponivel GROUP BY unidade ORDER BY count() DESC",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "sort": 0,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "board",
+        "label": "Board",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "query": "SELECT DISTINCT board FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY board",
+        "definition": "SELECT DISTINCT board FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY board",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "sort": 0,
+        "current": {
+          "text": "Todos",
+          "value": "$__all"
+        },
+        "options": [],
+        "allValue": "'__all__'"
+      },
+      {
+        "name": "coluna",
+        "label": "Coluna",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "query": "SELECT DISTINCT coluna FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY coluna",
+        "definition": "SELECT DISTINCT coluna FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY coluna",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "sort": 0,
+        "current": {
+          "text": "Todos",
+          "value": "$__all"
+        },
+        "options": [],
+        "allValue": "'__all__'"
+      },
+      {
+        "name": "agente",
+        "label": "Agente",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "query": "SELECT DISTINCT agente FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY agente",
+        "definition": "SELECT DISTINCT agente FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY agente",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "sort": 0,
+        "current": {
+          "text": "Todos",
+          "value": "$__all"
+        },
+        "options": [],
+        "allValue": "'__all__'"
+      },
+      {
+        "name": "modelo",
+        "label": "Modelo",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "query": "SELECT DISTINCT modelo FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY modelo",
+        "definition": "SELECT DISTINCT modelo FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY modelo",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "sort": 0,
+        "current": {
+          "text": "Todos",
+          "value": "$__all"
+        },
+        "options": [],
+        "allValue": "'__all__'"
+      },
+      {
+        "name": "resultado",
+        "label": "Resultado",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "query": "SELECT DISTINCT resultado FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY resultado",
+        "definition": "SELECT DISTINCT resultado FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) ORDER BY resultado",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "hide": 0,
+        "sort": 0,
+        "current": {
+          "text": "Todos",
+          "value": "$__all"
+        },
+        "options": [],
+        "allValue": "'__all__'"
+      },
+      {
+        "name": "raiz",
+        "label": "Raiz",
+        "type": "textbox",
+        "query": "",
+        "hide": 0,
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ]
+      },
+      {
+        "name": "issue",
+        "label": "Issue",
+        "type": "textbox",
+        "query": "",
+        "hide": 0,
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ]
+      },
+      {
+        "name": "n_barras",
+        "label": "N barras (listas)",
+        "type": "textbox",
+        "query": "30",
+        "hide": 0,
+        "current": {
+          "text": "30",
+          "value": "30"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "30",
+            "value": "30"
+          }
+        ]
+      },
+      {
+        "name": "n_exec",
+        "label": "N execuções",
+        "type": "textbox",
+        "query": "100",
+        "hide": 0,
+        "current": {
+          "text": "100",
+          "value": "100"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "100",
+            "value": "100"
+          }
+        ]
+      },
+      {
+        "name": "a7_valor",
+        "label": "Agente × coluna mostra",
+        "type": "custom",
+        "query": "consumo,execucoes",
+        "current": {
+          "text": "consumo",
+          "value": "consumo"
+        },
+        "hide": 0,
+        "options": [
+          {
+            "text": "consumo",
+            "value": "consumo",
+            "selected": true
+          },
+          {
+            "text": "execucoes",
+            "value": "execucoes",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "trace",
+        "label": "Trace",
+        "type": "textbox",
+        "query": "",
+        "hide": 2,
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "Startup/shutdown",
+        "enable": true,
+        "iconColor": "#5794F2",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "target": {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT ts AS time, concat('Pipe: ', a['esteira.pipe.fase'], ' (', versao, ')') AS text, ['ciclo_vida'] AS tags FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.pipe.ciclo_vida'",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      },
+      {
+        "name": "Incidentes",
+        "enable": true,
+        "iconColor": "#F2495C",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "esteira-clickhouse"
+        },
+        "target": {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT ts AS time, concat('Incidente: ', a['esteira.incidente.tipo']) AS text, ['incidente'] AS tags FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.pipe.incidente'",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      }
+    ]
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Pipe",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Pipes",
+      "description": "Uma aba por pipe (service.instance.id). Clique para trocar. Valor = execuções no período.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 3
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT pipe, if(pipe = ${pipe:sqlstring}, concat('▶ ', pipe_nome), pipe_nome) AS nome, (SELECT count() FROM v_execucoes e WHERE e.pipe = p.pipe AND $__timeFilter(e.fim)) AS execucoes FROM v_pipes p WHERE $__timeFilter(ultima_atividade) OR pipe = ${pipe:sqlstring} ORDER BY ultima_atividade DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${__data.fields.nome}",
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#2B3A55"
+          },
+          "links": [
+            {
+              "title": "Abrir aba da pipe",
+              "url": "/d/esteira-pipes/esteira?var-pipe=${__data.fields.pipe:percentencode}&var-unidade=&${__url_time_range}"
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pipe"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "type": "gauge",
+      "title": "Consumo × limite",
+      "description": "Acumulado do período corrente sobre o limite configurado (métricas esteira.consumo.*). Sem limite: sem valor.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT 100 * argMaxIf(valor, ts, metrica = 'esteira.consumo.acumulado' AND a['esteira.consumo.periodo'] = 'diario') / nullIf(argMaxIf(valor, ts, metrica = 'esteira.consumo.limite' AND a['esteira.consumo.periodo'] = 'diario'), 0) AS `Dia`, 100 * argMaxIf(valor, ts, metrica = 'esteira.consumo.acumulado' AND a['esteira.consumo.periodo'] = 'semanal') / nullIf(argMaxIf(valor, ts, metrica = 'esteira.consumo.limite' AND a['esteira.consumo.periodo'] = 'semanal'), 0) AS `Semana`, 100 * argMaxIf(valor, ts, metrica = 'esteira.consumo.acumulado' AND a['esteira.consumo.periodo'] = 'mensal') / nullIf(argMaxIf(valor, ts, metrica = 'esteira.consumo.limite' AND a['esteira.consumo.periodo'] = 'mensal'), 0) AS `Mês` FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND a['esteira.consumo.unidade'] = ${unidade:sqlstring} AND ts > now() - INTERVAL 1 HOUR",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdMarkers": true,
+        "showThresholdLabels": false,
+        "minVizHeight": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 0,
+          "noValue": "sem limite",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E44",
+                "value": null
+              },
+              {
+                "color": "#E8C21B",
+                "value": 70
+              },
+              {
+                "color": "#D93025",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Acumulado (${unidade})",
+      "description": "Valor absoluto do período corrente.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 4,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT argMaxIf(valor, ts, metrica = 'esteira.consumo.acumulado' AND a['esteira.consumo.periodo'] = 'diario') AS `Dia`, argMaxIf(valor, ts, metrica = 'esteira.consumo.acumulado' AND a['esteira.consumo.periodo'] = 'semanal') AS `Semana`, argMaxIf(valor, ts, metrica = 'esteira.consumo.acumulado' AND a['esteira.consumo.periodo'] = 'mensal') AS `Mês` FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND a['esteira.consumo.unidade'] = ${unidade:sqlstring} AND ts > now() - INTERVAL 1 HOUR",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#5794F2",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Execuções",
+      "description": "Execuções de agente no período.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 4,
+        "w": 3,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(fim) AS time, count() AS `Execuções` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY time ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#5794F2",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Sucesso",
+      "description": "Execuções com resultado concluída / total.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 13,
+        "y": 4,
+        "w": 3,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT 100 * countIf(resultado = 'concluída') / nullIf(count(), 0) AS `Sucesso` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote}))",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#D93025",
+                "value": null
+              },
+              {
+                "color": "#E8C21B",
+                "value": 70
+              },
+              {
+                "color": "#2E9E44",
+                "value": 85
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Avanço",
+      "description": "Execuções que avançaram a issue / total.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 4,
+        "w": 3,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT 100 * countIf(avancou) / nullIf(count(), 0) AS `Avanço` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote}))",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#D93025",
+                "value": null
+              },
+              {
+                "color": "#E8C21B",
+                "value": 60
+              },
+              {
+                "color": "#2E9E44",
+                "value": 75
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Custo/avanço",
+      "description": "Consumo na unidade selecionada / execuções que avançaram.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 4,
+        "w": 3,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sumIf(consumo, unidade = ${unidade:sqlstring}) / nullIf(countIf(avancou), 0) AS `Custo por avanço` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote}))",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#5794F2",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Pipe",
+      "description": "Parada = último ciclo há mais de 3× o maior sono observado (mínimo 3 min).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 22,
+        "y": 4,
+        "w": 2,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT if(dateDiff('second', max(ts), now()) > greatest(180, 3 * maxIf(toFloat64OrZero(a['esteira.ciclo.dormiu_s']), ts > now() - INTERVAL 1 DAY)), 'Parada', 'Viva') AS `Estado`, dateDiff('second', max(ts), now()) AS `Último ciclo` FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND evento = 'esteira.pipe.ciclo' AND ts > now() - INTERVAL 30 DAY",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^Estado$/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "Viva": {
+                  "color": "#2E9E44",
+                  "index": 0
+                },
+                "Parada": {
+                  "color": "#D93025",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#5794F2",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Último ciclo"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Fila e dead-letter",
+      "description": "Estado atual (métricas esteira.sync.*).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 3
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sumIf(v, m = 'esteira.sync.fila.profundidade') AS `Fila`, maxIf(v, m = 'esteira.sync.fila.idade_maxima') AS `Idade máxima`, sumIf(v, m = 'esteira.sync.dead_letter.total') AS `Dead-letter` FROM (SELECT metrica AS m, a, argMax(valor, ts) AS v FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND ts > now() - INTERVAL 1 HOUR AND metrica IN ('esteira.sync.fila.profundidade', 'esteira.sync.fila.idade_maxima', 'esteira.sync.dead_letter.total') GROUP BY m, a)",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#5794F2",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Idade máxima"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Dead-letter"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#2E9E44",
+                      "value": null
+                    },
+                    {
+                      "color": "#D93025",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "type": "row",
+      "title": "Custo das issues",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "volkovlabs-echarts-panel",
+      "title": "Custo por árvore",
+      "description": "Lista viva: uma barra por issue raiz (boards_raiz no dashboard.yml), criada assim que a raiz nasce. Cada pilha é um nível (raiz, filhas, netas…); cada execução da árvore soma na barra e a traz para a esquerda. Cor = status atual da árvore. Linha = tempo de agente acumulado. O período escolhe quais barras entram; o tamanho é sempre o total acumulado. Clique filtra a raiz.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 11
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH barras AS ( SELECT raiz, any(ultima_atividade) AS ua FROM v_lista_arvore(unidade = ${unidade:sqlstring}) WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ultima_atividade) AND ('__all__' IN (${board:singlequote}) OR raiz_board IN (${board:singlequote})) AND (${raiz:sqlstring} = '' OR raiz = ${raiz:sqlstring}) GROUP BY raiz ORDER BY ua DESC LIMIT toUInt32OrDefault(${n_barras:sqlstring}, toUInt32(30))) SELECT l.raiz AS raiz, l.raiz_board AS raiz_board, l.nivel AS nivel, coalesce(l.consumo, 0) AS consumo, l.n_exec AS n_exec, l.n_sem_consumo AS n_sem_consumo, l.n_outra_unidade AS n_outra_unidade, l.n_issues AS n_issues, l.tempo_s AS tempo_s, l.tempo_total_s AS tempo_total_s, coalesce(l.consumo_total, 0) AS consumo_total, l.n_exec_total AS n_exec_total, l.status AS status, l.ultima_atividade AS ultima_atividade, l.criada_em AS criada_em FROM v_lista_arvore(unidade = ${unidade:sqlstring}) AS l INNER JOIN barras AS b ON b.raiz = l.raiz WHERE l.pipe = ${pipe:sqlstring} ORDER BY l.ultima_atividade DESC, l.nivel",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "editorMode": "code",
+        "renderer": "canvas",
+        "map": "none",
+        "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// G1 — Custo por árvore (lista viva). Uma barra por raiz, pilha por nível,\n// cor pelo status da árvore, tom mais claro a cada nível; linha = tempo acumulado.\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados('Nenhuma árvore com atividade no período');\n\nconst raizes = [];\nconst info = {};\nrows.forEach((r) => {\n  if (!info[r.raiz]) {\n    info[r.raiz] = { status: r.status, board: r.raiz_board, tempo: r.tempo_total_s, consumo: r.consumo_total,\n                     n_exec: r.n_exec_total, ultima: r.ultima_atividade, criada: r.criada_em, niveis: {} };\n    raizes.push(r.raiz);\n  }\n  info[r.raiz].niveis[r.nivel] = r;\n});\nconst maxNivel = Math.max(...rows.map((r) => r.nivel));\nconst NOME_NIVEL = (n) => (n === 0 ? 'raiz' : n === 1 ? 'filhas' : n === 2 ? 'netas' : 'nível ' + n);\n\nconst series = [];\nfor (let n = 0; n <= maxNivel; n++) {\n  series.push({\n    name: NOME_NIVEL(n), type: 'bar', stack: 'arvore', barMaxWidth: 48,\n    // cor da legenda: tom neutro por nível (a cor real de cada barra vem do status)\n    itemStyle: { color: clarear('#6E7681', Math.min(0.8, n * 0.25)) },\n    barMinHeight: n === 0 ? 3 : 0,\n    emphasis: { focus: 'none' },\n    data: raizes.map((rz) => {\n      const it = info[rz];\n      const v = it.niveis[n] ? (it.niveis[n].consumo || 0) : 0;\n      const cor = STATUS_COR[it.status] || STATUS_COR['Desconhecida'];\n      if (it.status === 'Sem execução') {\n        return { value: v, itemStyle: { color: 'transparent', borderColor: cor, borderWidth: 2 } };\n      }\n      return { value: v, itemStyle: { color: clarear(cor, Math.min(0.8, n * 0.2)) } };\n    }),\n  });\n}\nseries.push({\n  name: 'tempo acumulado', type: 'line', yAxisIndex: 1, symbol: 'circle', symbolSize: 6,\n  lineStyle: { width: 2, color: TEXTO }, itemStyle: { color: TEXTO },\n  data: raizes.map((rz) => info[rz].tempo),\n});\n\ncontext.panel.chart.off('click');\ncontext.panel.chart.on('click', (p) => { if (raizes[p.dataIndex] !== undefined) setVar('raiz', raizes[p.dataIndex]); });\n\nreturn {\n  animationDurationUpdate: 800,\n  grid: { left: 60, right: 70, top: 40, bottom: 70 },\n  legend: { bottom: 0, textStyle: { color: TEXTO2 } },\n  tooltip: {\n    trigger: 'axis', axisPointer: { type: 'shadow' },\n    formatter: (ps) => {\n      const rz = raizes[ps[0].dataIndex];\n      const it = info[rz];\n      let s = `<b>#${rz}</b> (${it.board}) — <span style=\"color:${STATUS_COR[it.status]}\">${it.status}</span><br/>`;\n      s += `Consumo: <b>${num(it.consumo)} ${UNIDADE}</b> · Execuções: ${it.n_exec}<br/>`;\n      s += `Tempo de agente: ${hm(it.tempo)} · Calendário desde a criação: ${hm((it.ultima - it.criada) / 1000)}<br/>`;\n      Object.keys(it.niveis).sort().forEach((n) => {\n        const l = it.niveis[n];\n        let extra = '';\n        if (l.n_sem_consumo) extra += ` · ${l.n_sem_consumo} sem consumo informado`;\n        if (l.n_outra_unidade) extra += ` · ${l.n_outra_unidade} em outra unidade`;\n        s += `&nbsp;&nbsp;${NOME_NIVEL(Number(n))} (${l.n_issues} issue${l.n_issues > 1 ? 's' : ''}): ${num(l.consumo || 0)} · ${l.n_exec} exec${extra}<br/>`;\n      });\n      s += `Última atividade: ${dataHora(it.ultima)}`;\n      return s;\n    },\n  },\n  xAxis: { type: 'category', data: raizes.map((r) => '#' + r), axisLabel: { color: TEXTO2, rotate: raizes.length > 20 ? 45 : 0 } },\n  yAxis: [eixoConsumo(), eixoTempo()],\n  series,\n};\n",
+        "editor": {
+          "format": "auto",
+          "height": 600
+        },
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 27,
+      "type": "volkovlabs-echarts-panel",
+      "title": "Custo por issue (todos os boards)",
+      "description": "Lista viva por issue de qualquer board, só com as execuções da própria issue. Ignora o filtro de board. Clique filtra a issue no gráfico de execuções.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT issue, board, coluna, coalesce(consumo, 0) AS consumo, tempo_s, n_exec, n_sem_consumo, status, ultima_atividade, criada_em FROM v_lista_issue(unidade = ${unidade:sqlstring}) WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ultima_atividade) AND (${issue:sqlstring} = '' OR issue = ${issue:sqlstring}) ORDER BY ultima_atividade DESC LIMIT toUInt32OrDefault(${n_barras:sqlstring}, toUInt32(30))",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "editorMode": "code",
+        "renderer": "canvas",
+        "map": "none",
+        "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// G1.1 — Custo por issue (lista viva, todos os boards, sem somar filhas).\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados('Nenhuma issue com atividade no período');\ncontext.panel.chart.off('click');\ncontext.panel.chart.on('click', (p) => { const r = rows[p.dataIndex]; if (r) setVar('issue', r.issue); });\nreturn {\n  animationDurationUpdate: 800,\n  grid: { left: 60, right: 70, top: 40, bottom: 80 },\n  legend: { bottom: 0, textStyle: { color: TEXTO2 }, data: ['consumo', 'tempo'] },\n  tooltip: {\n    trigger: 'axis', axisPointer: { type: 'shadow' },\n    formatter: (ps) => {\n      const r = rows[ps[0].dataIndex];\n      let s = `<b>${r.board}/#${r.issue}</b> — <span style=\"color:${STATUS_COR[r.status]}\">${r.status}</span><br/>`;\n      s += `Coluna atual: ${r.coluna || '-'}<br/>Consumo: <b>${num(r.consumo || 0)} ${UNIDADE}</b> · Execuções: ${r.n_exec}`;\n      if (r.n_sem_consumo) s += ` (${r.n_sem_consumo} sem consumo informado)`;\n      s += `<br/>Tempo de agente: ${hm(r.tempo_s)}<br/>Última atividade: ${dataHora(r.ultima_atividade)}`;\n      return s;\n    },\n  },\n  xAxis: { type: 'category', data: rows.map((r) => r.board + '/#' + r.issue), axisLabel: { color: TEXTO2, rotate: 45, fontSize: 10 } },\n  yAxis: [eixoConsumo(), eixoTempo()],\n  series: [\n    { name: 'consumo', type: 'bar', barMaxWidth: 36, barMinHeight: 3,\n      data: rows.map((r) => {\n        const cor = STATUS_COR[r.status] || STATUS_COR['Desconhecida'];\n        return r.status === 'Sem execução'\n          ? { value: r.consumo || 0, itemStyle: { color: 'transparent', borderColor: cor, borderWidth: 2 } }\n          : { value: r.consumo || 0, itemStyle: { color: cor } };\n      }) },\n    { name: 'tempo', type: 'line', yAxisIndex: 1, symbol: 'circle', symbolSize: 5,\n      lineStyle: { color: TEXTO }, itemStyle: { color: TEXTO }, data: rows.map((r) => r.tempo_s) },\n  ],\n};\n",
+        "editor": {
+          "format": "auto",
+          "height": 600
+        },
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 28,
+      "type": "volkovlabs-echarts-panel",
+      "title": "Custo por execução",
+      "description": "Uma barra por execução (mais recente à esquerda). Cor = resultado; borda tracejada = não avançou; barra vazada = consumo não informado. Linha = duração.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT fim, issue, board, coluna, agente, modelo, resultado, avancou, repeticao_sem_avanco, consumo_disponivel, consumo, unidade, duracao_s, tentativas, sessao, tokens_entrada FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) AND (unidade = ${unidade:sqlstring} OR NOT consumo_disponivel) AND (${issue:sqlstring} = '' OR issue = ${issue:sqlstring}) AND (${raiz:sqlstring} = '' OR issue IN (SELECT issue FROM v_arvore WHERE pipe = ${pipe:sqlstring} AND raiz = ${raiz:sqlstring})) ORDER BY fim DESC LIMIT toUInt32OrDefault(${n_exec:sqlstring}, toUInt32(100))",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "editorMode": "code",
+        "renderer": "canvas",
+        "map": "none",
+        "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// G2 — Custo por execução. Cor = resultado; borda tracejada = não avançou.\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados('Nenhuma execução no período');\nreturn {\n  animationDurationUpdate: 600,\n  grid: { left: 60, right: 70, top: 40, bottom: 60 },\n  legend: { bottom: 0, textStyle: { color: TEXTO2 }, data: ['consumo', 'duração'] },\n  tooltip: {\n    trigger: 'axis', axisPointer: { type: 'shadow' },\n    formatter: (ps) => {\n      const r = rows[ps[0].dataIndex];\n      const st = RESULTADO_STATUS[r.resultado] || 'Desconhecida';\n      let s = `<b>${r.board}/#${r.issue}</b> · ${r.coluna}<br/>`;\n      s += `<span style=\"color:${STATUS_COR[st]}\">${r.resultado}</span> · ${r.avancou ? 'avançou' : 'não avançou'}${r.repeticao_sem_avanco ? ' · repetição sem avanço' : ''}<br/>`;\n      s += `Agente: ${r.agente} · Modelo: ${r.modelo}<br/>`;\n      s += `Consumo: <b>${r.consumo_disponivel ? num(r.consumo) + ' ' + r.unidade : 'não informado'}</b><br/>`;\n      s += `Duração: ${hm(r.duracao_s)} · Tentativas: ${r.tentativas} · Sessão: ${r.sessao || '-'}<br/>`;\n      s += `Tokens de entrada: ${num(r.tokens_entrada, 0)}<br/>Fim: ${dataHora(r.fim)}`;\n      return s;\n    },\n  },\n  xAxis: { type: 'category', data: rows.map((r) => dataHora(r.fim)), axisLabel: { show: rows.length <= 40, color: TEXTO2, rotate: 45, fontSize: 10 } },\n  yAxis: [eixoConsumo(), eixoTempo()],\n  series: [\n    { name: 'consumo', type: 'bar', barMaxWidth: 24, barMinHeight: 2,\n      data: rows.map((r) => {\n        const cor = STATUS_COR[RESULTADO_STATUS[r.resultado] || 'Desconhecida'];\n        const st = { color: r.consumo_disponivel ? cor : 'transparent' };\n        if (!r.avancou) Object.assign(st, { borderType: 'dashed', borderColor: r.consumo_disponivel ? '#ffffff' : cor, borderWidth: 1.5 });\n        else if (!r.consumo_disponivel) Object.assign(st, { borderColor: cor, borderWidth: 1.5 });\n        return { value: r.consumo_disponivel ? r.consumo : 0, itemStyle: st };\n      }) },\n    { name: 'duração', type: 'line', yAxisIndex: 1, symbol: 'circle', symbolSize: 4,\n      lineStyle: { color: TEXTO, width: 1.5 }, itemStyle: { color: TEXTO }, data: rows.map((r) => r.duracao_s) },\n  ],\n};\n",
+        "editor": {
+          "format": "auto",
+          "height": 600
+        },
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 34,
+      "type": "row",
+      "title": "Consumo",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Acumulado × limite",
+      "description": "Acumulado do período corrente (diário, semanal, mensal) e o limite (tracejado).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 9,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, concat(a['esteira.consumo.periodo'], if(metrica = 'esteira.consumo.limite', ' limite', ' acumulado')) AS serie, max(valor) AS v FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND metrica IN ('esteira.consumo.acumulado', 'esteira.consumo.limite') AND a['esteira.consumo.unidade'] = ${unidade:sqlstring} GROUP BY time, serie ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "barAlignment": 0
+          },
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "displayName": "${__field.labels.__values}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*limite"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Projeção",
+      "description": "Projeção linear do acumulado até o fim do período de calendário, em % do limite. Aproximação: usa calendário (dia, semana de segunda, mês), não o dia de reset configurado.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 9,
+        "y": 35,
+        "w": 3,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH ult AS ( SELECT a['esteira.consumo.periodo'] AS p, argMaxIf(valor, ts, metrica = 'esteira.consumo.acumulado') AS acc, argMaxIf(valor, ts, metrica = 'esteira.consumo.limite') AS lim FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND a['esteira.consumo.unidade'] = ${unidade:sqlstring} AND ts > now() - INTERVAL 1 HOUR GROUP BY p), agora AS (SELECT toDateTime(now(), 'America/Sao_Paulo') AS n) SELECT anyIf(100 * acc / ((dateDiff('second', toStartOfDay(n), n) + 1) / 86400) / nullIf(lim, 0), p = 'diario') AS `Dia`, anyIf(100 * acc / ((dateDiff('second', toMonday(n), n) + 1) / 604800) / nullIf(lim, 0), p = 'semanal') AS `Semana`, anyIf(100 * acc / ((dateDiff('second', toStartOfMonth(n), n) + 1) / (toDayOfMonth(toLastDayOfMonth(n)) * 86400)) / nullIf(lim, 0), p = 'mensal') AS `Mês` FROM ult CROSS JOIN agora",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E44",
+                "value": null
+              },
+              {
+                "color": "#E8C21B",
+                "value": 90
+              },
+              {
+                "color": "#D93025",
+                "value": 100
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 32,
+      "type": "barchart",
+      "title": "Consumo por coluna",
+      "description": "Consumo (unidade selecionada) por coluna, empilhado pelo resultado.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 35,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT coluna, sumIf(consumo, esteira_status_execucao(resultado) = 'Concluída') AS `Concluída`, sumIf(consumo, esteira_status_execucao(resultado) = 'Falha') AS `Falha`, sumIf(consumo, esteira_status_execucao(resultado) = 'Timeout') AS `Timeout`, sumIf(consumo, esteira_status_execucao(resultado) = 'Interrompida') AS `Interrompida`, sumIf(consumo, esteira_status_execucao(resultado) = 'Desconhecida') AS `Desconhecida` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) AND unidade = ${unidade:sqlstring} GROUP BY coluna ORDER BY sum(consumo) DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "showValue": "never",
+        "groupWidth": 0.75,
+        "barWidth": 0.9,
+        "xField": null,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "fullHighlight": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Concluída"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2E9E44"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falha"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#D93025"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Timeout"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F28C28"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Interrompida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E8C21B"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Desconhecida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8A8A8A"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Consumo diário por modelo",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 35,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT toStartOfDay(fim) AS time, modelo, sum(consumo) AS v FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) AND unidade = ${unidade:sqlstring} GROUP BY time, modelo ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 70,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "barAlignment": 0
+          },
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "displayName": "${__field.labels.__values}"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 37,
+      "type": "row",
+      "title": "Resultados",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Resultados por dia",
+      "description": "Proporção dos resultados de execução por dia.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT toStartOfDay(fim) AS time, esteira_status_execucao(resultado) AS s, count() AS n FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY time, s ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 70,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "percent",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "barAlignment": 0
+          },
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "displayName": "${__field.labels.__values}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Concluída"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2E9E44"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falha"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#D93025"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Timeout"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F28C28"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Interrompida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E8C21B"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Desconhecida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8A8A8A"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "Admissões negadas",
+      "description": "Execuções não despachadas, por motivo (demanda reprimida).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT toStartOfDay(ts) AS time, a['esteira.admissao.motivo'] AS motivo, count() AS n FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.agente.admissao_negada' AND ('__all__' IN (${board:singlequote}) OR a['esteira.board'] IN (${board:singlequote})) GROUP BY time, motivo ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 70,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "barAlignment": 0
+          },
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "displayName": "${__field.labels.__values}"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 38,
+      "type": "row",
+      "title": "Agentes",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Agentes ativos",
+      "description": "Agentes com execução no período.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT uniqExact(agente) AS `Agentes` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote}))",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#5794F2",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Mais consome",
+      "description": "Agente com maior consumo e % do total.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 53,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(agente, ' — ', toString(round(100 * c / nullIf(sum(c) OVER (), 0))), '%') AS `Agente` FROM (SELECT agente, sumIf(consumo, unidade = ${unidade:sqlstring}) AS c FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente) ORDER BY c DESC LIMIT 1",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#5794F2",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Maior taxa de falha",
+      "description": "Mínimo de 5 execuções no período para entrar.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 53,
+        "w": 7,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(agente, ' — ', toString(round(100 * f / n)), '%') AS `Agente` FROM (SELECT agente, countIf(resultado != 'concluída') AS f, count() AS n FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente HAVING n >= 5) ORDER BY f / n DESC LIMIT 1",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#D93025",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Menor taxa de avanço",
+      "description": "Mínimo de 5 execuções no período para entrar.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 17,
+        "y": 53,
+        "w": 7,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(agente, ' — ', toString(round(100 * a / n)), '%') AS `Agente` FROM (SELECT agente, countIf(avancou) AS a, count() AS n FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente HAVING n >= 5) ORDER BY a / n ASC LIMIT 1",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#F28C28",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Placar dos agentes",
+      "description": "Comparação no período; Δ = variação contra o período anterior de mesmo tamanho. Tendência = consumo diário. Clique no agente para filtrar a aba.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 57,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH atual AS ( SELECT agente, count() AS n, sumIf(consumo, unidade = ${unidade:sqlstring}) AS c, quantileIf(0.5)(consumo, unidade = ${unidade:sqlstring}) AS c_p50, quantileIf(0.95)(consumo, unidade = ${unidade:sqlstring}) AS c_p95, countIf(resultado = 'concluída') / n AS sucesso, countIf(avancou) / n AS avanco, countIf(repeticao_sem_avanco) / n AS repeticao, quantile(0.5)(duracao_s) AS d_p50, quantile(0.95)(duracao_s) AS d_p95, countIf(resultado = 'timeout') AS timeouts FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente), ant AS ( SELECT agente, sumIf(consumo, unidade = ${unidade:sqlstring}) AS c, countIf(resultado = 'concluída') / count() AS sucesso FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND fim >= $__fromTime - ($__toTime - $__fromTime) AND fim < $__fromTime AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente) SELECT atual.agente AS agente, atual.n AS `Execuções`, atual.c AS `Consumo`, atual.c / nullIf(sum(atual.c) OVER (), 0) AS `% do total`, atual.c / atual.n AS `Custo médio`, atual.c_p95 AS `Custo p95`, atual.sucesso AS `Sucesso`, atual.avanco AS `Avanço`, atual.repeticao AS `Repetição sem avanço`, atual.d_p50 AS `Duração p50`, atual.d_p95 AS `Duração p95`, atual.timeouts AS `Timeouts`, if(ant.c > 0, atual.c / ant.c - 1, NULL) AS `Δ consumo`, if(ant.agente != '', atual.sucesso - ant.sucesso, NULL) AS `Δ sucesso` FROM atual LEFT JOIN ant ON ant.agente = atual.agente ORDER BY `Consumo` DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT toStartOfDay(fim) AS time, agente, sumIf(consumo, unidade = ${unidade:sqlstring}) AS v FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY time, agente ORDER BY time",
+          "refId": "B",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "Consumo",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Consumo"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Custo médio"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Custo p95"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% do total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sucesso"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Avanço"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Repetição sem avanço"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Duração p50"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Duração p95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Δ consumo"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#2E9E44",
+                      "value": null
+                    },
+                    {
+                      "color": "#8A8A8A",
+                      "value": -0.0001
+                    },
+                    {
+                      "color": "#D93025",
+                      "value": 0.0001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Δ sucesso"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#D93025",
+                      "value": null
+                    },
+                    {
+                      "color": "#8A8A8A",
+                      "value": -0.0001
+                    },
+                    {
+                      "color": "#2E9E44",
+                      "value": 0.0001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Agente"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filtrar por agente",
+                    "url": "/d/esteira-pipes/esteira?${__all_variables}&${__url_time_range}&var-agente=${__value.raw:percentencode}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Tendência"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "sparkline"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "timeSeriesTable",
+          "options": {
+            "B": {
+              "timeField": "time",
+              "stat": "lastNotNull"
+            }
+          }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "agente",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^(.*) A$",
+            "renamePattern": "$1"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Trend #B": "Tendência",
+              "agente": "Agente"
+            },
+            "excludeByName": {
+              "Last *": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Ranking de consumo",
+      "description": "Consumo por agente (maior no topo), empilhado por resultado.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT agente, sumIf(consumo, esteira_status_execucao(resultado) = 'Concluída') AS `Concluída`, sumIf(consumo, esteira_status_execucao(resultado) = 'Falha') AS `Falha`, sumIf(consumo, esteira_status_execucao(resultado) = 'Timeout') AS `Timeout`, sumIf(consumo, esteira_status_execucao(resultado) = 'Interrompida') AS `Interrompida`, sumIf(consumo, esteira_status_execucao(resultado) = 'Desconhecida') AS `Desconhecida` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) AND unidade = ${unidade:sqlstring} GROUP BY agente ORDER BY sum(consumo) DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "showValue": "never",
+        "groupWidth": 0.75,
+        "barWidth": 0.9,
+        "xField": null,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "fullHighlight": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Concluída"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2E9E44"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falha"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#D93025"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Timeout"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F28C28"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Interrompida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E8C21B"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Desconhecida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8A8A8A"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Sucesso e falhas",
+      "description": "Proporção dos resultados por agente.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 65,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT agente, countIf(esteira_status_execucao(resultado) = 'Concluída') AS `Concluída`, countIf(esteira_status_execucao(resultado) = 'Falha') AS `Falha`, countIf(esteira_status_execucao(resultado) = 'Timeout') AS `Timeout`, countIf(esteira_status_execucao(resultado) = 'Interrompida') AS `Interrompida`, countIf(esteira_status_execucao(resultado) = 'Desconhecida') AS `Desconhecida` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente ORDER BY count() DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "percent",
+        "showValue": "auto",
+        "groupWidth": 0.75,
+        "barWidth": 0.9,
+        "xField": null,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "fullHighlight": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Concluída"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2E9E44"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Falha"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#D93025"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Timeout"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F28C28"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Interrompida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E8C21B"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Desconhecida"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8A8A8A"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "type": "volkovlabs-echarts-panel",
+      "title": "Eficiência",
+      "description": "Barra = consumo por execução que avançou. Linha = % de repetições sem avanço.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 73,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT agente, sumIf(consumo, unidade = ${unidade:sqlstring}) / nullIf(countIf(avancou), 0) AS custo_por_avanco, 100 * countIf(repeticao_sem_avanco) / count() AS pct_repeticao FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente ORDER BY custo_por_avanco DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "editorMode": "code",
+        "renderer": "canvas",
+        "map": "none",
+        "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// A3 — Eficiência por agente: barra = custo por avanço; linha = % repetição sem avanço.\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados();\nreturn {\n  grid: { left: 60, right: 60, top: 40, bottom: 50 },\n  legend: { bottom: 0, textStyle: { color: TEXTO2 } },\n  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' },\n    valueFormatter: (v) => num(v) },\n  xAxis: { type: 'category', data: rows.map((r) => r.agente), axisLabel: { color: TEXTO2 } },\n  yAxis: [\n    { type: 'value', name: UNIDADE + ' / avanço', nameTextStyle: { color: TEXTO2 }, axisLabel: { color: TEXTO2 }, splitLine: { lineStyle: { color: GRADE } } },\n    { type: 'value', name: '% repetição', max: 100, nameTextStyle: { color: TEXTO2 }, axisLabel: { color: TEXTO2, formatter: '{value}%' }, splitLine: { show: false } },\n  ],\n  series: [\n    { name: 'custo por avanço', type: 'bar', barMaxWidth: 48, itemStyle: { color: '#5794F2' }, data: rows.map((r) => r.custo_por_avanco) },\n    { name: '% repetição sem avanço', type: 'line', yAxisIndex: 1, symbolSize: 7, itemStyle: { color: '#F2495C' }, data: rows.map((r) => r.pct_repeticao) },\n  ],\n};\n",
+        "editor": {
+          "format": "auto",
+          "height": 600
+        },
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "volkovlabs-echarts-panel",
+      "title": "Custo por execução (dispersão)",
+      "description": "Distribuição do custo por execução (p5–p95). Caixa alta = agente caro às vezes; caixa toda alta = caro sempre.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 73,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT agente, 'custo' AS tipo, count() AS n, q[1] AS p5, q[2] AS p25, q[3] AS p50, q[4] AS p75, q[5] AS p95 FROM (SELECT agente, count() AS n0, quantiles(0.05, 0.25, 0.5, 0.75, 0.95)(consumo) AS q FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) AND unidade = ${unidade:sqlstring} AND consumo_disponivel GROUP BY agente) GROUP BY agente, q ORDER BY p50 DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "editorMode": "code",
+        "renderer": "canvas",
+        "map": "none",
+        "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// Box plot por agente (A4 custo / A5 duração). Colunas: agente, p5, p25, p50, p75, p95, n [, limite].\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados();\nconst ehTempo = rows[0].tipo === 'tempo';\nconst fmt = ehTempo ? hm : (v) => num(v);\nconst serie = [{\n  name: ehTempo ? 'duração' : 'custo', type: 'boxplot', itemStyle: { color: 'rgba(87,148,242,0.35)', borderColor: '#5794F2' },\n  data: rows.map((r) => [r.p5, r.p25, r.p50, r.p75, r.p95]),\n}];\nconst limite = rows.find((r) => r.limite) ? Math.max(...rows.map((r) => r.limite || 0)) : null;\nif (limite) {\n  serie[0].markLine = { symbol: 'none', lineStyle: { color: '#F28C28', type: 'dashed' },\n    label: { formatter: 'timeout ' + hm(limite), color: '#F28C28' }, data: [{ yAxis: limite }] };\n}\nreturn {\n  grid: { left: 70, right: 30, top: 30, bottom: 40 },\n  tooltip: { trigger: 'item', formatter: (p) => {\n    const r = rows[p.dataIndex];\n    return `<b>${r.agente}</b> (${r.n} exec)<br/>p95: ${fmt(r.p95)}<br/>p75: ${fmt(r.p75)}<br/>p50: ${fmt(r.p50)}<br/>p25: ${fmt(r.p25)}<br/>p5: ${fmt(r.p5)}`;\n  } },\n  xAxis: { type: 'category', data: rows.map((r) => r.agente), axisLabel: { color: TEXTO2 } },\n  yAxis: { type: 'value', name: ehTempo ? 'h:mm' : UNIDADE, nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => fmt(v) }, splitLine: { lineStyle: { color: GRADE } } },\n  series: serie,\n};\n",
+        "editor": {
+          "format": "auto",
+          "height": 600
+        },
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "volkovlabs-echarts-panel",
+      "title": "Duração",
+      "description": "Duração por agente (p5–p95). Linha tracejada = timeout configurado.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 81,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT agente, 'tempo' AS tipo, n, q[1] AS p5, q[2] AS p25, q[3] AS p50, q[4] AS p75, q[5] AS p95, lim AS limite FROM (SELECT agente, count() AS n, quantiles(0.05, 0.25, 0.5, 0.75, 0.95)(duracao_s) AS q, max(timeout_s) AS lim FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente) ORDER BY p50 DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "editorMode": "code",
+        "renderer": "canvas",
+        "map": "none",
+        "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// Box plot por agente (A4 custo / A5 duração). Colunas: agente, p5, p25, p50, p75, p95, n [, limite].\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados();\nconst ehTempo = rows[0].tipo === 'tempo';\nconst fmt = ehTempo ? hm : (v) => num(v);\nconst serie = [{\n  name: ehTempo ? 'duração' : 'custo', type: 'boxplot', itemStyle: { color: 'rgba(87,148,242,0.35)', borderColor: '#5794F2' },\n  data: rows.map((r) => [r.p5, r.p25, r.p50, r.p75, r.p95]),\n}];\nconst limite = rows.find((r) => r.limite) ? Math.max(...rows.map((r) => r.limite || 0)) : null;\nif (limite) {\n  serie[0].markLine = { symbol: 'none', lineStyle: { color: '#F28C28', type: 'dashed' },\n    label: { formatter: 'timeout ' + hm(limite), color: '#F28C28' }, data: [{ yAxis: limite }] };\n}\nreturn {\n  grid: { left: 70, right: 30, top: 30, bottom: 40 },\n  tooltip: { trigger: 'item', formatter: (p) => {\n    const r = rows[p.dataIndex];\n    return `<b>${r.agente}</b> (${r.n} exec)<br/>p95: ${fmt(r.p95)}<br/>p75: ${fmt(r.p75)}<br/>p50: ${fmt(r.p50)}<br/>p25: ${fmt(r.p25)}<br/>p5: ${fmt(r.p5)}`;\n  } },\n  xAxis: { type: 'category', data: rows.map((r) => r.agente), axisLabel: { color: TEXTO2 } },\n  yAxis: { type: 'value', name: ehTempo ? 'h:mm' : UNIDADE, nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => fmt(v) }, splitLine: { lineStyle: { color: GRADE } } },\n  series: serie,\n};\n",
+        "editor": {
+          "format": "auto",
+          "height": 600
+        },
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Consumo no tempo por agente",
+      "description": "Consumo diário empilhado por agente.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 81,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT toStartOfDay(fim) AS time, agente, sumIf(consumo, unidade = ${unidade:sqlstring}) AS v FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY time, agente ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 40,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "lineInterpolation": "smooth"
+          },
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "displayName": "${__field.labels.__values}"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 39,
+      "type": "row",
+      "title": "Agentes — detalhe",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 89,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 12,
+          "type": "volkovlabs-echarts-panel",
+          "title": "Agente × coluna",
+          "description": "Valor alternável pela variável 'Agente × coluna mostra'.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 90,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT agente, coluna, sumIf(consumo, unidade = ${unidade:sqlstring}) AS consumo, count() AS n FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente, coluna",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "editorMode": "code",
+            "renderer": "canvas",
+            "map": "none",
+            "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// A7 — Agente × coluna (valor alternável pela variável a7_valor).\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados();\nconst agentes = [...new Set(rows.map((r) => r.agente))];\nconst colunas = [...new Set(rows.map((r) => r.coluna))];\nconst modo = context.grafana.replaceVariables('${a7_valor}');\nconst campo = modo === 'execucoes' ? 'n' : 'consumo';\nconst vals = rows.map((r) => r[campo] || 0);\nreturn {\n  grid: { left: 110, right: 30, top: 20, bottom: 70 },\n  tooltip: { formatter: (p) => {\n    const r = rows.find((x) => x.agente === agentes[p.value[1]] && x.coluna === colunas[p.value[0]]);\n    return `<b>${r.agente}</b> em <b>${r.coluna}</b><br/>Consumo: ${num(r.consumo)} ${UNIDADE}<br/>Execuções: ${r.n}`;\n  } },\n  xAxis: { type: 'category', data: colunas, axisLabel: { color: TEXTO2 }, splitArea: { show: true } },\n  yAxis: { type: 'category', data: agentes, axisLabel: { color: TEXTO2 }, splitArea: { show: true } },\n  visualMap: { min: 0, max: Math.max(...vals, 1), calculable: true, orient: 'horizontal', left: 'center', bottom: 0,\n               textStyle: { color: TEXTO2 }, inRange: { color: ['#1f2a44', '#5794F2', '#F2CC0C', '#F2495C'] } },\n  series: [{ type: 'heatmap', label: { show: true, color: '#fff', formatter: (p) => num(p.value[2], 0) },\n             data: rows.map((r) => [colunas.indexOf(r.coluna), agentes.indexOf(r.agente), r[campo] || 0]) }],\n};\n",
+            "editor": {
+              "format": "auto",
+              "height": 600
+            },
+            "themeEditor": {
+              "name": "default",
+              "config": "{}"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          }
+        },
+        {
+          "id": 13,
+          "type": "barchart",
+          "title": "Agente × modelo",
+          "description": "Consumo por modelo usado em cada agente.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 90,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT agente, modelo, sumIf(consumo, unidade = ${unidade:sqlstring}) AS v FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente, modelo ORDER BY agente",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "orientation": "horizontal",
+            "stacking": "normal",
+            "showValue": "never",
+            "groupWidth": 0.75,
+            "barWidth": 0.9,
+            "xField": null,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "fullHighlight": false
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 85,
+                "lineWidth": 0,
+                "gradientMode": "none"
+              }
+            },
+            "overrides": []
+          },
+          "transformations": [
+            {
+              "id": "groupingToMatrix",
+              "options": {
+                "columnField": "modelo",
+                "rowField": "agente",
+                "valueField": "v",
+                "emptyValue": "zero"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "renameByName": {
+                  "agente\\modelo": "agente"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 14,
+          "type": "barchart",
+          "title": "Tamanho do contexto",
+          "description": "Tokens de entrada (composição do prompt). p95 crescendo = prompt inchando.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 98,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT agente, quantile(0.5)(tokens_entrada) AS `p50`, quantile(0.95)(tokens_entrada) AS `p95` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente ORDER BY p50 DESC",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "orientation": "horizontal",
+            "stacking": "none",
+            "showValue": "never",
+            "groupWidth": 0.75,
+            "barWidth": 0.9,
+            "xField": null,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "fullHighlight": false
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 85,
+                "lineWidth": 0,
+                "gradientMode": "none"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "p50"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#5794F2"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "p95"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#B877D9"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 15,
+          "type": "barchart",
+          "title": "Robustez",
+          "description": "Agrupado por agente. Trips e admissões negadas são atribuídos ao agente da coluna onde ocorreram.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 98,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT e.agente AS agente, e.tent AS `Tentativas médias`, e.retomada AS `% sessão retomada`, e.timeouts AS `Timeouts`, coalesce(b.trips, 0) AS `Trips de circuit break`, coalesce(b.negadas, 0) AS `Admissões negadas` FROM (SELECT agente, avg(tentativas) AS tent, 100 * countIf(sessao = 'retomada') / count() AS retomada, countIf(resultado = 'timeout') AS timeouts FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) GROUP BY agente) AS e LEFT JOIN ( SELECT ag.agente AS agente, countIf(v.evento = 'esteira.agente.circuit_break' AND v.a['esteira.circuit_break.passo'] = 'persisted') AS trips, countIf(v.evento = 'esteira.agente.admissao_negada') AS negadas FROM v_eventos AS v INNER JOIN (SELECT DISTINCT pipe, board, coluna, agente FROM v_execucoes WHERE pipe = ${pipe:sqlstring}) AS ag ON ag.pipe = v.pipe AND ag.board = v.a['esteira.board'] AND ag.coluna = v.a['esteira.coluna'] WHERE v.pipe = ${pipe:sqlstring} AND $__timeFilter(v.ts) AND v.evento IN ('esteira.agente.circuit_break', 'esteira.agente.admissao_negada') GROUP BY agente) AS b ON b.agente = e.agente",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "orientation": "vertical",
+            "stacking": "none",
+            "showValue": "never",
+            "groupWidth": 0.75,
+            "barWidth": 0.9,
+            "xField": null,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "fullHighlight": false
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 85,
+                "lineWidth": 0,
+                "gradientMode": "none"
+              }
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "type": "row",
+      "title": "Fluxo das issues",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 90,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 40,
+      "type": "timeseries",
+      "title": "Throughput",
+      "description": "Issues que ficaram concluídas por dia.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 91,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH concl AS ( SELECT issue, min(ts) AS t FROM ( SELECT issue, ts FROM v_transicoes WHERE pipe = ${pipe:sqlstring} AND has((SELECT colunas_finais FROM v_config WHERE pipe = ${pipe:sqlstring}), para) UNION ALL SELECT a['esteira.issue'] AS issue, ts FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND evento = 'esteira.issue.upsert' AND a['esteira.issue.estado'] = 'closed') GROUP BY issue) SELECT time, n AS `Concluídas`, avg(n) OVER (ORDER BY time ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS `Média móvel 7d` FROM (SELECT toStartOfDay(t) AS time, count() AS n FROM concl WHERE $__timeFilter(t) GROUP BY time ORDER BY time WITH FILL FROM toStartOfDay($__fromTime) TO $__toTime STEP INTERVAL 1 DAY) ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "barAlignment": 0
+          },
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Concluídas"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 70
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2E9E44"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Média móvel 7d"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FFFFFF"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "WIP por coluna",
+      "description": "Issues em cada coluna no fim de cada dia (exceto colunas finais).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 91,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "WITH dias AS (SELECT arrayJoin(arrayMap(i -> toStartOfDay($__fromTime) + toIntervalDay(i), range(toUInt32(dateDiff('day', $__fromTime, $__toTime) + 1)))) AS d) SELECT d AS time, coluna, count() AS n FROM ( SELECT d, x.issue AS issue, argMax(x.para, x.ts) AS coluna FROM dias CROSS JOIN (SELECT issue, para, ts FROM v_transicoes WHERE pipe = ${pipe:sqlstring}) AS x WHERE x.ts < d + INTERVAL 1 DAY GROUP BY d, issue) WHERE NOT has((SELECT colunas_finais FROM v_config WHERE pipe = ${pipe:sqlstring}), coluna) GROUP BY time, coluna ORDER BY time",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 50,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "barAlignment": 0
+          },
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "displayName": "${__field.labels.__values}"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 42,
+      "type": "barchart",
+      "title": "Tempo por coluna",
+      "description": "Tempo de calendário que a issue fica em cada coluna.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 91,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT para AS coluna, quantile(0.5)(permanencia_s) AS `p50`, quantile(0.95)(permanencia_s) AS `p95` FROM v_transicoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND permanencia_s IS NOT NULL AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) GROUP BY coluna ORDER BY p50 DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "none",
+        "showValue": "never",
+        "groupWidth": 0.75,
+        "barWidth": 0.9,
+        "xField": null,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "fullHighlight": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p50"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#B877D9"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 43,
+      "type": "barchart",
+      "title": "Retrabalho",
+      "description": "Transições para uma coluna anterior (ordem_colunas no dashboard.yml), pela coluna que devolveu.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 99,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT de AS coluna, count() AS `Devoluções` FROM v_transicoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND indexOf((SELECT ordem_colunas FROM v_config WHERE pipe = ${pipe:sqlstring}), para) > 0 AND indexOf((SELECT ordem_colunas FROM v_config WHERE pipe = ${pipe:sqlstring}), de) > indexOf((SELECT ordem_colunas FROM v_config WHERE pipe = ${pipe:sqlstring}), para) GROUP BY coluna ORDER BY 2 DESC",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "showValue": "never",
+        "groupWidth": 0.75,
+        "barWidth": 0.9,
+        "xField": null,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "fullHighlight": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Devoluções"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F28C28"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 44,
+      "type": "volkovlabs-echarts-panel",
+      "title": "Caminho das issues",
+      "description": "Transições de → para no período.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "esteira-clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 99,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT de, para, count() AS n FROM v_transicoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) GROUP BY de, para",
+          "refId": "A",
+          "pluginVersion": "4.23.5"
+        }
+      ],
+      "options": {
+        "editorMode": "code",
+        "renderer": "canvas",
+        "map": "none",
+        "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// G14 — Caminho das issues: transições de → para (bipartido, para aceitar ciclos).\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados('Nenhuma transição no período');\nconst nos = new Set();\nconst links = rows.map((r) => { const s = 'de ' + r.de, t = 'para ' + r.para; nos.add(s); nos.add(t); return { source: s, target: t, value: r.n }; });\nreturn {\n  tooltip: { trigger: 'item' },\n  series: [{ type: 'sankey', left: 20, right: 90, top: 10, bottom: 10, nodeGap: 10, emphasis: { focus: 'adjacency' },\n             label: { color: TEXTO }, lineStyle: { color: 'gradient', opacity: 0.45 },\n             data: [...nos].map((n) => ({ name: n })), links }],\n};\n",
+        "editor": {
+          "format": "auto",
+          "height": 600
+        },
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 54,
+      "type": "row",
+      "title": "Board e sincronismo",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 107,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 46,
+          "type": "timeseries",
+          "title": "Latência da API do board (p95 por operação)",
+          "description": "Linhas = p95 por operação. Barras (eixo direito) = chamadas com erro e rate limit.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 108,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT $__timeInterval(ts) AS time, a['esteira.board.operacao'] AS op, quantile(0.95)(toFloat64OrZero(a['esteira.board.duracao_s'])) AS p95 FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.board.api' GROUP BY time, op ORDER BY time",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            },
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT $__timeInterval(ts) AS time, a['esteira.board.status'] AS status, count() AS n FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.board.api' AND a['esteira.board.status'] != 'ok' GROUP BY time, status ORDER BY time",
+              "refId": "B",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "spanNulls": false,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "barAlignment": 0
+              },
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "displayName": "${__field.labels.__values}"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "custom.drawStyle",
+                    "value": "bars"
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "unit",
+                    "value": "short"
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 80
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "erro"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#D93025"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "rate_limit"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F28C28"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 47,
+          "type": "timeseries",
+          "title": "Throttle e penalty",
+          "description": "Valor em degrau a cada mudança.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 108,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT time, serie, v FROM ( SELECT ts AS time, 'throttle (s)' AS serie, toFloat64OrZero(a['esteira.board.throttle.valor_novo_s']) AS v FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.board.throttle' UNION ALL SELECT ts AS time, 'penalty (h)' AS serie, toFloat64OrZero(a['esteira.board.penalty.horas']) AS v FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.board.penalty' UNION ALL SELECT now() AS time, if(metrica = 'esteira.board.throttle', 'throttle (s)', 'penalty (h)') AS serie, argMax(valor, ts) AS v FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND metrica IN ('esteira.board.throttle', 'esteira.board.penalty') AND ts > now() - INTERVAL 1 HOUR GROUP BY serie) ORDER BY time",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "spanNulls": false,
+                "showPoints": "always",
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "lineInterpolation": "stepAfter",
+                "pointSize": 4
+              },
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "displayName": "${__field.labels.__values}"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "penalty.*"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#D93025"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 48,
+          "type": "state-timeline",
+          "title": "Circuit breaker do board",
+          "description": "Estado por plataforma: closed, half_open, open.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 116,
+            "w": 12,
+            "h": 5
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT time, plataforma, estado FROM ( SELECT $__fromTime AS time, a['esteira.board.plataforma'] AS plataforma, argMax(a['esteira.breaker.estado_novo'], ts) AS estado FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND ts < $__fromTime AND evento = 'esteira.sync.circuit_breaker' AND a['esteira.breaker.escopo'] = 'plataforma' GROUP BY plataforma UNION ALL SELECT ts AS time, a['esteira.board.plataforma'] AS plataforma, a['esteira.breaker.estado_novo'] AS estado FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.sync.circuit_breaker' AND a['esteira.breaker.escopo'] = 'plataforma') ORDER BY time",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "showValue": "auto",
+            "mergeValues": true,
+            "alignValue": "left",
+            "rowHeight": 0.8,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "fillOpacity": 80,
+                "lineWidth": 0
+              },
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "closed": {
+                      "color": "#2E9E44",
+                      "index": 0
+                    },
+                    "half_open": {
+                      "color": "#E8C21B",
+                      "index": 1
+                    },
+                    "open": {
+                      "color": "#D93025",
+                      "index": 2
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "transformations": [
+            {
+              "id": "partitionByValues",
+              "options": {
+                "fields": [
+                  "plataforma"
+                ],
+                "keepFields": false,
+                "naming": {
+                  "asLabels": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 49,
+          "type": "timeseries",
+          "title": "Fila de sincronismo",
+          "description": "Área = itens na fila. Linha (eixo direito) = idade do item mais antigo.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 116,
+            "w": 12,
+            "h": 5
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT time, serie, v FROM ( SELECT ts AS time, 'profundidade' AS serie, sum(valor) AS v FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND metrica = 'esteira.sync.fila.profundidade' GROUP BY time UNION ALL SELECT ts AS time, 'idade máxima' AS serie, max(valor) AS v FROM v_metricas WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND metrica = 'esteira.sync.fila.idade_maxima' GROUP BY time) ORDER BY time",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 30,
+                "spanNulls": false,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "barAlignment": 0
+              },
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "displayName": "${__field.labels.__values}"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "idade máxima"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 50,
+          "type": "timeseries",
+          "title": "Lag de sincronismo",
+          "description": "Tempo entre o enfileiramento e o fim do processamento, p95 por tipo de evento.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 121,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT $__timeInterval(ts) AS time, concat(a['esteira.sync.evento'], ' p95') AS serie, quantile(0.95)(toFloat64OrZero(a['esteira.sync.lag_s'])) AS v FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.sync.item' GROUP BY time, serie ORDER BY time",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "spanNulls": false,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "barAlignment": 0
+              },
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "displayName": "${__field.labels.__values}"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 51,
+          "type": "timeseries",
+          "title": "Desfechos do sincronismo",
+          "description": "",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 121,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT toStartOfDay(ts) AS time, a['esteira.sync.desfecho'] AS desfecho, count() AS n FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.sync.item' GROUP BY time, desfecho ORDER BY time",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 2,
+                "fillOpacity": 70,
+                "spanNulls": false,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "barAlignment": 0
+              },
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "displayName": "${__field.labels.__values}"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "aplicado"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#2E9E44"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "reenfileirado"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#E8C21B"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "dead_letter"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#D93025"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 52,
+          "type": "barchart",
+          "title": "Dead-letter por categoria",
+          "description": "Itens isolados no dead-letter no período.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 121,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT a['esteira.sync.dead_letter.categoria'] AS categoria, count() AS `Itens` FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.sync.item' AND a['esteira.sync.desfecho'] = 'dead_letter' GROUP BY categoria ORDER BY 2 DESC",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "orientation": "horizontal",
+            "stacking": "normal",
+            "showValue": "never",
+            "groupWidth": 0.75,
+            "barWidth": 0.9,
+            "xField": null,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "fullHighlight": false
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic-by-name"
+              },
+              "custom": {
+                "fillOpacity": 85,
+                "lineWidth": 0,
+                "gradientMode": "none"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Itens"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#D93025"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 53,
+          "type": "table",
+          "title": "Últimos itens no dead-letter",
+          "description": "",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 129,
+            "w": 24,
+            "h": 6
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT ts AS `Quando`, a['esteira.board'] AS `Board`, a['esteira.issue'] AS `Issue`, a['esteira.sync.evento'] AS `Evento`, a['esteira.sync.dead_letter.categoria'] AS `Categoria`, a['error.type'] AS `Erro`, a['esteira.erro.mensagem'] AS `Mensagem` FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.sync.item' AND a['esteira.sync.desfecho'] = 'dead_letter' ORDER BY ts DESC LIMIT 50",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "Saúde e detalhe",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 108,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 55,
+          "type": "state-timeline",
+          "title": "Vida da pipe",
+          "description": "Viva = houve ciclo na janela (mínimo 15 min). Startup e shutdown aparecem como anotação.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 109,
+            "w": 24,
+            "h": 4
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT time, if(n > 0, 'Viva', 'Parada') AS estado FROM ( SELECT toStartOfInterval(ts, toIntervalSecond(greatest(900, $__interval_s))) AS time, count() AS n FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.pipe.ciclo' GROUP BY time ORDER BY time WITH FILL FROM toStartOfInterval($__fromTime, toIntervalSecond(greatest(900, $__interval_s))) TO $__toTime STEP toIntervalSecond(greatest(900, $__interval_s)))",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "showValue": "never",
+            "mergeValues": true,
+            "rowHeight": 0.8,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": false
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "fillOpacity": 80,
+                "lineWidth": 0
+              },
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "Viva": {
+                      "color": "#2E9E44",
+                      "index": 0
+                    },
+                    "Parada": {
+                      "color": "#D93025",
+                      "index": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 56,
+          "type": "table",
+          "title": "Incidentes",
+          "description": "esteira.pipe.incidente. Também aparecem como anotação nos gráficos de tempo.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 113,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT ts AS `Quando`, a['esteira.incidente.tipo'] AS `Tipo`, a['esteira.board'] AS `Board`, a['esteira.issue'] AS `Issue` FROM v_eventos WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(ts) AND evento = 'esteira.pipe.incidente' ORDER BY ts DESC LIMIT 100",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "cellHeight": "sm"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          }
+        },
+        {
+          "id": 57,
+          "type": "volkovlabs-echarts-panel",
+          "title": "Árvore da raiz",
+          "description": "Raiz selecionada no 'Custo por árvore' (ou a mais recente). Tamanho do nó = consumo; cor = status.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 113,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT a.issue AS issue, a.nivel AS nivel, n.pai AS pai, n.board AS board, coalesce(l.consumo, 0) AS consumo, l.n_exec AS n_exec, l.tempo_s AS tempo_s, l.status AS status FROM v_arvore AS a INNER JOIN v_nos AS n ON n.pipe = a.pipe AND n.issue = a.issue INNER JOIN (SELECT * FROM v_lista_issue(unidade = ${unidade:sqlstring}) WHERE pipe = ${pipe:sqlstring}) AS l ON l.issue = a.issue WHERE a.pipe = ${pipe:sqlstring} AND a.raiz = if(${raiz:sqlstring} != '', ${raiz:sqlstring}, (SELECT raiz FROM v_lista_arvore(unidade = ${unidade:sqlstring}) WHERE pipe = ${pipe:sqlstring} ORDER BY n_exec_total > 0 DESC, ultima_atividade DESC LIMIT 1)) ORDER BY a.nivel",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "editorMode": "code",
+            "renderer": "canvas",
+            "map": "none",
+            "getOption": "// Funções comuns aos painéis ECharts (injetadas no início de cada painel pelo build).\nconst STATUS_COR = {\n  'Concluída': '#2E9E44',\n  'Em andamento': '#2F6FDB',\n  'Falha': '#D93025',\n  'Timeout': '#F28C28',\n  'Interrompida': '#E8C21B',\n  'Bloqueada': '#8E44AD',\n  'Desconhecida': '#8A8A8A',\n  'Sem execução': '#2F6FDB',\n};\nconst RESULTADO_STATUS = {\n  'concluída': 'Concluída', 'falha terminal': 'Falha', 'timeout': 'Timeout',\n  'interrompida': 'Interrompida', 'desconhecida': 'Desconhecida',\n};\nconst TEXTO = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.primary) || '#ccc';\nconst TEXTO2 = (context.grafana.theme && context.grafana.theme.colors && context.grafana.theme.colors.text.secondary) || '#888';\nconst GRADE = 'rgba(128,128,128,0.15)';\nconst UNIDADE = context.grafana.replaceVariables('${unidade}') || '';\n\nfunction frame(i) {\n  const s = (context.panel.data.series || [])[i || 0];\n  return s || null;\n}\nfunction col(f, nome) {\n  if (!f) return [];\n  const c = f.fields.find((x) => x.name === nome);\n  return c ? Array.from(c.values) : [];\n}\nfunction linhas(f) {\n  if (!f || !f.fields.length) return [];\n  const n = f.fields[0].values.length;\n  const out = [];\n  for (let i = 0; i < n; i++) {\n    const r = {};\n    f.fields.forEach((c) => { r[c.name] = c.values[i] !== undefined ? c.values[i] : c.values.get(i); });\n    out.push(r);\n  }\n  return out;\n}\nfunction semDados(msg) {\n  return { title: { text: msg || 'Sem dados no período', left: 'center', top: 'middle', textStyle: { color: TEXTO2, fontSize: 13, fontWeight: 'normal' } } };\n}\n// Clareia uma cor hex em `fator` (0..1).\nfunction clarear(hex, fator) {\n  const n = parseInt(hex.slice(1), 16);\n  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;\n  const f = (c) => Math.round(c + (255 - c) * fator);\n  return '#' + [f(r), f(g), f(b)].map((c) => c.toString(16).padStart(2, '0')).join('');\n}\nfunction hm(seg) {\n  if (seg === null || seg === undefined || isNaN(seg)) return '-';\n  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);\n  return h + ':' + String(m === 60 ? 59 : m).padStart(2, '0');\n}\nfunction num(v, casas) {\n  if (v === null || v === undefined || isNaN(v)) return '-';\n  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: casas === undefined ? 2 : casas });\n}\nfunction dataHora(ms) {\n  if (!ms) return '-';\n  return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\n}\nfunction setVar(nome, valor) {\n  const q = {}; q['var-' + nome] = valor;\n  context.grafana.locationService.partial(q, true);\n}\nfunction eixoTempo() {\n  return { type: 'value', name: 'tempo (h:mm)', position: 'right', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => hm(v) }, splitLine: { show: false } };\n}\nfunction eixoConsumo() {\n  return { type: 'value', name: UNIDADE, position: 'left', nameTextStyle: { color: TEXTO2 },\n           axisLabel: { color: TEXTO2, formatter: (v) => num(v, 0) }, splitLine: { lineStyle: { color: GRADE } } };\n}\n\n// T2 — Árvore da raiz: nó = issue, tamanho = consumo, cor = status.\nconst rows = linhas(frame(0));\nif (!rows.length) return semDados('Clique numa barra do \"Custo por árvore\" para abrir a árvore');\nconst por = {};\nrows.forEach((r) => { por[r.issue] = { r, children: [] }; });\nlet raiz = null;\nrows.forEach((r) => {\n  if (r.nivel === 0) raiz = por[r.issue];\n  else if (por[r.pai]) por[r.pai].children.push(por[r.issue]);\n});\nif (!raiz) return semDados();\nconst maxC = Math.max(...rows.map((r) => r.consumo || 0), 1);\nconst conv = (n) => ({\n  name: `${n.r.board}/#${n.r.issue}`,\n  value: n.r.consumo || 0,\n  symbolSize: 8 + 26 * Math.sqrt((n.r.consumo || 0) / maxC),\n  itemStyle: { color: STATUS_COR[n.r.status] || STATUS_COR['Desconhecida'], borderColor: STATUS_COR[n.r.status] },\n  status: n.r.status, n_exec: n.r.n_exec, tempo: n.r.tempo_s,\n  children: n.children.map(conv),\n});\nreturn {\n  tooltip: { trigger: 'item', formatter: (p) => `<b>${p.data.name}</b> — ${p.data.status}<br/>Consumo: ${num(p.data.value)} ${UNIDADE}<br/>Execuções: ${p.data.n_exec} · Tempo: ${hm(p.data.tempo)}` },\n  series: [{ type: 'tree', data: [conv(raiz)], top: '5%', left: '12%', bottom: '5%', right: '18%', initialTreeDepth: -1,\n             label: { color: TEXTO, position: 'left', verticalAlign: 'middle', align: 'right' },\n             leaves: { label: { position: 'right', align: 'left' } }, lineStyle: { color: TEXTO2 },\n             expandAndCollapse: true, animationDurationUpdate: 600 }],\n};\n",
+            "editor": {
+              "format": "auto",
+              "height": 600
+            },
+            "themeEditor": {
+              "name": "default",
+              "config": "{}"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          }
+        },
+        {
+          "id": 58,
+          "type": "table",
+          "title": "Execuções",
+          "description": "Uma linha por execução. Clique no Trace para ver os spans da execução abaixo.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 121,
+            "w": 24,
+            "h": 10
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT fim AS `Fim`, board AS `Board`, issue AS `Issue`, coluna AS `Coluna`, agente AS `Agente`, modelo AS `Modelo`, resultado AS `Resultado`, if(avancou, 'sim', 'não') AS `Avançou`, duracao_s AS `Duração`, if(consumo_disponivel, toString(round(consumo, 2)), 'não informado') AS `Consumo`, unidade AS `Unidade`, tentativas AS `Tentativas`, trace_id AS `Trace` FROM v_execucoes WHERE pipe = ${pipe:sqlstring} AND $__timeFilter(fim) AND ('__all__' IN (${board:singlequote}) OR board IN (${board:singlequote})) AND ('__all__' IN (${coluna:singlequote}) OR coluna IN (${coluna:singlequote})) AND ('__all__' IN (${agente:singlequote}) OR agente IN (${agente:singlequote})) AND ('__all__' IN (${modelo:singlequote}) OR modelo IN (${modelo:singlequote})) AND ('__all__' IN (${resultado:singlequote}) OR resultado IN (${resultado:singlequote})) AND (${issue:sqlstring} = '' OR issue = ${issue:sqlstring}) AND (${raiz:sqlstring} = '' OR issue IN (SELECT issue FROM v_arvore WHERE pipe = ${pipe:sqlstring} AND raiz = ${raiz:sqlstring})) ORDER BY fim DESC LIMIT 500",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Resultado"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "concluída": {
+                            "color": "#2E9E44",
+                            "index": 0
+                          },
+                          "falha terminal": {
+                            "color": "#D93025",
+                            "index": 1
+                          },
+                          "timeout": {
+                            "color": "#F28C28",
+                            "index": 2
+                          },
+                          "interrompida": {
+                            "color": "#E8C21B",
+                            "index": 3
+                          },
+                          "desconhecida": {
+                            "color": "#8A8A8A",
+                            "index": 4
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Duração"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Trace"
+                },
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "title": "Ver spans",
+                        "url": "/d/esteira-pipes/esteira?${__all_variables}&${__url_time_range}&var-trace=${__value.raw}"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 59,
+          "type": "table",
+          "title": "Spans do trace selecionado",
+          "description": "Spans (invoke_agent / esteira.sync.item / esteira.board.api) do trace escolhido na tabela Execuções.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "esteira-clickhouse"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 131,
+            "w": 24,
+            "h": 6
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "esteira-clickhouse"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT Timestamp AS `Início`, SpanName AS `Span`, Duration / 1e9 AS `Duração`, StatusCode AS `Status`, SpanAttributes['esteira.issue'] AS `Issue`, SpanAttributes['esteira.board.operacao'] AS `Operação`, SpanAttributes['esteira.execucao.resultado'] AS `Resultado` FROM otel_traces WHERE TraceId = ${trace:sqlstring} ORDER BY Timestamp",
+              "refId": "A",
+              "pluginVersion": "4.23.5"
+            }
+          ],
+          "options": {
+            "cellHeight": "sm"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Duração"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "description": "Telemetria da Esteira Agêntica (Contrato de telemetria v1). Uma aba por pipe."
+}
